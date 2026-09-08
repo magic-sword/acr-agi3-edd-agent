@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 from typing import Any, Dict
+
 from acr_agi3.agent.orchestrator import ARCOrchestrator
 from acr_agi3.eval.harness import BenchmarkHarness
 
@@ -19,7 +20,11 @@ def run_submission(
     submission_output: Dict[str, Any] = {}
 
     for task_id, task in challenges.items():
-        train_pairs = BenchmarkHarness.load_task_file(Path(task_id))["train"] if isinstance(task_id, Path) else task["train"]
+        train_pairs = (
+            BenchmarkHarness.load_task_file(Path(task_id))["train"]
+            if isinstance(task_id, Path)
+            else task["train"]
+        )
         test_cases = task["test"]
 
         task_predictions = []
@@ -31,10 +36,12 @@ def run_submission(
                 max_attempts=2,
             )
             # JSON シリアライズ可能な形式に変換
-            task_predictions.append({
-                f"attempt_{i+1}": p.tolist() if hasattr(p, "tolist") else p
-                for i, p in enumerate(preds)
-            })
+            task_predictions.append(
+                {
+                    f"attempt_{i + 1}": p.tolist() if hasattr(p, "tolist") else p
+                    for i, p in enumerate(preds)
+                }
+            )
 
         submission_output[task_id] = task_predictions
 

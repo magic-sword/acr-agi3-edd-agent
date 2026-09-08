@@ -1,7 +1,9 @@
 """ARC 推論および評価パイプライン全体の疎通・統合テスト."""
 
 from typing import Any, Dict
+
 import numpy as np
+
 from acr_agi3.agent.orchestrator import ARCOrchestrator
 from acr_agi3.dsl import primitives
 from acr_agi3.eval.harness import BenchmarkHarness

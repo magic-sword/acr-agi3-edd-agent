@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+
 import pytest
 
 # skills/grid-analyzer/scripts/analyze.py を動的ロード
@@ -11,6 +12,7 @@ analyze_grid = analyze_module.analyze_grid
 
 
 # --- 正例テスト (Positive Cases) ---
+
 
 def test_positive_square_symmetric() -> None:
     """正例1: 対角・垂直・水平対称な 3x3 グリッド."""
@@ -57,6 +59,7 @@ def test_positive_monochrome_grid() -> None:
 
 
 # --- 負例テスト (Negative / Error Boundary Cases) ---
+
 
 def test_negative_1d_array() -> None:
     """負例1: 1次元配列が渡された場合に ValueError が発生すること."""

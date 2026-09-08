@@ -3,7 +3,8 @@
     "image": "ghcr.io/magic-sword/agents-adk-devcontainer:main",
     "features": {
         "ghcr.io/dhoeric/features/google-cloud-cli:1": {},
-        "ghcr.io/devcontainers/features/node:1": {}
+        "ghcr.io/devcontainers/features/node:1": {},
+        "ghcr.io/devcontainers/features/github-cli:1": {}
     },
     "mounts": [
         "source=${localEnv:HOME}${localEnv:USERPROFILE}/.gemini/config,target=/home/vscode/.gemini/config,type=bind,consistency=cached",
@@ -14,8 +15,17 @@
         "GCP_PROJECT_ID": "${localEnv:GCP_PROJECT_ID}",
         "GCP_REGION": "${localEnv:GCP_REGION}"
     },
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "git.enableSmartCommit": true,
+                "git.autofetch": true,
+                "git.confirmSync": false
+            }
+        }
+    },
     "forwardPorts": [
         8001
     ],
-    "postCreateCommand": "if [ -f requirements.txt ]; then uv pip install --system -r requirements.txt; elif [ -f pyproject.toml ]; then uv pip install --system -e .; fi && uvx google-agents-cli setup --skip-auth"
+    "postCreateCommand": "git config --global --add safe.directory \"*\" && if [ -f requirements.txt ]; then uv pip install --system -r requirements.txt; elif [ -f pyproject.toml ]; then uv pip install --system -e .; fi && uvx google-agents-cli setup --skip-auth"
 }

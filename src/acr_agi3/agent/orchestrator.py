@@ -1,7 +1,9 @@
 """ARC-AGI-3 推論統括エージェント (Orchestrator)."""
 
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
+
 import numpy as np
+
 from acr_agi3.agent.hypothesis import HypothesisGenerator
 from acr_agi3.agent.verifier import ProgramVerifier
 from acr_agi3.dsl.interpreter import DSLInterpreter

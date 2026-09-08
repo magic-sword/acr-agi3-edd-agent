@@ -23,12 +23,12 @@ def main():
     challenges_path = "arc-agi_test_challenges.json"
     with open(challenges_path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    
+
     sub = {}
     for task_id, task in data.items():
         preds = solve_task(task)
         sub[task_id] = [{"attempt_1": p[0], "attempt_2": p[1]} for p in preds]
-        
+
     with open("submission.json", "w", encoding="utf-8") as f:
         json.dump(sub, f)
 

@@ -3,7 +3,9 @@
 import json
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+
 import numpy as np
+
 from acr_agi3.eval.metrics import exact_match
 
 
@@ -58,10 +60,12 @@ class BenchmarkHarness:
             if not case_solved:
                 task_solved = False
 
-            test_results.append({
-                "predictions_count": len(predictions),
-                "is_correct": case_solved,
-            })
+            test_results.append(
+                {
+                    "predictions_count": len(predictions),
+                    "is_correct": case_solved,
+                }
+            )
 
         return {
             "solved": task_solved,

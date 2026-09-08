@@ -1,6 +1,7 @@
 """ARC 評価指標 (Metrics) モジュール."""
 
 from typing import List
+
 import numpy as np
 
 

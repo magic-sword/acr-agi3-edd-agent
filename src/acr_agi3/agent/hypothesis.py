@@ -1,6 +1,7 @@
 """ARC タスクに対する変換ルール仮説生成モジュール."""
 
 from typing import Any, Dict, List
+
 import numpy as np
 
 
@@ -10,7 +11,9 @@ class HypothesisGenerator:
     def __init__(self) -> None:
         pass
 
-    def generate_candidates(self, train_pairs: List[Dict[str, np.ndarray]]) -> List[List[Dict[str, Any]]]:
+    def generate_candidates(
+        self, train_pairs: List[Dict[str, np.ndarray]]
+    ) -> List[List[Dict[str, Any]]]:
         """訓練ペアから一貫性のある変換候補プログラムのリストを生成する."""
         candidates: List[List[Dict[str, Any]]] = []
 
@@ -32,8 +35,14 @@ class HypothesisGenerator:
             for c_src in in_colors:
                 for c_dst in out_colors:
                     if c_src != c_dst:
-                        candidates.append([
-                            {"op": "replace_color", "src_color": int(c_src), "dst_color": int(c_dst)}
-                        ])
+                        candidates.append(
+                            [
+                                {
+                                    "op": "replace_color",
+                                    "src_color": int(c_src),
+                                    "dst_color": int(c_dst),
+                                }
+                            ]
+                        )
 
         return candidates

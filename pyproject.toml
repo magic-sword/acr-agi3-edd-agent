@@ -33,6 +33,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/acr_agi3"]
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

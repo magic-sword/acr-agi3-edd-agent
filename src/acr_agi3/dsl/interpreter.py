@@ -1,7 +1,9 @@
 """ARC DSL プログラムのインタープリタと実行器."""
 
 from typing import Any, Callable, Dict, List
+
 import numpy as np
+
 from acr_agi3.dsl import primitives
 
 

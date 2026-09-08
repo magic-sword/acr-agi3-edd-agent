@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 from typing import Any, Dict
+
 import pytest
 
 # src ディレクトリを sys.path に追加 (ローカル・CI双方の互換性確保)

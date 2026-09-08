@@ -1,7 +1,9 @@
 """仮説プログラムの検証および整合性スコア算出モジュール."""
 
 from typing import Any, Dict, List, Optional
+
 import numpy as np
+
 from acr_agi3.dsl.interpreter import DSLInterpreter
 from acr_agi3.eval.metrics import exact_match
 
