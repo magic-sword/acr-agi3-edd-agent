@@ -1,6 +1,10 @@
 {
-    "name": "Agents CLI & ADK 2.0 Dev Container",
+    "name": "Agents CLI & ADK 2.0 Dev Container (GPU & ARC-AGI-3)",
     "image": "ghcr.io/magic-sword/agents-adk-devcontainer:main",
+    "runArgs": [
+        "--gpus", "all",
+        "--ipc=host"
+    ],
     "features": {
         "ghcr.io/dhoeric/features/google-cloud-cli:1": {},
         "ghcr.io/devcontainers/features/node:1": {},
@@ -8,12 +12,18 @@
     },
     "mounts": [
         "source=${localEnv:HOME}${localEnv:USERPROFILE}/.gemini/config,target=/home/vscode/.gemini/config,type=bind,consistency=cached",
-        "source=${localEnv:HOME}${localEnv:USERPROFILE}/.gemini/GEMINI.md,target=/home/vscode/.gemini/GEMINI.md,type=bind,consistency=cached"
+        "source=${localEnv:HOME}${localEnv:USERPROFILE}/.gemini/GEMINI.md,target=/home/vscode/.gemini/GEMINI.md,type=bind,consistency=cached",
+        "source=${localEnv:HOME}${localEnv:USERPROFILE}/.kaggle,target=/home/vscode/.kaggle,type=bind,consistency=cached",
+        "source=${localEnv:HOME}${localEnv:USERPROFILE}/.config/gh,target=/home/vscode/.config/gh,type=bind,consistency=cached"
     ],
     "containerEnv": {
         "GEMINI_API_KEY": "${localEnv:GEMINI_API_KEY}",
         "GCP_PROJECT_ID": "${localEnv:GCP_PROJECT_ID}",
-        "GCP_REGION": "${localEnv:GCP_REGION}"
+        "GCP_REGION": "${localEnv:GCP_REGION}",
+        "KAGGLE_USERNAME": "${localEnv:KAGGLE_USERNAME}",
+        "KAGGLE_KEY": "${localEnv:KAGGLE_KEY}",
+        "NVIDIA_VISIBLE_DEVICES": "all",
+        "NVIDIA_DRIVER_CAPABILITIES": "compute,utility"
     },
     "customizations": {
         "vscode": {
@@ -27,5 +37,5 @@
     "forwardPorts": [
         8001
     ],
-    "postCreateCommand": "git config --global --add safe.directory \"*\" && if [ -f requirements.txt ]; then uv pip install --system -r requirements.txt; elif [ -f pyproject.toml ]; then uv pip install --system -e .; fi && uvx google-agents-cli setup --skip-auth"
+    "postCreateCommand": "git config --global --add safe.directory \"*\" && if [ -f pyproject.toml ]; then uv pip install --system -e \".[dev,edd]\"; elif [ -f requirements.txt ]; then uv pip install --system -r requirements.txt; fi && uvx google-agents-cli setup --skip-auth"
 }

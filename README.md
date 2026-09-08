@@ -61,29 +61,50 @@ acr-agi3-edd-agent/
 
 ---
 
-## 🚀 クイックスタート
+## ⚙️ エージェント自律開発のためのセットアップ
 
-### 1. 依存ライブラリのインストール
+### 1. 動作環境の起動と依存関係のインストール
+Dev Container を利用すると、GPU パススルーおよび必要なツールが自動構成されます。
 ```bash
-# 基本依存 + 開発ツールのインストール
-uv pip install -e ".[dev]"
+# 基本依存 + 開発・評価ツールのインストール
+uv pip install -e ".[dev,edd]"
 ```
 
-### 2. テストの実行
+### 2. 環境変数の設定 (LLM API)
+エージェントの仮説生成および自己進化ループ（`Evolver`）で利用する API キーを設定します。
 ```bash
-# 静的解析
+cp .env.example .env
+# .env を編集し、GEMINI_API_KEY を設定
+```
+
+### 3. Kaggle & GitHub の認証
+公式タスクデータのダウンロードや提出、Git 操作を行うための認証を行います。
+```bash
+# GitHub CLI 認証
+gh auth login
+
+# Kaggle API (ホストの ~/.kaggle/kaggle.json を配置するか環境変数を設定)
+# export KAGGLE_USERNAME="..." && export KAGGLE_KEY="..."
+kaggle competitions download -c arc-prize-2026-arc-agi-3 -p data/raw/
+```
+
+---
+
+## 🚀 自律開発・評価ワークフロー
+
+```bash
+# 1. 静的解析とコード検証
 ruff check .
 
-# 統合テストおよび全スキル契約テストの実行
+# 2. 契約テスト・統合テストの実行 (防壁ゲート)
 pytest -v
-```
 
-### 3. スキルの自己進化・評価（EDD 連携）
-`skill-edd-agent` の `edd` CLI を利用して、スキル単体の評価や自己修復ループを実行します：
-```bash
-# スキルの契約テスト・網羅性評価
+# 3. スキル仕様・Frontmatter の静的バリデーション (EDD)
+edd validate skills/grid-analyzer
+
+# 4. スキルの評価とカバレッジ計測
 edd eval grid-analyzer --coverage
 
-# 失敗時の構造化診断
+# 5. 失敗時の構造化診断
 edd diagnose grid-analyzer
 ```

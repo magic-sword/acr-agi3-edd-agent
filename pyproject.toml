@@ -20,6 +20,7 @@ dev = [
     "ruff>=0.4.0",
     "pytest-xdist>=3.5.0",
     "matplotlib>=3.8.0",
+    "kaggle>=1.6.0",
 ]
 edd = [
     "edd-agent-tools @ git+https://github.com/magic-sword/skill-edd-agent.git#subdirectory=edd-agent-tools",
