@@ -216,3 +216,20 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ARC-AGI Data (Keep directory structure via .gitkeep)
+data/raw/*
+!data/raw/.gitkeep
+data/generated/*
+!data/generated/.gitkeep
+data/solutions/*
+!data/solutions/.gitkeep
+
+# EDD (Evaluation Driven Development) & Diagnostics
+.edd/cache/
+.edd/diagnostics/
+.edd/logs/
+.edd.json
+
+# Local IDE & agent workspaces
+.gemini/
