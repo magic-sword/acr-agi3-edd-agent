@@ -233,3 +233,18 @@ data/solutions/*
 
 # Local IDE & agent workspaces
 .gemini/
+
+# Environment variables (認証情報の漏洩防止)
+.env
+.env.local
+.env.*.local
+
+# Docker
+docker-compose.override.yml
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
+# Kaggle credentials
+.kaggle/

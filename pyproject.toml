@@ -3,7 +3,7 @@ name = "acr-agi3-edd-agent"
 version = "0.1.0"
 description = "Self-evolving EDD agent for ARC Prize 2026 (ARC-AGI-3)"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [
     { name = "magic-sword" }
@@ -21,6 +21,8 @@ dev = [
     "pytest-xdist>=3.5.0",
     "matplotlib>=3.8.0",
     "kaggle>=1.6.0",
+    "jupyterlab>=4.0.0",
+    "ipykernel>=6.29.0",
 ]
 edd = [
     "edd-agent-tools @ git+https://github.com/magic-sword/skill-edd-agent.git#subdirectory=edd-agent-tools",

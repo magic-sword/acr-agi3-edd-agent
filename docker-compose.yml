@@ -1,0 +1,54 @@
+# =============================================================================
+# ARC-AGI-3 EDD Agent — Docker Compose
+# =============================================================================
+# Kaggle互換GPU環境で、エージェント開発とJupyterLab実験を統合実行。
+#
+# 使い方:
+#   docker compose up -d          # バックグラウンド起動
+#   docker compose logs -f        # ログ確認
+#   docker compose exec kaggle-dev bash  # コンテナ内シェル
+#   docker compose down           # 停止
+#
+# JupyterLab アクセス:
+#   SSH: ssh -L 8888:localhost:8888 user@server
+#   ブラウザ: http://localhost:8888
+# =============================================================================
+
+services:
+  kaggle-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: arc-agi3-dev
+    # GPU アクセス (NVIDIA Container Toolkit 必要)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      # .env ファイルから読み込み
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID:-}
+      - GCP_REGION=${GCP_REGION:-us-central1}
+      - KAGGLE_USERNAME=${KAGGLE_USERNAME:-}
+      - KAGGLE_KEY=${KAGGLE_KEY:-}
+      - EDD_LOG_LEVEL=${EDD_LOG_LEVEL:-INFO}
+      - DEFAULT_LLM_MODEL=${DEFAULT_LLM_MODEL:-gemini-2.5-flash}
+      - EVOLVER_LLM_MODEL=${EVOLVER_LLM_MODEL:-gemini-2.5-pro}
+    env_file:
+      - .env
+    volumes:
+      # プロジェクト全体をマウント (ホスト側の変更が即時反映)
+      - .:/workspace
+    ports:
+      - "${JUPYTER_PORT:-8888}:8888"
+    ipc: host
+    shm_size: '8g'
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
