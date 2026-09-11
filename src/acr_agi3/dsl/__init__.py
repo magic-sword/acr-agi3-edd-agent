@@ -13,6 +13,7 @@ from acr_agi3.dsl.primitives import (
     rot180,
     rot270,
 )
+from acr_agi3.dsl.renderer import ARC_COLORS, render_grid_to_image, render_task_pair
 
 __all__ = [
     "DSLInterpreter",
@@ -26,4 +27,8 @@ __all__ = [
     "pad",
     "get_unique_colors",
     "find_bounding_box",
+    "render_grid_to_image",
+    "render_task_pair",
+    "ARC_COLORS",
 ]
+

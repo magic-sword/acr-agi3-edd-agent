@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""ARC-AGI-3 自己改善・推論ループランナー.
+"""Qwen2.5-VL (画像認識 × SKILL.md) 自己改善・推論ループランナー.
 
-ローカル LLM (Google ADK 2.0 ベース) を用い、
-タスクごとの仮説生成・コード検証・自己修正 (Self-Correction) を実行します。
-実行状況は logs/evolution.log にリアルタイムで出力されます。
+ARC グリッドをカラー画像化し、SKILL.md の定義を注入した上で、
+Qwen2.5-VL による視覚推論 + コード生成 + 自己修正ループを実行します。
+リアルタイムログは logs/vlm_evolution.log に出力されます。
 """
 
 import argparse
@@ -18,12 +18,12 @@ import numpy as np
 # プロジェクトルートを Python パスに追加
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from acr_agi3.agent.llm import LocalTransformersLlm  # noqa: E402
+from acr_agi3.agent.llm import LocalQwenVL  # noqa: E402
 from acr_agi3.agent.llm.arc_tools import (  # noqa: E402
     execute_and_verify_code,
     extract_python_code,
 )
-from acr_agi3.agent.llm_agent import LLMProgramSynthesisAgent  # noqa: E402
+from acr_agi3.agent.vlm_agent import VLMProgramSynthesisAgent  # noqa: E402
 
 
 class RealtimeLogger:
@@ -44,7 +44,7 @@ class RealtimeLogger:
         self.log_file.close()
 
 
-def run_evolution_loop(
+def run_vlm_evolution_loop(
     model_path: str,
     challenges_path: Path,
     solutions_dir: Path,
@@ -53,30 +53,30 @@ def run_evolution_loop(
     max_iterations: int = 3,
     device: str = "cuda",
 ) -> None:
-    """自己改善ループを実行する."""
+    """VLM 自己改善ループを実行する."""
     logger = RealtimeLogger(log_path)
     solutions_dir.mkdir(parents=True, exist_ok=True)
 
     logger.log("=" * 60)
-    logger.log("🚀 ARC-AGI-3 自己改善・推論ループ開始")
-    logger.log(f"🧠 モデルパス: {model_path}")
+    logger.log("👁️ ARC-AGI-3 Qwen2.5-VL (画像認識 × SKILL.md) ループ開始")
+    logger.log(f"🧠 モデル: {model_path} | デバイス: {device}")
     logger.log(f"🎯 対象タスク数: {num_tasks} | 1タスク最大試行: {max_iterations} 回")
     logger.log("=" * 60)
 
-    # 1. モデルの初期化
-    logger.log("ローカル推論モデルを初期化中...")
+    logger.log("ローカル VLM エージェントを初期化中...")
     try:
-        local_llm = LocalTransformersLlm(
+        vlm_model = LocalQwenVL(
             model_name_or_path=model_path,
             device=device,
         )
-        agent = LLMProgramSynthesisAgent(model=local_llm)
-        logger.log("✅ Google ADK 2.0 エージェント初期化完了")
+        agent = VLMProgramSynthesisAgent(model=vlm_model)
+        logger.log(
+            f"✅ VLM エージェント初期化完了 (スキルコンテキスト文字数: {len(agent.skills_context)})"
+        )
     except Exception as e:
-        logger.log(f"❌ モデル初期化エラー: {e}", level="ERROR")
+        logger.log(f"❌ VLM 初期化エラー: {e}", level="ERROR")
         return
 
-    # 2. タスクデータの読み込み
     with open(challenges_path, "r", encoding="utf-8") as f:
         challenges: Dict[str, Any] = json.load(f)
 
@@ -102,18 +102,18 @@ def run_evolution_loop(
 
         for iteration in range(1, max_iterations + 1):
             total_attempts += 1
-            logger.log(f"--- 試行 {iteration}/{max_iterations} ---")
+            logger.log(f"--- 試行 {iteration}/{max_iterations} (画像レンダリング中...) ---")
 
-            prompt = agent._build_task_prompt(train_pairs, feedback=feedback)
+            parts = agent._prepare_task_parts(train_pairs, feedback=feedback)
             if feedback:
                 logger.log(f"[自己修正フィードバック送信]\n{feedback}", level="FEEDBACK")
 
-            logger.log("LLM に推論コードを生成要請中...")
+            logger.log("VLM に画像＋スキル仕様を提示してコード生成要請中...")
             try:
                 import asyncio
 
                 turn_response = asyncio.run(
-                    agent._run_agent_turn(prompt, session_id=f"sess_{task_id}_{iteration}")
+                    agent._run_agent_turn(parts, session_id=f"vlm_sess_{task_id}_{iteration}")
                 )
             except Exception as e:
                 logger.log(f"推論実行時エラー: {e}", level="ERROR")
@@ -122,7 +122,6 @@ def run_evolution_loop(
             generated_code = extract_python_code(turn_response)
             logger.log(f"生成されたコード:\n{generated_code}", level="CODE")
 
-            # 検証器でチェック
             verification = execute_and_verify_code(generated_code, train_pairs)
             passed = verification["passed_count"]
             total = verification["total_count"]
@@ -136,13 +135,13 @@ def run_evolution_loop(
                 task_solved = True
                 solved_count += 1
 
-                # 解法コードを保存
-                solution_file = solutions_dir / f"{task_id}.py"
+                solution_file = solutions_dir / f"{task_id}_vlm.py"
                 with open(solution_file, "w", encoding="utf-8") as sf:
                     sf.write(f"# Task ID: {task_id}\n")
-                    sf.write(f"# Solved at iteration {iteration}\n\n")
+                    sf.write(f"# Solved by Qwen2.5-VL at iter {iteration}\n\n")
                     sf.write(best_code)
                 logger.log(f"💾 解法コードを保存: {solution_file}")
+
                 break
             else:
                 failures = verification.get("failures", [])
@@ -153,12 +152,10 @@ def run_evolution_loop(
                     )
                     feedback = (
                         f"Failed {len(failures)}/{total} pairs. Details: {reason_summary}. "
-                        "Re-analyze the pattern and fix the function."
+                        "Re-inspect the input-output images and fix the function."
                     )
                 else:
-                    feedback = (
-                        f"Execution error: {error_msg}. Please fix the syntax or runtime error."
-                    )
+                    feedback = f"Execution error: {error_msg}. Please fix the code."
 
                 logger.log(
                     f"⚠️ 不正解 (合格 {passed}/{total} 件). 理由: {feedback}",
@@ -170,8 +167,6 @@ def run_evolution_loop(
                 f"❌ Task {task_id} は最大試行回数 ({max_iterations}) 内で解けませんでした。"
             )
 
-
-        # テスト入力に対する予測を実行（正解コードがあればそれを使用）
         test_in = np.array(test_cases[0]["input"], dtype=int)
         if best_code:
             local_scope: Dict[str, Any] = {"np": np}
@@ -182,7 +177,7 @@ def run_evolution_loop(
             logger.log("恒等変換フォールバックを適用")
 
     logger.log("=" * 60)
-    logger.log("📊 ループ完了サマリー")
+    logger.log("📊 VLM ループ完了サマリー")
     logger.log(f"正解タスク数: {solved_count}/{num_tasks} ({solved_count / num_tasks * 100:.1f}%)")
     logger.log(f"総試行ターン数: {total_attempts}")
     logger.log(f"ログファイル: {log_path.resolve()}")
@@ -191,12 +186,12 @@ def run_evolution_loop(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run ARC-AGI-3 Evolution Loop")
+    parser = argparse.ArgumentParser(description="Run ARC-AGI-3 VLM Evolution Loop")
     parser.add_argument(
         "--model-path",
         type=str,
-        default="models/Qwen2.5-Coder-1.5B-Instruct",
-        help="Local model path or 'mock'",
+        default="models/Qwen2.5-VL-3B-Instruct",
+        help="Local VLM model path or 'mock'",
     )
     parser.add_argument(
         "--num-tasks",
@@ -213,7 +208,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--log-file",
         type=Path,
-        default=Path("logs/evolution.log"),
+        default=Path("logs/vlm_evolution.log"),
         help="Log file destination",
     )
     parser.add_argument(
@@ -236,7 +231,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    run_evolution_loop(
+    run_vlm_evolution_loop(
         model_path=args.model_path,
         challenges_path=args.challenges_file,
         solutions_dir=args.solutions_dir,
