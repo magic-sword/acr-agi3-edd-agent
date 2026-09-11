@@ -38,4 +38,3 @@ class ARCOrchestrator:
     ) -> Dict[str, Any]:
         """solve_game へのエイリアス."""
         return self.solve_game(env, max_steps=max_steps, task_id=task_id)
-

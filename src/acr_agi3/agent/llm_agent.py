@@ -31,7 +31,6 @@ class LLMGameAgent:
         self.name = name
         self.app_name = app_name
 
-
         self.adk_agent = Agent(
             name=self.name,
             model=self.model,
@@ -90,7 +89,6 @@ class LLMGameAgent:
             "Provide only the Python code block."
         )
 
-
         best_code: Optional[str] = None
         best_verification: Dict[str, Any] = {"success": False}
 
@@ -113,14 +111,12 @@ class LLMGameAgent:
                 )
                 logger.debug(f"Iteration {iteration + 1} failed: {feedback}")
 
-
         return {
             "is_solved": best_verification.get("success", False),
             "code": best_code,
             "policy_code": best_code,
             "verification": best_verification,
         }
-
 
     def solve(
         self,
@@ -140,4 +136,3 @@ class LLMGameAgent:
 
 # 後方互換クラスエイリアス
 LLMProgramSynthesisAgent = LLMGameAgent
-

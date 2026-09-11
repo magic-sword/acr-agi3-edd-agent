@@ -33,7 +33,6 @@ class GridWorldGameEnv(GameEnvironment):
         self.walls = walls or set()
         self.hazards = hazards or set()
 
-
         self.background_color = background_color
         self.wall_color = wall_color
         self.player_color = player_color

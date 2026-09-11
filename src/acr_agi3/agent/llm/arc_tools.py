@@ -21,7 +21,6 @@ def extract_python_code(text: str) -> str:
     return text.strip()
 
 
-
 def execute_and_verify_game_policy(
     code: str,
     env: Any,
@@ -137,4 +136,3 @@ def execute_and_verify_game_policy(
         "final_reward": total_reward,
         "history": history,
     }
-

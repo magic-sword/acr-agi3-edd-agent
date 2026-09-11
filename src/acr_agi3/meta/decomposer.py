@@ -69,8 +69,6 @@ class SubgoalDecomposer:
         """ゲーム観測から階層的サブゴール列を策定 (decompose_game のエイリアス)."""
         return self.decompose_game(obs, goal_description, known_roles)
 
-
-
     def decompose_game(
         self,
         obs: np.ndarray,

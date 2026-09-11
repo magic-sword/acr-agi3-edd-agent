@@ -69,7 +69,6 @@ class VLMGameAgent:
             )
         ]
 
-
         img = render_grid_to_image(obs, cell_size=20)
 
         buf = io.BytesIO()
@@ -84,7 +83,6 @@ class VLMGameAgent:
                 )
             )
         )
-
 
         instruction_text = (
             f"\nObservation grid shape: {obs.shape}.\n"
@@ -157,7 +155,6 @@ class VLMGameAgent:
             "verification": best_verification,
         }
 
-
     def solve(
         self,
         env: GameEnvironment,
@@ -176,4 +173,3 @@ class VLMGameAgent:
 
 # 後方互換クラスエイリアス
 VLMProgramSynthesisAgent = VLMGameAgent
-

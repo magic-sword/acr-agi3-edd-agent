@@ -96,7 +96,6 @@ def edd_write_skill_code(name: str, code: str) -> str:
     return f"Saved skill implementation to {script_file}"
 
 
-
 def edd_run_game_contract_test(
     name: str,
     env: Any,

@@ -1,6 +1,5 @@
 """ARC 推論および評価パイプライン全体の疎通・統合テスト."""
 
-
 import numpy as np
 
 from acr_agi3.agent.orchestrator import ARCOrchestrator
@@ -67,8 +66,6 @@ def test_benchmark_harness_game_integration() -> None:
     res = harness.evaluate_game(env=env, agent=agent, task_id="test_stage")
     assert res["solved"] is True
     assert res["task_id"] == "test_stage"
-
-
 
 
 def test_metrics_pass_at_k() -> None:

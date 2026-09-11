@@ -93,4 +93,3 @@ class BenchmarkHarness:
             "task_id": task_id,
             "details": res,
         }
-

@@ -31,6 +31,7 @@ from acr_agi3.agent.llm.edd_tools import (
 from acr_agi3.agent.llm.local_model import LocalTransformersLlm
 from acr_agi3.game.env import GameEnvironment
 from acr_agi3.meta.decomposer import SubgoalDecomposer
+from acr_agi3.meta.diagnoser import FailureDiagnoser
 from acr_agi3.meta.human_vcgt import VCGTDataset
 from acr_agi3.meta.observer import MetaObserver
 
@@ -54,6 +55,7 @@ class MetaSkillDrivenAgent:
         # メタスキル層のコンポーネント
         self.observer = MetaObserver()
         self.decomposer = SubgoalDecomposer(observer=self.observer)
+        self.diagnoser = FailureDiagnoser()
 
         # EDD ツールセット (ライブラリ検索・実行ツールを含む)
         self.edd_tools = [
@@ -131,7 +133,6 @@ class MetaSkillDrivenAgent:
                         response_text += part.text
 
         return response_text
-
 
     def solve_game(
         self,
@@ -214,12 +215,17 @@ class MetaSkillDrivenAgent:
                 logger.info(f"Registered verified skill '{skill_name}' to skill library.")
                 break
 
-            # 失敗診断
-            err_msg = verification.get("error", "Policy failed to reach goal within step limit.")
-            steps_done = verification.get("steps_taken", 0)
+            # 失敗診断 (FailureDiagnoser メタスキルによる抽象診断と蒸留)
+            diag = self.diagnoser.diagnose(
+                error=verification.get("error"),
+                steps_taken=verification.get("steps_taken", 0),
+                code=code,
+                raw_verification=verification,
+            )
             feedback = (
-                f"Attempt {attempt} failed after {steps_done} steps. Error: {err_msg}. "
-                "Adjust detour logic, obstacle margin, or step order to avoid obstacles."
+                f"[DIAGNOSIS CATEGORY: {diag['category']}]\n"
+                f"Root Cause: {diag['root_cause']}\n"
+                f"Directive: {diag['directive']}"
             )
 
         return {
@@ -233,4 +239,3 @@ class MetaSkillDrivenAgent:
             "aff_report": aff_report,
             "available_skills_count": len(verified_skills),
         }
-

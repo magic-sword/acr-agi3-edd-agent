@@ -94,7 +94,6 @@ def test_local_transformers_llm_with_adk_runner():
             auto_create_session=True,
         )
 
-
         msg = Content(role="user", parts=[Part.from_text(text="Synthesize action policy")])
         events = []
         async for event in runner.run_async(user_id="u1", session_id="s1", new_message=msg):
@@ -127,5 +126,3 @@ def test_llm_game_agent_solve():
 
     assert res["is_solved"] is True
     assert res["policy_code"] is not None
-
-

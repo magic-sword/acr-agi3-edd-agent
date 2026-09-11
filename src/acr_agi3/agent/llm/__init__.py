@@ -21,4 +21,3 @@ __all__ = [
     "edd_list_skills",
     "edd_register_verified_skill",
 ]
-

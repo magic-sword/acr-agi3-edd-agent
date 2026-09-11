@@ -50,7 +50,6 @@ class LocalTransformersLlm(BaseLlm):
         super().__init__(model=model_name_or_path, **kwargs)
         self._generate_fn = generate_fn or generation_fn
 
-
         if pipeline is not None:
             self._pipeline = pipeline
         elif generate_fn is None and model_name_or_path != "mock":
@@ -187,3 +186,24 @@ class LocalTransformersLlm(BaseLlm):
             content=response_content,
             turn_complete=True,
         )
+
+    def generate(self, prompt: str, max_new_tokens: int = 512, temperature: float = 0.2) -> str:
+        """テキストプロンプトに対する直接テキスト生成 (同期便利メソッド)."""
+        if self._generate_fn is not None:
+            return self._generate_fn(prompt)
+        if self._pipeline is not None:
+            outputs = self._pipeline(
+                prompt,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature if temperature > 0 else None,
+                do_sample=temperature > 0,
+                return_full_text=False,
+            )
+            return outputs[0]["generated_text"]
+        return ""
+
+    def generate_text(
+        self, prompt: str, max_new_tokens: int = 512, temperature: float = 0.2
+    ) -> str:
+        """generate のエイリアス."""
+        return self.generate(prompt, max_new_tokens=max_new_tokens, temperature=temperature)

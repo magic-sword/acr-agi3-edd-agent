@@ -25,7 +25,6 @@ def test_edd_tools_end_to_end_lifecycle():
     msg = edd_init_skill(test_skill_name)
     assert "Successfully scaffolded" in msg
 
-
     # 2. 静的バリデーション
     val_res = edd_validate_skill(test_skill_name)
     assert val_res["is_valid"] is True
@@ -47,7 +46,6 @@ def test_edd_tools_end_to_end_lifecycle():
     assert test_res["is_solved"] is True
     assert test_res["steps_taken"] == 2
 
-
     # 5. スキル実行 (単一ステップの推論)
     sample_obs = [[2, 0, 3, 0, 0]]
     exec_res = edd_execute_game_skill(test_skill_name, sample_obs)
@@ -58,7 +56,6 @@ def test_edd_tools_end_to_end_lifecycle():
     target_dir = GENERATED_SKILLS_DIR / "test-game-mover"
     if target_dir.exists():
         shutil.rmtree(target_dir)
-
 
 
 def test_edd_game_skill_library_and_reuse():

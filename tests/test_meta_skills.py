@@ -84,8 +84,6 @@ def test_meta_skill_driven_agent_solve_game():
     assert res["steps_taken"] > 0
 
 
-
-
 def test_meta_observer_game_frame_and_transition():
     """ACR-AGI-3 ゲーム環境におけるフレーム観測と状態遷移の因果抽出テスト."""
     from acr_agi3.game.env import Action

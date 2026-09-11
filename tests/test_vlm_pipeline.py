@@ -116,5 +116,3 @@ def test_vlm_game_agent_end_to_end():
 
     assert res["is_solved"] is True
     assert res["code"] is not None
-
-

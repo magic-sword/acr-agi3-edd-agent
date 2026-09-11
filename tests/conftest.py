@@ -21,4 +21,3 @@ def sample_game_env() -> GridWorldGameEnv:
         goal_pos=(1, 3),
         walls=set(),
     )
-
