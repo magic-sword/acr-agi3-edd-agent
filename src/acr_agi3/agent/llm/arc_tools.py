@@ -41,29 +41,43 @@ def execute_and_verify_code(
     """
     clean_code = extract_python_code(code)
 
-    # 実行スコープの準備
-    local_scope: Dict[str, Any] = {"np": np}
-    global_scope: Dict[str, Any] = {
-        "__builtins__": {
-            "range": range,
-            "len": len,
-            "enumerate": enumerate,
-            "zip": zip,
-            "min": min,
-            "max": max,
-            "sum": sum,
-            "abs": abs,
-            "int": int,
-            "float": float,
-            "list": list,
-            "dict": dict,
-            "set": set,
-            "tuple": tuple,
-            "print": print,
-            "isinstance": isinstance,
-        },
-        "np": np,
+    import collections
+    import math
+
+    local_scope: Dict[str, Any] = {"np": np, "math": math, "collections": collections}
+    safe_builtins = {
+        "range": range,
+        "len": len,
+        "enumerate": enumerate,
+        "zip": zip,
+        "min": min,
+        "max": max,
+        "sum": sum,
+        "abs": abs,
+        "int": int,
+        "float": float,
+        "bool": bool,
+        "str": str,
+        "list": list,
+        "dict": dict,
+        "set": set,
+        "tuple": tuple,
+        "print": print,
+        "isinstance": isinstance,
+        "issubclass": issubclass,
+        "any": any,
+        "all": all,
+        "sorted": sorted,
+        "reversed": reversed,
+        "__import__": __import__,
     }
+    global_scope: Dict[str, Any] = {
+        "__builtins__": safe_builtins,
+        "np": np,
+        "math": math,
+        "collections": collections,
+    }
+
 
     try:
         exec(clean_code, global_scope, local_scope)
