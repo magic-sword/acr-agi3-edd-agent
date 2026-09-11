@@ -102,9 +102,7 @@ class LocalQwenVL(BaseLlm):
                 "Fallback to mock/generate_fn mode."
             )
 
-    def _extract_text_and_images(
-        self, llm_request: LlmRequest
-    ) -> Tuple[str, List[Image.Image]]:
+    def _extract_text_and_images(self, llm_request: LlmRequest) -> Tuple[str, List[Image.Image]]:
         """LlmRequest からテキストプロンプトと画像リストを抽出."""
         parts_text: List[str] = []
         images: List[Image.Image] = []
@@ -126,6 +124,7 @@ class LocalQwenVL(BaseLlm):
                 # 画像バイトデータまたは PIL Image の取得
                 elif hasattr(part, "inline_data") and part.inline_data:
                     import io
+
                     raw_bytes = part.inline_data.data
                     img = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
                     images.append(img)
@@ -181,9 +180,7 @@ class LocalQwenVL(BaseLlm):
                     clean_up_tokenization_spaces=False,
                 )[0]
         else:
-            generated_text = (
-                "```python\ndef transform(grid):\n    return grid.copy()\n```"
-            )
+            generated_text = "```python\ndef transform(grid):\n    return grid.copy()\n```"
 
         response_content = Content(
             role="model",

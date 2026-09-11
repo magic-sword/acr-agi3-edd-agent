@@ -59,19 +59,21 @@ def parse_sample_rows(csv_path: Path, output_json: Path, limit: int = 50) -> Non
             steps_raw = row.get("steps", row.get("actions", ""))
             steps = [s.strip() for s in steps_raw.split(";") if s.strip()] if steps_raw else []
 
-            records.append({
-                "task_id": task_id,
-                "step_index": step_idx,
-                "environment": row.get("game", row.get("env", "arc_game")),
-                "observation": {"raw_row_idx": i},
-                "human_vcgt": {
-                    "goal": goal,
-                    "reasoning": reasoning,
-                    "steps": steps,
-                    "reflection": row.get("reflection", ""),
-                },
-                "invariants_identified": [],
-            })
+            records.append(
+                {
+                    "task_id": task_id,
+                    "step_index": step_idx,
+                    "environment": row.get("game", row.get("env", "arc_game")),
+                    "observation": {"raw_row_idx": i},
+                    "human_vcgt": {
+                        "goal": goal,
+                        "reasoning": reasoning,
+                        "steps": steps,
+                        "reflection": row.get("reflection", ""),
+                    },
+                    "invariants_identified": [],
+                }
+            )
 
     output_json.parent.mkdir(parents=True, exist_ok=True)
     with output_json.open("w", encoding="utf-8") as f:

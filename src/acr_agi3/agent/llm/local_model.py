@@ -172,9 +172,7 @@ class LocalTransformersLlm(BaseLlm):
             )
             generated_text = outputs[0]["generated_text"]
         else:
-            generated_text = (
-                "```python\ndef transform(grid):\n    return grid.copy()\n```"
-            )
+            generated_text = "```python\ndef transform(grid):\n    return grid.copy()\n```"
 
         # ADK 2.0 の LlmResponse 形式でレスポンスを返却
         response_content = Content(

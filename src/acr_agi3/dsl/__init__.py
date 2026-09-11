@@ -31,4 +31,3 @@ __all__ = [
     "render_task_pair",
     "ARC_COLORS",
 ]
-

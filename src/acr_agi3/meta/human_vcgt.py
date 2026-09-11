@@ -52,14 +52,15 @@ class VCGTRecord:
             total_steps=len(subgoals),
             constraints=self.invariants_identified,
             reasoning_trace=(
-                f"Reasoning: {self.human_vcgt.reasoning}\n"
-                f"Reflection: {self.human_vcgt.reflection}"
+                f"Reasoning: {self.human_vcgt.reasoning}\nReflection: {self.human_vcgt.reflection}"
             ),
         )
 
     def format_prompt_demonstration(self) -> str:
         """LLM/VLM プロンプト用の思考デモンストレーションテキストに変換."""
-        steps_text = "\n".join(f"  - Step {i+1}: {s}" for i, s in enumerate(self.human_vcgt.steps))
+        steps_text = "\n".join(
+            f"  - Step {i + 1}: {s}" for i, s in enumerate(self.human_vcgt.steps)
+        )
         invariants_text = "\n".join(f"  * {inv}" for inv in self.invariants_identified)
 
         return (

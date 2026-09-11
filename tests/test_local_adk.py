@@ -19,11 +19,9 @@ from acr_agi3.agent.llm_agent import LLMProgramSynthesisAgent
 def test_extract_python_code():
     """マークダウンコードブロックからの Python 抽出テスト."""
     text1 = (
-        "Here is the code:\n```python\n"
-        "def transform(grid):\n    return np.rot90(grid)\n```\nDone."
+        "Here is the code:\n```python\ndef transform(grid):\n    return np.rot90(grid)\n```\nDone."
     )
     assert extract_python_code(text1) == "def transform(grid):\n    return np.rot90(grid)"
-
 
     text2 = "```\ndef transform(grid):\n    return grid * 2\n```"
     assert extract_python_code(text2) == "def transform(grid):\n    return grid * 2"
@@ -112,9 +110,7 @@ def test_local_transformers_llm_with_adk_runner():
             auto_create_session=True,
         )
 
-        message = Content(
-            role="user", parts=[Part.from_text(text="Please write transform code.")]
-        )
+        message = Content(role="user", parts=[Part.from_text(text="Please write transform code.")])
         events = []
         async for event in runner.run_async(
             user_id="tester",
@@ -125,7 +121,6 @@ def test_local_transformers_llm_with_adk_runner():
         return events
 
     events = asyncio.run(_run())
-
 
     assert len(events) > 0
     # レスポンスに生成テキストが含まれていることを確認
@@ -142,6 +137,7 @@ def test_local_transformers_llm_with_adk_runner():
 
 def test_llm_program_synthesis_agent_solve():
     """LLMProgramSynthesisAgent によるタスク解決テスト (End-to-End)."""
+
     # 左右反転の正解コードを返すモック
     def mock_correct_generator(prompt: str) -> str:
         return "```python\ndef transform(grid):\n    return np.fliplr(grid)\n```"

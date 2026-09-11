@@ -14,11 +14,13 @@ def test_meta_observer_pair_analysis():
     observer = MetaObserver()
 
     # 入力: 3x3 (背景: 0, 物体: 1)
-    inp = np.array([
-        [0, 1, 0],
-        [1, 1, 0],
-        [0, 0, 0],
-    ])
+    inp = np.array(
+        [
+            [0, 1, 0],
+            [1, 1, 0],
+            [0, 0, 0],
+        ]
+    )
     # 出力: 6x6 (2倍拡大, 新色 2 が登場)
     out = np.zeros((6, 6), dtype=int)
     out[:3, :3] = inp
@@ -166,3 +168,97 @@ def test_meta_skill_driven_agent_mock_solve():
     assert "Cell (0, 0): Expected color 2, Got 1" in diag
 
 
+def test_meta_observer_game_frame_and_transition():
+    """ACR-AGI-3 ゲーム環境におけるフレーム観測と状態遷移の因果抽出テスト."""
+    from acr_agi3.game.env import Action
+
+    observer = MetaObserver()
+
+    # 5x5 ゲーム環境グリッド (0: 背景, 1: 壁, 2: プレイヤー, 3: ゴール, 4: 鍵)
+    grid = np.zeros((5, 5), dtype=int)
+    grid[0, :] = 1  # 上壁
+    grid[1, 1] = 2  # プレイヤー (1, 1)
+    grid[4, 4] = 3  # ゴール (4, 4)
+    grid[1, 3] = 4  # 鍵 (1, 3)
+
+    report = observer.analyze_frame(grid)
+    assert report.grid_shape == (5, 5)
+    assert report.background_color == 0
+    assert report.player_pos == (1, 1)
+    assert report.goal_pos == (4, 4)
+    assert (0, 1) in report.obstacles
+    assert "item_color_4" in report.interactables
+    assert report.interactables["item_color_4"] == (1, 3)
+
+    # 状態遷移: RIGHT に移動した場合 (1, 1) -> (1, 2)
+    next_grid = np.copy(grid)
+    next_grid[1, 1] = 0
+    next_grid[1, 2] = 2
+
+    trans_success = observer.analyze_transition(
+        obs_before=grid,
+        action=Action.RIGHT,
+        obs_after=next_grid,
+        reward=0.0,
+        done=False,
+    )
+    assert trans_success["moved"] is True
+    assert trans_success["displacement"] == (0, 1)
+    assert trans_success["hit_obstacle"] is False
+
+    # 状態遷移: UP に移動して壁に衝突した場合 (位置不変)
+    trans_hit = observer.analyze_transition(
+        obs_before=grid,
+        action=Action.UP,
+        obs_after=grid,
+        reward=-0.1,
+        done=False,
+    )
+    assert trans_hit["moved"] is False
+    assert trans_hit["hit_obstacle"] is True
+
+
+def test_subgoal_decomposer_game_milestones():
+    """ゲーム環境に対する SubgoalDecomposer の自律中間マイルストーン策定テスト."""
+    decomposer = SubgoalDecomposer()
+
+    # 障害物壁と鍵が存在するマップ
+    grid = np.zeros((10, 10), dtype=int)
+    grid[1, 1] = 2  # プレイヤー
+    grid[8, 8] = 3  # ゴール
+    grid[1, 7] = 4  # 鍵
+    grid[3:7, 4] = 1  # 中央の縦壁
+
+    plan = decomposer.decompose_game(grid)
+
+    assert plan.total_steps >= 3
+    step_names = [s.name for s in plan.subgoals]
+    assert "Acquire_item_color_4" in step_names
+    assert "BypassCentralObstacle" in step_names
+    assert "ReachGoalAndClearStage" in step_names
+
+    # 制約に壁回避が含まれているか
+    assert any("Avoid impassable obstacle walls" in c for c in plan.constraints)
+
+
+def test_vcgt_game_002_record_loading():
+    """更新された sample_vcgt.json の vcgt_game_002 の読み込みとプラン整合性テスト."""
+    repo_root = Path(__file__).resolve().parent.parent
+    sample_path = repo_root / "data" / "human_vcgt" / "sample_vcgt.json"
+
+    dataset = VCGTDataset.load_from_json(sample_path)
+    game_002_recs = dataset.get_task("vcgt_game_002")
+    assert len(game_002_recs) == 1
+
+    rec = game_002_recs[0]
+    assert rec.environment == "interactive_switch_and_key_navigation"
+    assert "Collect key" in rec.human_vcgt.goal
+    assert len(rec.human_vcgt.steps) == 3
+    assert any(
+        "Door (5) is impassable until player touches Key (4)" in inv
+        for inv in rec.invariants_identified
+    )
+
+    plan = rec.to_subgoal_plan()
+    assert plan.total_steps == 3
+    assert "Move east" in plan.subgoals[0].objective

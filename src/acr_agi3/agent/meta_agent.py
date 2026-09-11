@@ -15,15 +15,21 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai.types import Content, Part
 
-from acr_agi3.agent.llm.arc_tools import execute_and_verify_code, extract_python_code
+from acr_agi3.agent.llm.arc_tools import (
+    execute_and_verify_code,
+    execute_and_verify_game_policy,
+    extract_python_code,
+)
 from acr_agi3.agent.llm.edd_tools import (
     edd_execute_skill,
     edd_init_skill,
     edd_run_contract_test,
+    edd_run_game_contract_test,
     edd_validate_skill,
     edd_write_skill_code,
 )
 from acr_agi3.agent.llm.local_model import LocalTransformersLlm
+from acr_agi3.game.env import GameEnvironment
 from acr_agi3.meta.decomposer import DecompositionPlan, Subgoal, SubgoalDecomposer
 from acr_agi3.meta.human_vcgt import VCGTDataset
 from acr_agi3.meta.observer import MetaObserver, ObservationReport
@@ -55,6 +61,7 @@ class MetaSkillDrivenAgent:
             edd_validate_skill,
             edd_write_skill_code,
             edd_run_contract_test,
+            edd_run_game_contract_test,
             edd_execute_skill,
         ]
 
@@ -218,7 +225,7 @@ class MetaSkillDrivenAgent:
                 inp_arr = np.array(train_pairs[pair_idx]["input"], dtype=int)
                 predicted = local_scope["transform"](inp_arr)
                 if predicted.shape == expected.shape:
-                    diff_mask = (predicted != expected)
+                    diff_mask = predicted != expected
                     diff_coords = np.argwhere(diff_mask)[:3]
                     for r, c in diff_coords:
                         exp_c = expected[r, c]
@@ -250,11 +257,13 @@ class MetaSkillDrivenAgent:
             code = extract_python_code(response)
             verification = execute_and_verify_code(code, train_pairs)
 
-            history.append({
-                "iteration": iteration,
-                "code": code,
-                "verification": verification,
-            })
+            history.append(
+                {
+                    "iteration": iteration,
+                    "code": code,
+                    "verification": verification,
+                }
+            )
 
             if verification["is_valid"]:
                 return {
@@ -326,4 +335,56 @@ class MetaSkillDrivenAgent:
             "attempt": max_retries,
             "code": code,
             "feedback": feedback,
+        }
+
+    def solve_game(
+        self,
+        env: GameEnvironment,
+        max_steps: int = 50,
+        task_id: str = "game_task",
+    ) -> Dict[str, Any]:
+        """ACR-AGI-3 ゲーム環境に対するメタスキル駆動型自律プレイ解決."""
+        initial_obs = env.reset()
+        aff_report = self.observer.analyze_frame(initial_obs)
+        plan = self.decomposer.decompose_game(initial_obs)
+
+        logger.info(f"Task {task_id}: Generated {plan.total_steps} subgoals.")
+        for sg in plan.subgoals:
+            logger.info(f"  [Subgoal {sg.index}] {sg.name}: {sg.objective}")
+
+        # サブゴールに準拠したゲーム行動ポリシープロンプト構築
+        prompt = (
+            f"Solve ARC-AGI-3 dynamic game: {plan.task_hint}\n"
+            f"Environment shape: {aff_report.grid_shape}, "
+            f"Background: {aff_report.background_color}\n"
+            f"Subgoals:\n"
+            + "\n".join(
+                f"- {s.name}: {s.objective} (Reasoning: {s.reasoning})" for s in plan.subgoals
+            )
+            + "\n\nConstraints:\n"
+            + "\n".join(f"- {c}" for c in plan.constraints)
+            + "\n\nWrite a complete Python action policy function:\n"
+            "```python\n"
+            "from acr_agi3.game.env import Action\n"
+            "def choose_action(obs: np.ndarray, info: dict | None = None) -> Action:\n"
+            "    # Navigate avoiding obstacles and reach the goal\n"
+            "    ...\n"
+            "```\n"
+            "Provide only the Python code block."
+        )
+
+        session_id = f"game_sess_{task_id}"
+        resp = asyncio.run(self._run_agent_turn(prompt, session_id=session_id))
+        code = extract_python_code(resp)
+
+        # シミュレーション検証
+        verification = execute_and_verify_game_policy(code, env, max_steps=max_steps)
+
+        return {
+            "task_id": task_id,
+            "is_solved": verification["success"],
+            "verification": verification,
+            "code": code,
+            "plan": plan,
+            "aff_report": aff_report,
         }

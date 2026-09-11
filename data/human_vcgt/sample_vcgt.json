@@ -28,28 +28,36 @@
     ]
   },
   {
-    "task_id": "vcgt_puzzle_002",
+    "task_id": "vcgt_game_002",
     "step_index": 1,
-    "environment": "pattern_reconstruction",
+    "environment": "interactive_switch_and_key_navigation",
     "observation": {
-      "grid_size": [6, 6],
-      "shapes_detected": ["3x3 subgrid top-left", "3x3 subgrid bottom-right"],
-      "transformation": "point_reflection_180"
+      "grid_size": [10, 10],
+      "player_pos": [1, 1],
+      "key_pos": [1, 7],
+      "door_pos": [5, 4],
+      "goal_pos": [8, 8],
+      "wall_color": 1,
+      "player_color": 2,
+      "key_color": 4,
+      "door_color": 5,
+      "goal_color": 3
     },
     "human_vcgt": {
-      "goal": "Reconstruct the missing bottom-right pattern by rotating the top-left pattern 180 degrees.",
-      "reasoning": "Top-left has an asymmetric L-shape in red (color 2). The target area requires a point-symmetric counterpart in color 4.",
+      "goal": "Collect key (color 4) to open barrier door (color 5), then proceed to exit goal (color 3) while avoiding walls (color 1).",
+      "reasoning": "Door (color 5) completely blocks the path to the goal. Reaching the door without the key results in a dead-end. We must first acquire the key at (1, 7), which unblocks the door, and then navigate through (5, 4) to reach the goal at (8, 8).",
       "steps": [
-        "Extract 3x3 region from (0, 0) to (2, 2)",
-        "Rotate 180 degrees using rot90(k=2)",
-        "Remap color 2 to color 4",
-        "Place into region (3, 3) to (5, 5)"
+        "Move east along row 1 to obtain key at (1, 7)",
+        "Move southwest towards the unblocked door position at (5, 4)",
+        "Pass through the doorway and proceed southeast to goal at (8, 8)"
       ],
-      "reflection": "Simple translation fails symmetry check. Point reflection preserves the global inversion invariant."
+      "reflection": "Directly moving towards goal fails because the door is initially impassable. Key acquisition is a strict causal precondition."
     },
     "invariants_identified": [
-      "Global canvas displays 180-degree rotational symmetry around center (2.5, 2.5).",
-      "Color pairs map deterministically: 2 -> 4."
+      "Door (5) is impassable until player touches Key (4).",
+      "Touching Key (4) removes Door (5) permanently.",
+      "Walls (1) are impassable boundaries at all times.",
+      "Reaching Goal (3) triggers stage completion."
     ]
   }
 ]

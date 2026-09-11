@@ -14,10 +14,12 @@ from acr_agi3.dsl.renderer import ARC_COLORS, render_grid_to_image, render_task_
 
 def test_render_grid_to_image():
     """グリッド配列の画像レンダリングテスト."""
-    grid = np.array([
-        [0, 1, 2],
-        [3, 4, 5],
-    ])
+    grid = np.array(
+        [
+            [0, 1, 2],
+            [3, 4, 5],
+        ]
+    )
     cell_size = 10
     img = render_grid_to_image(grid, cell_size=cell_size, grid_line_width=1)
 
@@ -46,6 +48,7 @@ def test_render_task_pair():
 
 def test_local_qwen_vl_mock():
     """LocalQwenVL のモック推論テスト."""
+
     def mock_generate(prompt: str, images=None) -> str:
         assert images is not None
         assert len(images) > 0

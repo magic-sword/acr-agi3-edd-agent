@@ -137,7 +137,6 @@ class VLMProgramSynthesisAgent:
                 )
             )
 
-
         return parts
 
     async def _run_agent_turn(self, parts: List[Part], session_id: str) -> str:

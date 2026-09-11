@@ -1,24 +1,24 @@
 ---
 name: subgoal-decomposer
-description: 人間 VCGT 思考構造に基づき、タスククリア目的を独立して検証可能な中間マイルストーン (Subgoals) の列に階層分解するメタスキル。
-version: 1.0.0
+description: 人間 VCGT 思考構造に基づき、ゲームクリア目的（ゴール到達、鍵回収、ゲート解錠等）を独立して検証可能な中間マイルストーン (Subgoals) の列に階層分解するメタスキル。
+version: 2.0.0
 inputs:
-  - name: initial_state
+  - name: observation
     type: numpy.ndarray
-    description: 初期グリッド状態
-  - name: goal_state
-    type: numpy.ndarray
-    description: 達成すべき最終グリッド状態
+    description: 現在のゲーム環境観測グリッド配列 (H, W)
   - name: affordances
     type: dict
-    description: env-observer から得られたアフォーダンス情報
+    description: env-observer から得られたアフォーダンス情報 (agent, obstacles, goals, items)
+  - name: goal_description
+    type: str
+    description: 達成すべき最終ゲーム目的（例: 「鍵4を取得して扉5を開け、ゴール3に到達する」）
 outputs:
   - name: subgoals
     type: list[dict]
-    description: 順序付けられた中間目標のリスト (各目標の事前・終了条件付き)
+    description: 順序付けられた中間目標のリスト (各マイルストーンの事前・終了条件・Waypoint付き)
   - name: task_hierarchy
     type: str
-    description: VCGT 形式の思考分解ツリー (Goal -> Reasoning -> Tasks)
+    description: VCGT 形式の思考分解ツリー (Goal -> Reasoning -> Steps -> Reflection)
 ---
 
 # Subgoal Decomposer Meta-Skill

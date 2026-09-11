@@ -160,3 +160,36 @@ def edd_execute_skill(
         return {"success": True, "output_grid": out_list}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+def edd_run_game_contract_test(
+    name: str,
+    env: Any,
+    max_steps: int = 50,
+) -> dict[str, Any]:
+    """ゲーム環境シミュレータ上でスキルの契約テスト（ゴール到達、制約回避）を実行.
+
+    Args:
+        name: スキル識別名
+        env: GameEnvironment インスタンス
+        max_steps: 最大許容ステップ数
+
+    Returns:
+        契約テスト結果 (is_solved: bool, steps_taken: int, final_reward: float, error: str)
+    """
+    from acr_agi3.agent.llm.arc_tools import execute_and_verify_game_policy
+
+    norm_name = name.strip().replace(" ", "-").replace("_", "-").lower()
+    script_base = name.strip().replace(" ", "_").replace("-", "_").lower()
+    script_file = GENERATED_SKILLS_DIR / norm_name / "scripts" / f"{script_base}.py"
+
+    if not script_file.exists():
+        return {
+            "is_solved": False,
+            "error": f"Implementation file not found: {script_file}",
+            "steps_taken": 0,
+            "final_reward": -1.0,
+        }
+
+    code = script_file.read_text(encoding="utf-8")
+    return execute_and_verify_game_policy(code, env, max_steps=max_steps)

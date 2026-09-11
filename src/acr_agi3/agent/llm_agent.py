@@ -56,7 +56,6 @@ class LLMProgramSynthesisAgent:
             auto_create_session=True,
         )
 
-
     def _format_grid(self, grid: np.ndarray) -> str:
         """グリッドを可読性の高い文字列に変換."""
         lines = ["[" + " ".join(f"{val:2d}" for val in row) + "]" for row in grid]
@@ -136,9 +135,7 @@ class LLMProgramSynthesisAgent:
             verification = execute_and_verify_code(code, train_pairs)
 
             if verification["is_valid"]:
-                logger.info(
-                    f"Found valid transformation code at iteration {iteration + 1}!"
-                )
+                logger.info(f"Found valid transformation code at iteration {iteration + 1}!")
                 best_code = code
                 break
             else:
