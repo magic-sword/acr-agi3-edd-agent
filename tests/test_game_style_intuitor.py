@@ -1,0 +1,78 @@
+"""GameStyleIntuitor メタスキルの単体テスト."""
+
+import numpy as np
+import pytest
+
+from acr_agi3.meta.intuitor import GameStyleIntuitor
+
+
+@pytest.fixture
+def intuitor():
+    return GameStyleIntuitor()
+
+
+def test_open_exploration_style(intuitor):
+    """外周が開いておりゴールが画面外にあるような探索型ゲームの直感テスト."""
+    # 8x8 グリッドで外周が完全に開いており、障害物が中央にまばらにある
+    obs = np.zeros((8, 8), dtype=int)
+    obs[3, 3] = 1
+    obs[4, 4] = 1
+
+    res = intuitor.analyze_style(obs)
+    assert res["style"] == "OPEN_EXPLORATION"
+    assert res["recommended_domain"] == "exploration"
+    assert "EXPLORATION FIRST" in res["recommended_approach"]
+    assert res["features"]["has_edge_exit"] is True
+
+
+def test_closed_maze_style(intuitor):
+    """外周が壁で囲まれ、内部に入り組んだ通路がある閉鎖型迷路の直感テスト."""
+    obs = np.zeros((8, 8), dtype=int)
+    # 外周を壁 (color 1) で囲む
+    obs[0, :] = 1
+    obs[7, :] = 1
+    obs[:, 0] = 1
+    obs[:, 7] = 1
+    # 内部に壁
+    obs[2:6, 3] = 1
+
+    res = intuitor.analyze_style(obs)
+    assert res["style"] == "CLOSED_MAZE"
+    assert res["recommended_domain"] == "navigation"
+    assert "PATHFINDING FIRST" in res["recommended_approach"]
+    assert res["features"]["has_edge_exit"] is False
+
+
+def test_item_trigger_puzzle_style(intuitor):
+    """鍵やスイッチなどの孤立アイテムが複数散在するパズルの直感テスト."""
+    obs = np.zeros((8, 8), dtype=int)
+    # 外周壁
+    obs[0, :] = 1
+    obs[7, :] = 1
+    obs[:, 0] = 1
+    obs[:, 7] = 1
+    # 鍵 (color 4) と スイッチ (color 5)
+    obs[2, 2] = 4
+    obs[5, 5] = 5
+
+    res = intuitor.analyze_style(obs)
+    assert res["style"] == "ITEM_TRIGGER_PUZZLE"
+    assert res["recommended_domain"] == "inventory_puzzle"
+    assert "INTERACTION FIRST" in res["recommended_approach"]
+
+
+def test_symmetric_pattern_style(intuitor):
+    """空間対称性が高いパズルの直感テスト."""
+    # 左右対称なブロック配置
+    obs = np.zeros((8, 8), dtype=int)
+    obs[2, 2] = 1
+    obs[2, 5] = 1
+    obs[3, 1:7] = 2
+    obs[4, 1:7] = 2
+    obs[5, 2] = 1
+    obs[5, 5] = 1
+
+    res = intuitor.analyze_style(obs)
+    assert res["style"] == "SYMMETRIC_PATTERN"
+    assert res["recommended_domain"] == "symmetry_pattern"
+    assert res["features"]["symmetry_score"] >= 0.80

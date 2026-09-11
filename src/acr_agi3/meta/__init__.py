@@ -3,6 +3,7 @@
 from acr_agi3.meta.decomposer import DecompositionPlan, Subgoal, SubgoalDecomposer
 from acr_agi3.meta.diagnoser import FailureDiagnoser
 from acr_agi3.meta.human_vcgt import VCGTDataset, VCGTExplanation, VCGTRecord
+from acr_agi3.meta.intuitor import GameStyleIntuitor
 from acr_agi3.meta.observer import AffordanceObject, GameAffordanceReport, MetaObserver
 
 __all__ = [
@@ -13,6 +14,7 @@ __all__ = [
     "Subgoal",
     "DecompositionPlan",
     "FailureDiagnoser",
+    "GameStyleIntuitor",
     "VCGTDataset",
     "VCGTRecord",
     "VCGTExplanation",
