@@ -193,3 +193,159 @@ def edd_run_game_contract_test(
 
     code = script_file.read_text(encoding="utf-8")
     return execute_and_verify_game_policy(code, env, max_steps=max_steps)
+
+
+def edd_register_verified_skill(
+    name: str,
+    description: str,
+    tags: list[str] | None = None,
+) -> dict[str, Any]:
+    """契約テスト・シミュレーションに合格したスキルをスキルライブラリに正式登録.
+
+    Args:
+        name: スキル識別名
+        description: スキルの機能・動作仕様
+        tags: 関連タグ (例: ['navigation', 'bypass_wall', 'keys'])
+
+    Returns:
+        登録結果辞書 (success: bool, skill_info: dict)
+    """
+    import json
+
+    norm_name = name.strip().replace(" ", "-").replace("_", "-").lower()
+    skill_dir = GENERATED_SKILLS_DIR / norm_name
+    if not skill_dir.exists():
+        norm_name_under = name.strip().replace(" ", "_").lower()
+        skill_dir = GENERATED_SKILLS_DIR / norm_name_under
+
+    if not skill_dir.exists():
+        return {"success": False, "error": f"Skill directory not found: {skill_dir}"}
+
+    meta = {
+        "name": norm_name,
+        "description": description,
+        "tags": tags or [],
+        "is_verified": True,
+    }
+    registry_file = skill_dir / "registry.json"
+    with registry_file.open("w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2, ensure_ascii=False)
+
+    return {"success": True, "skill_info": meta}
+
+
+def edd_list_skills(verified_only: bool = False) -> list[dict[str, Any]]:
+    """獲得・生成されたスキルライブラリの一覧を取得.
+
+    Args:
+        verified_only: 防壁ゲート合格済みスキルのみに限定するかどうか
+
+    Returns:
+        スキル情報辞書のリスト (name, description, is_verified, script_path)
+    """
+    import json
+
+    if not GENERATED_SKILLS_DIR.exists():
+        return []
+
+    skills: list[dict[str, Any]] = []
+    for skill_path in sorted(GENERATED_SKILLS_DIR.iterdir()):
+        if not skill_path.is_dir():
+            continue
+
+        skill_name = skill_path.name
+        registry_file = skill_path / "registry.json"
+        skill_md_file = skill_path / "SKILL.md"
+
+        desc = ""
+        is_verified = False
+        tags: list[str] = []
+
+        if registry_file.exists():
+            try:
+                with registry_file.open("r", encoding="utf-8") as f:
+                    reg = json.load(f)
+                    desc = reg.get("description", "")
+                    is_verified = reg.get("is_verified", False)
+                    tags = reg.get("tags", [])
+            except Exception:
+                pass
+
+        if not desc and skill_md_file.exists():
+            # SKILL.md から description を抽出
+            for line in skill_md_file.read_text(encoding="utf-8").splitlines():
+                if line.startswith("description:"):
+                    desc = line.split("description:", 1)[1].strip()
+                    break
+
+        if verified_only and not is_verified:
+            continue
+
+        # スクリプトの存在確認
+        scripts_dir = skill_path / "scripts"
+        script_file = None
+        if scripts_dir.exists():
+            py_files = list(scripts_dir.glob("*.py"))
+            if py_files:
+                script_file = str(py_files[0])
+
+        skills.append(
+            {
+                "name": skill_name,
+                "description": desc or "No description provided.",
+                "is_verified": is_verified,
+                "tags": tags,
+                "script_file": script_file,
+            }
+        )
+
+    return skills
+
+
+def edd_execute_game_skill(
+    name: str,
+    obs: list[list[int]],
+    info: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """検証済みのゲーム行動ポリシーを実行し、次のアクション (Action) を取得.
+
+    Args:
+        name: スキル識別名
+        obs: 現在の観測 2 次元配列
+        info: 追加環境情報 (任意)
+
+    Returns:
+        実行結果辞書 (success: bool, action: str, error: str)
+    """
+    from acr_agi3.game.env import Action
+
+    norm_name = name.strip().replace(" ", "-").replace("_", "-").lower()
+    script_base = name.strip().replace(" ", "_").replace("-", "_").lower()
+    target_dir = GENERATED_SKILLS_DIR / norm_name
+    if not target_dir.exists():
+        norm_name_under = name.strip().replace(" ", "_").lower()
+        target_dir = GENERATED_SKILLS_DIR / norm_name_under
+
+    script_file = target_dir / "scripts" / f"{script_base}.py"
+    if not script_file.exists():
+        # scripts ディレクトリ下の任意の py ファイルを探す
+        scripts = list((target_dir / "scripts").glob("*.py")) if target_dir.exists() else []
+        if scripts:
+            script_file = scripts[0]
+        else:
+            return {"success": False, "error": f"Skill script not found in {target_dir}"}
+
+    try:
+        code = script_file.read_text(encoding="utf-8")
+        local_scope: dict[str, Any] = {"np": np, "Action": Action}
+        exec(code, {"np": np, "Action": Action, "__builtins__": __builtins__}, local_scope)
+
+        if "choose_action" not in local_scope:
+            return {"success": False, "error": "Function 'choose_action' not defined in skill"}
+
+        obs_arr = np.array(obs, dtype=int)
+        action_res = local_scope["choose_action"](obs_arr, info)
+        action_name = action_res.name if hasattr(action_res, "name") else str(action_res)
+        return {"success": True, "action": action_name}
+    except Exception as e:
+        return {"success": False, "error": str(e)}

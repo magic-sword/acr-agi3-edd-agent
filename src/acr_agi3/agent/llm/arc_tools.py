@@ -115,8 +115,7 @@ def execute_and_verify_code(
                     {
                         "pair_index": idx,
                         "reason": (
-                            f"Shape mismatch: predicted {pred.shape}, "
-                            f"expected {expected.shape}"
+                            f"Shape mismatch: predicted {pred.shape}, expected {expected.shape}"
                         ),
                     }
                 )
@@ -170,17 +169,20 @@ def execute_and_verify_game_policy(
     import collections
     import math
 
+    from acr_agi3.agent.llm.edd_tools import edd_execute_game_skill, edd_list_skills
+
     global_scope: Dict[str, Any] = {
         "np": np,
         "math": math,
         "collections": collections,
         "Action": Action,
+        "edd_execute_game_skill": edd_execute_game_skill,
+        "edd_list_skills": edd_list_skills,
         "__builtins__": __builtins__,
     }
-    local_scope: Dict[str, Any] = {}
 
     try:
-        exec(clean_code, global_scope, local_scope)
+        exec(clean_code, global_scope)
     except Exception as e:
         return {
             "is_solved": False,
@@ -190,12 +192,7 @@ def execute_and_verify_game_policy(
             "final_reward": -1.0,
         }
 
-    policy_fn = (
-        local_scope.get("choose_action")
-        or local_scope.get("act")
-        or global_scope.get("choose_action")
-        or global_scope.get("act")
-    )
+    policy_fn = global_scope.get("choose_action") or global_scope.get("act")
     if not policy_fn:
         return {
             "is_solved": False,

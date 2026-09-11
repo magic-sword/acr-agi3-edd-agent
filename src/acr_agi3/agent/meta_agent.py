@@ -21,8 +21,11 @@ from acr_agi3.agent.llm.arc_tools import (
     extract_python_code,
 )
 from acr_agi3.agent.llm.edd_tools import (
+    edd_execute_game_skill,
     edd_execute_skill,
     edd_init_skill,
+    edd_list_skills,
+    edd_register_verified_skill,
     edd_run_contract_test,
     edd_run_game_contract_test,
     edd_validate_skill,
@@ -55,7 +58,7 @@ class MetaSkillDrivenAgent:
         self.observer = MetaObserver()
         self.decomposer = SubgoalDecomposer(observer=self.observer)
 
-        # EDD ツールセット
+        # EDD ツールセット (ライブラリ検索・実行ツールを含む)
         self.edd_tools = [
             edd_init_skill,
             edd_validate_skill,
@@ -63,6 +66,9 @@ class MetaSkillDrivenAgent:
             edd_run_contract_test,
             edd_run_game_contract_test,
             edd_execute_skill,
+            edd_list_skills,
+            edd_execute_game_skill,
+            edd_register_verified_skill,
         ]
 
         # VCGT データセット（Few-shot 思考例）
@@ -342,8 +348,9 @@ class MetaSkillDrivenAgent:
         env: GameEnvironment,
         max_steps: int = 50,
         task_id: str = "game_task",
+        max_retries: int = 2,
     ) -> Dict[str, Any]:
-        """ACR-AGI-3 ゲーム環境に対するメタスキル駆動型自律プレイ解決."""
+        """ACR-AGI-3 ゲーム環境に対するメタスキル駆動型解決 (スキル再利用・合成ループ対応)."""
         initial_obs = env.reset()
         aff_report = self.observer.analyze_frame(initial_obs)
         plan = self.decomposer.decompose_game(initial_obs)
@@ -352,11 +359,25 @@ class MetaSkillDrivenAgent:
         for sg in plan.subgoals:
             logger.info(f"  [Subgoal {sg.index}] {sg.name}: {sg.objective}")
 
-        # サブゴールに準拠したゲーム行動ポリシープロンプト構築
-        prompt = (
+        # 1. 蓄積された検証済みスキルライブラリの取得
+        verified_skills = edd_list_skills(verified_only=True)
+        library_section = ""
+        if verified_skills:
+            library_lines = [
+                "## Available Verified Skill Library (You can reuse or compose these):"
+            ]
+            for vs in verified_skills:
+                library_lines.append(f"- Skill '{vs['name']}': {vs['description']}")
+            library_lines.append(
+                "You can compose these verified skills as subroutines or build on their logic.\n"
+            )
+            library_section = "\n".join(library_lines)
+
+        base_prompt = (
             f"Solve ARC-AGI-3 dynamic game: {plan.task_hint}\n"
             f"Environment shape: {aff_report.grid_shape}, "
             f"Background: {aff_report.background_color}\n"
+            f"{library_section}\n"
             f"Subgoals:\n"
             + "\n".join(
                 f"- {s.name}: {s.objective} (Reasoning: {s.reasoning})" for s in plan.subgoals
@@ -373,12 +394,43 @@ class MetaSkillDrivenAgent:
             "Provide only the Python code block."
         )
 
-        session_id = f"game_sess_{task_id}"
-        resp = asyncio.run(self._run_agent_turn(prompt, session_id=session_id))
-        code = extract_python_code(resp)
+        feedback = None
+        code = ""
+        verification: Dict[str, Any] = {"success": False}
 
-        # シミュレーション検証
-        verification = execute_and_verify_game_policy(code, env, max_steps=max_steps)
+        for attempt in range(1, max_retries + 1):
+            prompt = (
+                base_prompt
+                if not feedback
+                else f"{base_prompt}\n\n[DIAGNOSTIC FEEDBACK]:\n{feedback}"
+            )
+            session_id = f"game_sess_{task_id}_{attempt}"
+            resp = asyncio.run(self._run_agent_turn(prompt, session_id=session_id))
+            code = extract_python_code(resp)
+
+            # シミュレーション検証
+            verification = execute_and_verify_game_policy(code, env, max_steps=max_steps)
+
+            if verification["success"]:
+                # 2. 合格したスキルをライブラリに正式登録
+                skill_name = f"policy_{task_id}"
+                edd_init_skill(skill_name)
+                edd_write_skill_code(skill_name, code)
+                edd_register_verified_skill(
+                    name=skill_name,
+                    description=plan.task_hint,
+                    tags=["game_policy", "verified_solution"],
+                )
+                logger.info(f"Registered verified skill '{skill_name}' to skill library.")
+                break
+
+            # 失敗診断
+            err_msg = verification.get("error", "Policy failed to reach goal within step limit.")
+            steps_done = verification.get("steps_taken", 0)
+            feedback = (
+                f"Attempt {attempt} failed after {steps_done} steps. Error: {err_msg}. "
+                "Adjust detour logic, obstacle margin, or step order to avoid obstacles."
+            )
 
         return {
             "task_id": task_id,
@@ -387,4 +439,5 @@ class MetaSkillDrivenAgent:
             "code": code,
             "plan": plan,
             "aff_report": aff_report,
+            "available_skills_count": len(verified_skills),
         }

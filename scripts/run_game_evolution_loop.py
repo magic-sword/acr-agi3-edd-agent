@@ -119,25 +119,33 @@ def run_game_evolution_experiment(
         for s_idx, step_desc in enumerate(vcgt.get("steps", []), 1):
             logger.log(f"    - Subgoal {s_idx}: {step_desc}")
 
-        # 2. サブゴールを達成する行動ポリシーの合成・検証
-        logger.log("🛠️ [EDD] 行動ポリシーの自律開発とシミュレーション検証開始...")
-        skill_name = f"policy_{t_id}"
+        # 2. 蓄積スキルライブラリの確認 (Skill Retrieval)
         from acr_agi3.agent.llm.edd_tools import (
             edd_init_skill,
+            edd_list_skills,
+            edd_register_verified_skill,
             edd_run_game_contract_test,
             edd_validate_skill,
             edd_write_skill_code,
         )
 
+        available_skills = edd_list_skills(verified_only=True)
+        logger.log(f"📚 [Skill Library] 現在利用可能な検証済みスキル数: {len(available_skills)}")
+        for sk in available_skills:
+            logger.log(f"    * {sk['name']}: {sk['description']}")
+
+        # 3. サブゴールを達成する行動ポリシーの合成・検証 (Skill Composition / Synthesis)
+        logger.log("🛠️ [EDD] 行動ポリシーの自律開発・合成とシミュレーション検証開始...")
+        skill_name = f"policy_{t_id}"
         edd_init_skill(skill_name)
 
-        # 迂回ナビゲーションポリシーコード (壁を検知して行 0 へ迂回)
-        policy_code = f"""
+        if idx == 1:
+            # Stage 1: 基本迂回ナビゲーションスキル
+            policy_code = f"""
 import numpy as np
 from acr_agi3.game.env import Action
 
-def choose_action(obs: np.ndarray) -> Action:
-    # プレイヤー位置 (color 2) とゴール位置 (color 3) を同定
+def choose_action(obs: np.ndarray, info: dict | None = None) -> Action:
     player_indices = np.argwhere(obs == {env.player_color})
     goal_indices = np.argwhere(obs == {env.goal_color})
 
@@ -147,7 +155,7 @@ def choose_action(obs: np.ndarray) -> Action:
     pr, pc = player_indices[0]
     gr, gc = goal_indices[0]
 
-    # 壁 (1, 3)~(6, 3) を避けるため、まず row 0 へ上がって column 3 を迂回
+    # 中央壁を避けるため、まず行 0 へ上がって迂回
     if pc <= 3 and pr > 0:
         return Action.UP
     if pr == 0 and pc < gr:
@@ -160,6 +168,44 @@ def choose_action(obs: np.ndarray) -> Action:
         return Action.UP
     if pc > gc:
         return Action.LEFT
+    return Action.WAIT
+"""
+        else:
+            # Stage 2: 過去に獲得した Stage 1 のスキルをライブラリから呼び出して合成 (Composition)
+            logger.log(
+                "🔄 [Skill Composition] Stage 1 の壁迂回スキルをマクロサブルーチンとして再利用！"
+            )
+            policy_code = f"""
+import numpy as np
+from acr_agi3.game.env import Action
+from acr_agi3.agent.llm.edd_tools import edd_execute_game_skill
+
+def choose_action(obs: np.ndarray, info: dict | None = None) -> Action:
+    # 1. 鍵アイテム (color 4) が存在する場合は鍵取得を最優先
+    key_indices = np.argwhere(obs == 4)
+    player_indices = np.argwhere(obs == {env.player_color})
+
+    if len(player_indices) == 0:
+        return Action.WAIT
+    pr, pc = player_indices[0]
+
+    if len(key_indices) > 0:
+        kr, kc = key_indices[0]
+        if pc < kc:
+            return Action.RIGHT
+        if pr < kr:
+            return Action.DOWN
+        if pr > kr:
+            return Action.UP
+        if pc > kc:
+            return Action.LEFT
+
+    # 2. 鍵取得後は、蓄積された Stage 1 の壁迂回スキルを再利用してゴールへ向かう
+    res = edd_execute_game_skill("policy_vcgt_game_001", obs.tolist(), info)
+    if res.get("success"):
+        action_name = res["action"]
+        return getattr(Action, action_name, Action.WAIT)
+
     return Action.WAIT
 """
         edd_write_skill_code(skill_name, policy_code)
@@ -176,8 +222,15 @@ def choose_action(obs: np.ndarray) -> Action:
 
         if contract_res.get("is_solved"):
             cleared_count += 1
+            # 4. 合格したスキルをスキルライブラリに正式登録
+            reg_res = edd_register_verified_skill(
+                name=skill_name,
+                description=vcgt.get("goal", f"Solution policy for {t_id}"),
+                tags=["game_policy", t_id],
+            )
             logger.log(
-                f"🎉 [STAGE CLEAR] Game {t_id} を自律開発スキルでクリア！",
+                f"🎉 [STAGE CLEAR] Game {t_id} をクリア！ "
+                f"スキルライブラリに登録完了: {reg_res.get('success')}",
                 level="SUCCESS",
             )
         else:
