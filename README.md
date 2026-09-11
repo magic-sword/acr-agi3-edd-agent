@@ -1,52 +1,47 @@
-# ACR-AGI-3 Self-Evolving EDD Agent
-**ARC Prize 2026 (ARC-AGI-3) に向けた、評価駆動開発（EDD）型自己進化エージェント基盤**
+# ACR-AGI-3 Meta-Skill Driven Self-Evolving Agent
+**ARC Prize 2026 (ARC-AGI-3) に向けた、メタスキル駆動型自己進化エージェント基盤**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
 [![Google ADK 2.0](https://img.shields.io/badge/Google%20ADK-2.0-green.svg)](https://github.com/google/adk)
 
-本プロジェクトは、Google ADK 2.0 および [`skill-edd-agent`](https://github.com/magic-sword/skill-edd-agent) の自己進化アーキテクチャを活用し、**ARC-AGI-3 (ARC Prize 2026) コンテストに出場する推論エージェントと問題解決スキルを自律的に開発・自己改善・評価する**ためのプロジェクトです。
+> **"Intelligence is the efficiency of skill acquisition on novel, unseen tasks."** — François Chollet
+
+本プロジェクトは、Google ADK 2.0 および [`skill-edd-agent`](https://github.com/magic-sword/skill-edd-agent) の評価駆動開発（EDD）アーキテクチャを活用し、**不定・未知の ARC-AGI-3 ゲーム環境に適応するための「思考とスキル量産のメタスキル（Meta-Skills）」を自律的に開発・自己改善・評価する**ためのプロジェクトです。
+
+詳細なアーキテクチャ設計書は [ARCHITECTURE.md](file:///home/prog/work/kaggle/acr-agi3-edd-agent/ARCHITECTURE.md)、AI エージェントの行動指針は [AGENTS.md](file:///home/prog/work/kaggle/acr-agi3-edd-agent/AGENTS.md) を参照してください。
 
 ---
 
-## 🏛 アーキテクチャ概要
+## 🏛 アーキテクチャ概要：メタスキル vs 具象スキルの分離
+
+ARC-AGI-3 ではタスクごとに全く新しいゲーム・ルールが現れます。
+個別のパズルを解く「具象コード」を集めるのではなく、**「未知のゲームを観察し、契約テスト付きのスキルを即座に量産・自己修復するメタスキル」** こそがオープンソース化すべき永続的コア資産です。
 
 ```mermaid
 graph TD
     A[gcr.io/kaggle-gpu-images/python<br/>Kaggle 公式 GPU イメージ] -->|ベース環境| B[acr-agi3-edd-agent<br/>本プロジェクト]
     C[skill-edd-agent<br/>EDD フレームワーク] -->|依存/連携| B
-    B --> D[skills/<br/>ARC ドメイン特化スキル群]
-    B --> E[src/acr_agi3/<br/>エージェント・DSL・評価パイプライン]
-    B --> N[notebooks/<br/>JupyterLab 実験ノートブック]
-    D -->|Evaluation Gating / 契約テスト| F[ARC-AGI-3 Benchmark & Submission]
+    B --> M[meta_skills/<br/>★OSS コア資産: 思考・スキル量産のメタスキル群]
+    B --> E[src/acr_agi3/<br/>メタオーケストレーター・VLM/LLM推論基盤]
+    M -->|オンデマンド自律量産| G[generated_skills/<br/>実行時生成の一時スキル群 ※Git管理外]
+    G -->|Evaluation Gating / 契約テスト全勝| F[ARC-AGI-3 Benchmark & Submission]
     E -->|Pass@k 算出| F
-    N -->|動作確認・可視化| E
-```
-
-### 統合開発環境の設計思想
-
-**「エージェントの実行環境 = JupyterLab環境 = Kaggle提出環境」** を一致させることで、開発→テスト→提出のギャップを最小化します。
-
-```mermaid
-graph LR
-    subgraph "統合 Docker コンテナ (Kaggle互換)"
-        JUPYTER["JupyterLab :8888<br/>実験・可視化"]
-        AGENT["EDD Agent<br/>自律開発ループ"]
-        JUPYTER <-->|同一Python環境| WORK["/workspace<br/>src/ skills/ data/ notebooks/"]
-        AGENT <-->|同一Python環境| WORK
-    end
-    SSH["ローカル PC"] -->|SSH + Port Forward| JUPYTER
 ```
 
 ### レイヤー構成
 
 1. **環境層 (Kaggle 公式 GPU イメージ)**:
-   - `gcr.io/kaggle-gpu-images/python:latest` をベースに Python 3.12, PyTorch, CUDA 環境を提供。
-   - Kaggle 提出環境と同一ランタイムを保証。
-2. **フレームワーク層 ([`skill-edd-agent`](https://github.com/magic-sword/skill-edd-agent))**:
-   - Evaluation Gating（テスト全勝を必須とする防壁）、自己修復ループ、`edd` CLI を提供。
-3. **ドメイン層 (`acr-agi3-edd-agent`)**:
-   - ARC-AGI-3 のタスクデータ、推論 DSL、幾何変換・物体抽出・探索スキル群、提出用バンドラー。
+   - `gcr.io/kaggle-gpu-images/python:latest` をベースに Python 3.12, PyTorch, CUDA (RTX A2000 / RTX Pro 6000) 環境を提供。
+2. **メタスキル層 (`meta_skills/`)【★OSS コア資産】**:
+   - `env-observer`: 未知環境の不変量・対称性・因果関係の抽出
+   - `skill-synthesizer`: 観察結果から `SKILL.md`（契約テスト付き）と Python 実装を自動執筆
+   - `contract-tester`: EDD 防壁ゲート（正例3＋負例3の全勝検証）
+   - `failure-diagnoser`: 失敗時の構造化診断と自己修復（Evolver）
+3. **具象インスタンススキル層 (`generated_skills/`)【一時キャッシュ】**:
+   - メタスキルが未知のゲームごとにオンデマンド生成する個別タスク用スキル（Git 除外）。
+4. **コアエンジン層 (`src/acr_agi3/`)**:
+   - Google ADK 2.0 統合エージェント、ローカル LLM / VLM (Qwen2.5-VL) 推論アダプター、幾何レンダラー。
 
 ---
 
@@ -54,39 +49,35 @@ graph LR
 
 ```text
 acr-agi3-edd-agent/
-├── .devcontainer/
-│   └── devcontainer.json          # Dev Container 定義 (Docker Compose 連携)
-├── .github/
-│   └── workflows/
-│       └── test.yml               # CI: Ruff Lint & Pytest
-├── Dockerfile                     # Kaggle公式GPUイメージベースの開発環境
-├── docker-compose.yml             # GPU対応 Docker Compose 定義
-├── .env.example                   # 環境変数テンプレート (認証情報)
-├── data/                          # ARC-AGI-3 データセット (Git 管理外)
-│   ├── raw/                       # 公式タスク (arc-agi_training_challenges.json 等)
-│   ├── generated/                 # エージェント自己生成の合成タスク
-│   └── solutions/                 # 解答データ
-├── notebooks/                     # JupyterLab 実験ノートブック
-│   ├── 00_environment_check.ipynb # 環境確認 (Python, GPU, パッケージ)
-│   └── submission_template.ipynb  # Kaggle 提出用テンプレート
+├── meta_skills/                       # ★【OSS コア資産】思考・スキル量産のメタスキル群
+│   ├── env-observer/                  # 環境不変量・対称性・因果関係抽出メタスキル
+│   ├── skill-synthesizer/             # SKILL.md ＋ 契約テスト自動生成メタスキル
+│   ├── contract-tester/               # EDD 評価防壁ゲートメタスキル
+│   └── failure-diagnoser/             # テスト失敗診断・自己修復メタスキル
+├── generated_skills/                  # ★【実行時生成】オンデマンド量産されたタスク特化スキル群
+│   └── .gitignore                     # Git 管理外（一時キャッシュ）
+├── skills/seeds/                      # 検証・初期ブートストラップ用のシードスキル群
+│   └── grid-analyzer/                 # グリッド形状・色・対称性解析シード
+├── src/acr_agi3/
+│   ├── agent/                         # ローカルLLM/VLM 推論アダプター (Qwen2.5-Coder/VL)
+│   ├── dsl/                           # 幾何変換 DSL & 公式カラーパレットレンダラー
+│   ├── eval/                          # 評価ハーネス & メトリクス (Pass@k, Exact Match)
+│   └── submission/                    # Kaggle / コンテスト提出用オフラインバンドラー
+├── data/
+│   ├── human_vcgt/                    # 人間のプレイ思考ログ (magicsword001/acr-agi-3-human-vcgt)
+│   ├── raw/                           # ARC 公式タスク (arc-agi_training_challenges.json 等)
+│   └── solutions/                     # 解答・成功スクリプト
+├── notebooks/                         # JupyterLab 実験ノートブック
 ├── scripts/
-│   ├── download_arc_data.py       # ARC データダウンロードスクリプト
-│   └── start.sh                   # コンテナ起動スクリプト
-├── skills/                        # ARC-AGI-3 特化の自己改善スキル群
-│   └── grid-analyzer/             # グリッド形状・色・対称性静的解析スキル
-│       ├── SKILL.md               # スキル仕様書 (Markdown-First)
-│       ├── scripts/               # 決定論的スクリプト
-│       └── tests/                 # EDD 契約テスト (正例3 + 負例3)
-├── src/
-│   └── acr_agi3/
-│       ├── agent/                 # 推論エージェント (Orchestrator, Hypothesis, Verifier, Evolver)
-│       ├── dsl/                   # ARC ドメイン固有言語 (Primitives, Interpreter)
-│       ├── eval/                  # 評価ハーネス & メトリクス (Pass@k, Exact Match)
-│       └── submission/            # Kaggle / コンテスト提出用バンドラー
-├── tests/                         # 全体統合・疎通テスト
-├── pyproject.toml                 # uv / pip パッケージ定義
+│   ├── run_evolution_loop.py          # ローカルLLM 自己改善ループランナー
+│   ├── run_vlm_evolution_loop.py      # Qwen2.5-VL 画像認識自己改善ループランナー
+│   └── download_arc_data.py           # ARC データダウンロードスクリプト
+├── ARCHITECTURE.md                    # アーキテクチャ完全仕様書
+├── AGENTS.md                          # AI エージェント運用ガイドライン
+├── pyproject.toml                     # uv / pip パッケージ定義
 └── README.md
 ```
+
 
 ---
 
