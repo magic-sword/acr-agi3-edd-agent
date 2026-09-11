@@ -2,7 +2,7 @@
 # =============================================================================
 # ARC-AGI-3 EDD Agent — コンテナ起動スクリプト
 # =============================================================================
-# JupyterLab をバックグラウンドで起動し、コンテナをアクティブに保つ。
+# JupyterLab を起動し、コンテナをアクティブに保つ。
 # docker exec で EDD Agent やテストコマンドを別途実行可能。
 # =============================================================================
 
@@ -20,11 +20,6 @@ echo "[INFO] CUDA:    $(python3 -c 'import torch; print(torch.version.cuda)' 2>/
 echo "[INFO] GPU:     $(python3 -c 'import torch; print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "N/A")' 2>/dev/null || echo 'not available')"
 echo ""
 
-# --- プロジェクトの editable インストール確認 ---
-if [ -f /workspace/pyproject.toml ]; then
-    pip install --quiet --no-cache-dir -e /workspace 2>/dev/null || true
-fi
-
 # --- JupyterLab 起動 ---
 echo "[INFO] Starting JupyterLab on port 8888..."
 echo "[INFO] Access: http://localhost:8888"
@@ -32,6 +27,7 @@ echo "[INFO] (SSH port forwarding: ssh -L 8888:localhost:8888 user@server)"
 echo ""
 
 exec jupyter lab \
+    --ip=0.0.0.0 \
     --port=8888 \
     --no-browser \
     --allow-root \

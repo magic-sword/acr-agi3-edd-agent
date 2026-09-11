@@ -40,6 +40,7 @@ services:
       - EDD_LOG_LEVEL=${EDD_LOG_LEVEL:-INFO}
       - DEFAULT_LLM_MODEL=${DEFAULT_LLM_MODEL:-gemini-2.5-flash}
       - EVOLVER_LLM_MODEL=${EVOLVER_LLM_MODEL:-gemini-2.5-pro}
+      - PYTHONPATH=/workspace/src
     env_file:
       - .env
     volumes:
