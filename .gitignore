@@ -248,3 +248,6 @@ notebooks/.ipynb_checkpoints/
 
 # Kaggle credentials
 .kaggle/
+
+# Runtime logs & experiment results
+logs/
