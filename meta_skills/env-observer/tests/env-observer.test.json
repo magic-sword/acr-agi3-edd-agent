@@ -1,7 +1,7 @@
 {
   "eval_set_id": "env-observer_edd",
   "name": "env-observer_edd",
-  "description": "Google ADK 2.0 Native EvalSet for env-observer meta-skill",
+  "description": "Google ADK 2.0 Native EvalSet for env-observer",
   "skill_name": "env-observer",
   "eval_cases": [
     {
@@ -13,7 +13,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Analyze the current game frame observation to identify player, goal, and obstacles"
+                "text": "Please execute env observer workflow with --help parameter"
               }
             ]
           },
@@ -21,7 +21,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Observed player at (1, 1), goal at (4, 4), and impassable wall boundaries along row 0."
+                "text": "usage_help"
               }
             ]
           },
@@ -31,7 +31,10 @@
                 "name": "run_skill_script",
                 "args": {
                   "skill_name": "env-observer",
-                  "file_path": "src/acr_agi3/meta/observer.py"
+                  "file_path": "scripts/env_observer.py",
+                  "args": [
+                    "--help"
+                  ]
                 }
               }
             ]
@@ -42,9 +45,16 @@
         {
           "rubric_id": "r_env-observer_001_1",
           "rubric_content": {
-            "text_property": "correctly extracts spatial affordances from observation grid"
+            "text_property": "correctly invokes run_skill_script with env_observer.py"
           },
           "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_env-observer_001_2",
+          "rubric_content": {
+            "text_property": "verifies execution output without cluttering context window"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     },
@@ -57,7 +67,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Analyze transition tuple where agent moved RIGHT from (1, 1) to (1, 2) without collision"
+                "text": "Run env-observer task for target data"
               }
             ]
           },
@@ -65,7 +75,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Transition analysis: Action.RIGHT resulted in successful displacement (0, 1), hit_obstacle is false."
+                "text": "execution_confirmation"
               }
             ]
           },
@@ -75,7 +85,11 @@
                 "name": "run_skill_script",
                 "args": {
                   "skill_name": "env-observer",
-                  "file_path": "src/acr_agi3/meta/observer.py"
+                  "file_path": "scripts/env_observer.py",
+                  "positional_args": [
+                    "sample_value"
+                  ],
+                  "args": {}
                 }
               }
             ]
@@ -86,9 +100,16 @@
         {
           "rubric_id": "r_env-observer_002_1",
           "rubric_content": {
-            "text_property": "extracts action displacement dynamics accurately"
+            "text_property": "runs run_skill_script with env_observer.py inputs"
           },
           "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_env-observer_002_2",
+          "rubric_content": {
+            "text_property": "preserves data structure"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     },
@@ -101,7 +122,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Detect interactive elements like key (4) and locked door (5) in game grid"
+                "text": "Process batch operations using env-observer"
               }
             ]
           },
@@ -109,7 +130,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Detected interactable item_color_4 at (1, 3) and conditional barrier at (3, 3)."
+                "text": "batch_summary"
               }
             ]
           },
@@ -119,7 +140,11 @@
                 "name": "run_skill_script",
                 "args": {
                   "skill_name": "env-observer",
-                  "file_path": "src/acr_agi3/meta/observer.py"
+                  "file_path": "scripts/env_observer.py",
+                  "positional_args": [
+                    "batch_item_1"
+                  ],
+                  "args": {}
                 }
               }
             ]
@@ -130,9 +155,16 @@
         {
           "rubric_id": "r_env-observer_003_1",
           "rubric_content": {
-            "text_property": "identifies interactable items correctly"
+            "text_property": "handles multiple items properly"
           },
           "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_env-observer_003_2",
+          "rubric_content": {
+            "text_property": "produces clear structured batch output"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     },
@@ -145,7 +177,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Synthesize a full Python action policy code choosing Action.UP"
+                "text": "Summarize the architectural benefits of Google ADK 2.0"
               }
             ]
           },
@@ -153,7 +185,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Use skill-synthesizer to generate executable action policies."
+                "text": "conceptual_summary"
               }
             ]
           },
@@ -166,9 +198,9 @@
         {
           "rubric_id": "r_env-observer_neg_001_1",
           "rubric_content": {
-            "text_property": "does NOT trigger env-observer for code synthesis tasks"
+            "text_property": "does not trigger env-observer"
           },
-          "type": "TOOL_USE_QUALITY"
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     },
@@ -181,7 +213,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Execute contract tests on an existing skill in the simulator"
+                "text": "What is the capital of France?"
               }
             ]
           },
@@ -189,7 +221,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Routing to contract-tester for simulation verification."
+                "text": "factual_answer"
               }
             ]
           },
@@ -202,9 +234,9 @@
         {
           "rubric_id": "r_env-observer_neg_002_1",
           "rubric_content": {
-            "text_property": "does NOT trigger env-observer for contract test executions"
+            "text_property": "does not trigger env-observer"
           },
-          "type": "TOOL_USE_QUALITY"
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     },
@@ -217,7 +249,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Diagnose failure error log from timeout step limit"
+                "text": "Explain the internal implementation of env-observer without running tools"
               }
             ]
           },
@@ -225,7 +257,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Routing to failure-diagnoser for error root cause analysis."
+                "text": "explanation_text"
               }
             ]
           },
@@ -238,9 +270,9 @@
         {
           "rubric_id": "r_env-observer_neg_003_1",
           "rubric_content": {
-            "text_property": "does NOT trigger env-observer on failure diagnosis requests"
+            "text_property": "does not trigger env-observer"
           },
-          "type": "TOOL_USE_QUALITY"
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     }

@@ -1,64 +1,67 @@
 ---
 name: failure-diagnoser
 description: |
-  Diagnoses simulation execution failures (wall collisions, trap hazards, oscillation loops).
-  Use when analyzing failure traces to generate actionable self-repair feedback for policy synthesis.
-  Do NOT use for successful test gating or direct frame observation.
+  Analyzes failed trajectories and diagnoses root causes for ACR-AGI-3 skills.
+  Use when the user asks to diagnose test failures, extract error patterns, or propose patches.
+  Do NOT use for synthesizing initial skills or running baseline simulations.
 license: MIT
-allowed-tools: run_skill_script
+allowed-tools: run_skill_script load_skill_resource
 metadata:
+  pattern: workflow
   version: "2.0.0"
-  pattern: "meta-workflow"
   inputs:
-    - name: test_report
+    - name: failed_report
       type: dict
-      description: Failure report from contract-tester or environment execution
+      description: Detailed test failure logs and tracebacks
+    - name: skill_source
+      type: str
+      description: Source code of failed skill
   outputs:
-    - name: diagnostic_summary
+    - name: failure_mode
       type: str
-      description: Root cause summary (collision, oscillation, timeout, exception)
-    - name: repair_guidance
-      type: str
-      description: Targeted feedback prompt for skill-synthesizer self-repair
+      description: Categorized failure reason
+    - name: repair_plan
+      type: dict
+      description: Specific repair instructions
 ---
 
-# Failure Diagnoser Meta-Skill
+# Failure Diagnoser
 
 ## When to use
-- Analyze test failure reports when a policy crashes or fails simulation gating.
-- Diagnose wall collision deadlocks, hazard trap collisions, or oscillation loops.
-- Formulate prompt-guided self-repair feedback for `skill-synthesizer` iterative retry.
+- Diagnose failed contract tests or episode terminations in ACR-AGI-3 gameplay.
+- Categorize failure modes (collision with wall, fatal trap contact, oscillatory loop, out-of-bounds).
+- Produce targeted bug fixes and patch plans for `skill-synthesizer`.
 
 ## When NOT to use
-- Synthesizing new policies from scratch without failure context (use `skill-synthesizer`).
-- Gating passed policies into the verified library (use `contract-tester`).
-- Initial visual affordance parsing (use `env-observer`).
+- Running initial passing simulations (use `contract-tester`).
+- Extracting raw environmental affordances (use `env-observer`).
+- Static ARC puzzle transformation debugging.
 
 ## Workflow
-1. Failure Log Ingestion: Read execution report `verification` dictionary with `status`, `steps_taken`, and `error`.
-2. Root Cause Classification: Categorize into:
-   - Obstacle Deadlock: Repeated collisions with same wall cell.
-   - Hazard Collision: Negative terminal reward from hazard entry.
-   - Oscillation Loop: Alternating movements without spatial displacement.
-   - Timeout: Failing to reach goal within step budget.
-3. Repair Instruction Generation: Produce concrete algorithmic hints (e.g., add visited history buffer, add orthogonal detour waypoint).
+1. Trace Ingestion and Error Parsing: To extract the failing frame, target coordinates, and action trace:
+   ```bash
+   python scripts/failure_diagnoser.py --input "data"
+   ```
+2. Failure Root-Cause Classification: To classify whether failure is caused by path planning, incorrect affordance labeling, or unmet game state constraints.
+3. Repair Directive Formulation: To generate targeted modification instructions and pass them to `skill-synthesizer` for iterative self-repair.
 
 ## Examples
-- Input: `{"status": "timeout", "steps_taken": 50, "last_pos": (1, 2), "wall": (1, 3)}` → Output: `{"diagnostic_summary": "Wall collision deadlock at (1, 3)", "repair_guidance": "Add orthogonal detour step (UP or DOWN) when wall blocked in heading direction."}`
+- Input: "Action RIGHT resulted in lethal hazard contact at (2, 3)" → Output: `{"failure_mode": "HAZARD_COLLISION", "culprit_action": "RIGHT", "required_fix": "Add cell (2, 3) to taboo set"}`
 
 ## Output format
-- Dictionary with `diagnostic_summary` and `repair_guidance` string.
+- Return direct operational summary and structured result files.
 
 ## Anti-patterns to avoid
-- Do not output vague advice ("try harder"); always specify exact coordinates and corrective maneuver.
-- Do not recommend random actions when deterministic detour waypoints are required.
+- Do not make vague suggestions; provide precise code lines and constraint fixes.
+- Do not repeat the same broken action sequence without updating environmental constraints.
+- Do not read large scripts into LLM context window without running `--help`.
 
 ## Requirements & Prerequisites
 - Python: >= 3.10
-- External packages: numpy
 
 ## Bundled Resources
-### `references/`
-- Reference implementations in `src/acr_agi3/agent/evolver.py` and `meta_agent.py`.
+### `scripts/` (Executable Tools - Zero-dependency)
+- `scripts/failure_diagnoser.py`: Deterministic CLI tool for failure diagnosis.
 
-
+### `references/` (On-Demand Knowledge)
+- `references/guide.md`: Specifications, failure taxonomy, and repair patterns.

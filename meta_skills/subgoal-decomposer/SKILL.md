@@ -1,63 +1,64 @@
 ---
 name: subgoal-decomposer
 description: |
-  Decomposes complex game objectives into verifiable intermediate milestones (Subgoals).
-  Use when planning sequential milestones (key retrieval, obstacle bypass, goal arrival).
-  Do NOT use for single-step primitive execution or post-mortem failure tracing.
+  Decomposes long-horizon game objectives into ordered intermediate subgoals.
+  Use when the user asks to plan gameplay steps, break down levels, or sequence subgoals.
+  Do NOT use for single-step primitive action execution or static grid rotations.
 license: MIT
-allowed-tools: run_skill_script
+allowed-tools: run_skill_script load_skill_resource
 metadata:
+  pattern: workflow
   version: "2.0.0"
-  pattern: "meta-workflow"
   inputs:
-    - name: observation
-      type: numpy.ndarray
-      description: Current game observation grid
     - name: affordances
       type: dict
-      description: Extracted roles (agent, obstacles, goals, items)
+      description: Locations of player, goal, keys, doors, switches
+    - name: game_objective
+      type: str
+      description: Overall stage clearance criteria
   outputs:
-    - name: subgoals
+    - name: subgoal_sequence
       type: list[dict]
-      description: Ordered milestone list with preconditions and objectives
+      description: Ordered milestone checkpoints
 ---
 
-# Subgoal Decomposer Meta-Skill
+# Subgoal Decomposer
 
 ## When to use
-- Plan sequential milestones (e.g., collect key, bypass obstacle, reach goal) for a game stage.
-- Break down complex multi-objective navigation tasks into independently testable subgoals.
-- Establish intermediate waypoint constraints based on Human Visual Concept Guided Thinking (VCGT).
+- Decompose complex multi-step ACR-AGI-3 levels into manageable intermediate milestones.
+- Formulate sequential dependencies (e.g., Navigate to Key -> Collect Key -> Navigate to Door -> Unlock Door -> Reach Exit).
+- Update subgoal sequences dynamically when environment state changes unexpectedly.
 
 ## When NOT to use
-- Executing single action primitives (use compiled action policies).
-- Low-level frame pixel feature extraction (use `env-observer`).
-- Diagnosing why a policy collided with a wall (use `failure-diagnoser`).
+- Primitive single-step physics simulations (use `env-observer`).
+- Direct action policy code execution (use synthesized skills).
+- Static ARC puzzle transformation planning.
 
 ## Workflow
-1. Affordance Ingestion: Receive current grid state, agent position, item positions, and goal coordinates.
-2. Topological Plan Formulation: Identify mandatory sequential bottlenecks (e.g. acquire item 4 before entering door 5).
-3. Milestone Generation: Output ordered `DecompositionPlan`:
-   ```python
-   plan = decomposer.decompose_game(obs)
+1. Objective and Topology Inspection: To examine player position, target exit, and locked barriers:
+   ```bash
+   python scripts/subgoal_decomposer.py --input "data"
    ```
-4. Hand-off: Deliver subgoal milestones to `skill-synthesizer` for modular skill synthesis.
+2. Dependency Graph Construction: To resolve topological ordering of prerequisite objects (keys before doors, switches before bridges).
+3. Subgoal Plan Emission: To output a structured sequence of intermediate target coordinates with clear termination conditions.
 
 ## Examples
-- Input: Map with key at (1, 7), wall at column 4, goal at (8, 8) → Output: 3 subgoals (`Acquire_item_color_4`, `BypassCentralObstacle`, `ReachGoalAndClearStage`).
+- Input: "Player at (0, 0), Key at (2, 2), Door at (4, 4), Goal at (5, 5)" → Output: `[{"subgoal_id": 1, "target": [2, 2], "action": "COLLECT_KEY"}, {"subgoal_id": 2, "target": [4, 4], "action": "UNLOCK_DOOR"}, {"subgoal_id": 3, "target": [5, 5], "action": "REACH_GOAL"}]`
 
 ## Output format
-- Structured `DecompositionPlan` with list of `subgoals` containing `index`, `name`, `objective`, `reasoning`.
+- Return direct operational summary and structured result files.
 
 ## Anti-patterns to avoid
-- Never attempt to plan an entire multi-room maze as a single monolithic policy without subgoals.
-- Do not plan unreachable subgoals without checking impassable boundary connectivity.
+- Do not plan direct paths to the goal when intermediate keys or doors block the way.
+- Do not create circular dependency graphs.
+- Do not read large scripts into LLM context window without running `--help`.
 
 ## Requirements & Prerequisites
 - Python: >= 3.10
-- External packages: numpy
 
 ## Bundled Resources
-### `references/`
-- Reference implementations in `src/acr_agi3/meta/decomposer.py`.
+### `scripts/` (Executable Tools - Zero-dependency)
+- `scripts/subgoal_decomposer.py`: Deterministic CLI tool for subgoal decomposition.
 
+### `references/` (On-Demand Knowledge)
+- `references/guide.md`: Specifications and subgoal sequencing patterns.

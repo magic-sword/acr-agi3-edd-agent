@@ -1,7 +1,7 @@
 {
   "eval_set_id": "contract-tester_edd",
   "name": "contract-tester_edd",
-  "description": "Google ADK 2.0 Native EvalSet for contract-tester meta-skill",
+  "description": "Google ADK 2.0 Native EvalSet for contract-tester",
   "skill_name": "contract-tester",
   "eval_cases": [
     {
@@ -13,7 +13,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Run simulation contract test for policy test_game_mover on Mock1DGameEnv"
+                "text": "Please execute contract tester workflow with --help parameter"
               }
             ]
           },
@@ -21,7 +21,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Contract test passed: goal reached in 2 steps with reward 1.0."
+                "text": "usage_help"
               }
             ]
           },
@@ -31,7 +31,10 @@
                 "name": "run_skill_script",
                 "args": {
                   "skill_name": "contract-tester",
-                  "file_path": "src/acr_agi3/agent/llm/edd_tools.py"
+                  "file_path": "scripts/contract_tester.py",
+                  "args": [
+                    "--help"
+                  ]
                 }
               }
             ]
@@ -42,9 +45,16 @@
         {
           "rubric_id": "r_contract-tester_001_1",
           "rubric_content": {
-            "text_property": "executes policy simulation and validates goal arrival"
+            "text_property": "correctly invokes run_skill_script with contract_tester.py"
           },
           "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_contract-tester_001_2",
+          "rubric_content": {
+            "text_property": "verifies execution output without cluttering context window"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     },
@@ -57,7 +67,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Verify if policy avoids wall collision at (1, 2) when navigating right"
+                "text": "Run contract-tester task for target data"
               }
             ]
           },
@@ -65,7 +75,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Negative contract check passed: policy detects wall and chooses detour without collision."
+                "text": "execution_confirmation"
               }
             ]
           },
@@ -75,7 +85,11 @@
                 "name": "run_skill_script",
                 "args": {
                   "skill_name": "contract-tester",
-                  "file_path": "src/acr_agi3/agent/llm/edd_tools.py"
+                  "file_path": "scripts/contract_tester.py",
+                  "positional_args": [
+                    "sample_value"
+                  ],
+                  "args": {}
                 }
               }
             ]
@@ -86,9 +100,16 @@
         {
           "rubric_id": "r_contract-tester_002_1",
           "rubric_content": {
-            "text_property": "verifies zero wall collision constraint"
+            "text_property": "runs run_skill_script with contract_tester.py inputs"
           },
           "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_contract-tester_002_2",
+          "rubric_content": {
+            "text_property": "preserves data structure"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     },
@@ -101,7 +122,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Check if policy execution terminates within max_steps threshold 50"
+                "text": "Process batch operations using contract-tester"
               }
             ]
           },
@@ -109,7 +130,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Timeout gating check passed: task completed in 14 steps."
+                "text": "batch_summary"
               }
             ]
           },
@@ -119,7 +140,11 @@
                 "name": "run_skill_script",
                 "args": {
                   "skill_name": "contract-tester",
-                  "file_path": "src/acr_agi3/agent/llm/edd_tools.py"
+                  "file_path": "scripts/contract_tester.py",
+                  "positional_args": [
+                    "batch_item_1"
+                  ],
+                  "args": {}
                 }
               }
             ]
@@ -130,9 +155,16 @@
         {
           "rubric_id": "r_contract-tester_003_1",
           "rubric_content": {
-            "text_property": "verifies step limit constraints"
+            "text_property": "handles multiple items properly"
           },
           "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_contract-tester_003_2",
+          "rubric_content": {
+            "text_property": "produces clear structured batch output"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     },
@@ -145,7 +177,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Write a python function to solve pathfinding"
+                "text": "Summarize the architectural benefits of Google ADK 2.0"
               }
             ]
           },
@@ -153,7 +185,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Routing to skill-synthesizer for code writing."
+                "text": "conceptual_summary"
               }
             ]
           },
@@ -166,9 +198,9 @@
         {
           "rubric_id": "r_contract-tester_neg_001_1",
           "rubric_content": {
-            "text_property": "does NOT trigger contract-tester on code synthesis requests"
+            "text_property": "does not trigger contract-tester"
           },
-          "type": "TOOL_USE_QUALITY"
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     },
@@ -181,7 +213,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Classify colors in raw grid frame"
+                "text": "What is the capital of France?"
               }
             ]
           },
@@ -189,7 +221,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Use env-observer for spatial color classification."
+                "text": "factual_answer"
               }
             ]
           },
@@ -202,9 +234,9 @@
         {
           "rubric_id": "r_contract-tester_neg_002_1",
           "rubric_content": {
-            "text_property": "does NOT trigger contract-tester for frame perception"
+            "text_property": "does not trigger contract-tester"
           },
-          "type": "TOOL_USE_QUALITY"
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     },
@@ -217,7 +249,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Explain why the agent died from poison hazard"
+                "text": "Explain the internal implementation of contract-tester without running tools"
               }
             ]
           },
@@ -225,7 +257,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Routing to failure-diagnoser for hazard death explanation."
+                "text": "explanation_text"
               }
             ]
           },
@@ -238,9 +270,9 @@
         {
           "rubric_id": "r_contract-tester_neg_003_1",
           "rubric_content": {
-            "text_property": "does NOT trigger contract-tester on post-mortem diagnosis"
+            "text_property": "does not trigger contract-tester"
           },
-          "type": "TOOL_USE_QUALITY"
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     }

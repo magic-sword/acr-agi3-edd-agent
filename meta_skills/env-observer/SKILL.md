@@ -1,14 +1,14 @@
 ---
 name: env-observer
 description: |
-  Extracts affordances (agent, obstacles, targets, hazards) and transition dynamics from ACR-AGI-3 games.
-  Use when observing game frames or analyzing state transitions to infer causal interaction rules.
-  Do NOT use for synthesising full action policy scripts or static puzzle grid transforms.
+  Extracts affordances, invariants, and transition dynamics from ACR-AGI-3 games.
+  Use when the user asks to observe game frames, extract visual affordances, or infer dynamics.
+  Do NOT use for static puzzle grid transforms or final action policy execution.
 license: MIT
-allowed-tools: run_skill_script
+allowed-tools: run_skill_script load_skill_resource
 metadata:
+  pattern: workflow
   version: "2.0.0"
-  pattern: "meta-workflow"
   inputs:
     - name: observation
       type: numpy.ndarray
@@ -25,7 +25,7 @@ metadata:
       description: Inferred causality rules
 ---
 
-# Environment Observer Meta-Skill
+# Environment Observer
 
 ## When to use
 - Observe raw 2D observation frames of an unknown ACR-AGI-3 game environment.
@@ -38,28 +38,31 @@ metadata:
 - Running contract test simulation loops (use `contract-tester`).
 
 ## Workflow
-1. Frame Affordance Analysis: Pass raw color observation grid to extract spatial boundaries, background, agent, obstacles, and items:
+1. Reconnaissance and Affordance Analysis: To inspect the raw observation grid and identify spatial boundaries, player, and objects:
    ```bash
-   python -m acr_agi3.meta.observer --frame "<observation_array>"
+   python scripts/env_observer.py --input "data"
    ```
-2. Transition Causality Extraction: Feed `(obs_before, action, obs_after)` tuples to identify move displacement, collision elasticity, or key-lock interaction.
-3. Structured Hand-off: Pass structured affordance report to `subgoal-decomposer` and `skill-synthesizer`.
+2. Transition Causality Extraction: To analyze step transitions `(obs, action, next_obs)` and extract motion vectors and collision rules.
+3. Result Verification: To verify the extracted affordance dictionary contains all required fields and pass structured context to downstream meta-skills.
 
 ## Examples
-- Input: 5x5 grid with agent at (1, 1), walls at row 0, goal at (4, 4) → Output: `{"player_pos": (1, 1), "goal_pos": (4, 4), "obstacles": [(0, 0), ...], "background": 0}`
+- Input: "Observe grid with agent at (1, 1), walls at row 0, goal at (4, 4)" → Output: `{"player_pos": [1, 1], "goal_pos": [4, 4], "obstacles": [[0, 0], [0, 1]], "background": 0}`
 
 ## Output format
-- Structured dictionary with keys: `grid_shape`, `background_color`, `player_pos`, `goal_pos`, `obstacles`, `hazards`, `interactables`.
+- Return direct operational summary and structured result files.
 
 ## Anti-patterns to avoid
 - Do not assume agent coordinate is always color 2 without checking motion displacement across steps.
 - Do not treat dynamic game grids as static matrix math transformations.
+- Do not read large scripts into LLM context window without running `--help`.
 
 ## Requirements & Prerequisites
 - Python: >= 3.10
 - External packages: numpy
 
 ## Bundled Resources
-### `references/`
-- Reference implementations in `src/acr_agi3/meta/observer.py`.
+### `scripts/` (Executable Tools - Zero-dependency)
+- `scripts/env_observer.py`: Deterministic CLI tool for environment observation.
 
+### `references/` (On-Demand Knowledge)
+- `references/guide.md`: Specifications and gameplay affordance guidelines.

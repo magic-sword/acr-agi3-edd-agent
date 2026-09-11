@@ -1,68 +1,71 @@
 ---
 name: skill-synthesizer
 description: |
-  Synthesizes deterministic action policies (`choose_action`) with contract test specifications.
-  Use when creating a new game action skill for a subgoal or composing verified skills.
-  Do NOT use for environment frame observation or direct failure diagnosis.
+  Synthesizes executable action policies and contract tests for ACR-AGI-3 games.
+  Use when the user asks to generate Python skills, create contract tests, or build action policies.
+  Do NOT use for static grid color transformations or diagnosing test failures.
 license: MIT
-allowed-tools: run_skill_script
+allowed-tools: run_skill_script load_skill_resource
 metadata:
+  pattern: template_generator
   version: "2.0.0"
-  pattern: "meta-workflow"
   inputs:
     - name: affordances
       type: dict
-      description: Identified roles (agent, obstacles, goals)
-    - name: subgoal
-      type: dict
-      description: Target milestone coordinates and conditions
+      description: Identified roles (agent, obstacles, goals, hazards)
+    - name: dynamics_rules
+      type: list[str]
+      description: Inferred game mechanics
   outputs:
-    - name: policy_code
+    - name: skill_code
       type: str
-      description: Implementation of choose_action(obs, info) -> Action
-    - name: skill_md
-      type: str
-      description: Generated SKILL.md documentation
+      description: Complete Python policy code
+    - name: contract_tests
+      type: list[dict]
+      description: 3 positive and 3 negative test cases
 ---
 
-# Skill Synthesizer Meta-Skill
+# Skill Synthesizer
 
 ## When to use
-- Synthesize a modular, testable Python action policy `choose_action(obs, info=None) -> Action`.
-- Generate contract test cases (3 positive + 3 negative cases) for an action subgoal.
-- Compose existing verified skills from the skill library into a higher-order strategy.
+- Synthesize actionable Python policy scripts for unknown ACR-AGI-3 game environments.
+- Generate mandatory Evaluation-Driven Development (EDD) contract test suites (3 positive + 3 negative cases).
+- Package domain algorithms (A* pathfinding, BFS maze routing, key-door solvers) into modular skill units.
 
 ## When NOT to use
-- Initial spatial affordance observation from raw grids (use `env-observer`).
-- Diagnosing traceback errors or timeout failures (use `failure-diagnoser`).
-- Running execution loops in the simulation environment (use `contract-tester`).
+- Static matrix math transformations for ARC-1/2 puzzles.
+- Failure diagnosis or repairing broken skills (use `failure-diagnoser`).
+- Evaluating contract tests against simulation environments (use `contract-tester`).
 
 ## Workflow
-1. Milestone Requirement Ingestion: Ingest subgoal objective, player position, and obstacle layout.
-2. Code Synthesis: Generate deterministic policy adhering to standard signature:
-   ```python
-   from acr_agi3.game.env import Action
-   def choose_action(obs: np.ndarray, info: dict | None = None) -> Action:
-       ...
+1. Reconnaissance and Specification Review: To inspect affordances, subgoals, and environmental constraints:
+   ```bash
+   python scripts/skill_synthesizer.py --help
    ```
-3. Contract Test Generation: Scaffold 3 positive scenarios (direct path, detour, arrival) and 3 negative scenarios (wall collision, hazard entry, out-of-bounds).
+2. Core Synthesis: To generate deterministic policy code with `choose_action(obs) -> Action` signature:
+   ```bash
+   python scripts/skill_synthesizer.py --input "data"
+   ```
+3. Contract Test Construction: To produce 3 positive reachable trajectories and 3 negative boundary scenarios (collision, traps, out-of-bounds).
 
 ## Examples
-- Subgoal: "Reach Key (4) at (1, 3)" → Generates `choose_action` prioritizing horizontal movement along row 1 with wall avoidance.
+- Input: "Synthesize grid navigation skill with 3 positive and 3 negative tests" → Output: `Generated skill 'grid-navigator' with 6 contract test cases`
 
 ## Output format
-- Python policy code block and corresponding `SKILL.md` specifications.
+- Return direct operational summary and structured result files.
 
 ## Anti-patterns to avoid
-- Never output hardcoded step lists without closed-loop observation checks.
-- Do not skip negative contract tests (avoiding obstacles and hazards).
+- Do not commit generated concrete skills into `meta_skills/`; output to `generated_skills/`.
+- Never produce policy code without accompanying 3 positive and 3 negative contract tests.
+- Do not use conversational phrasing in generated code comments.
 
 ## Requirements & Prerequisites
 - Python: >= 3.10
 - External packages: numpy
 
 ## Bundled Resources
-### `references/`
-- Reference implementations in `src/acr_agi3/agent/llm_agent.py` and `meta_agent.py`.
+### `scripts/` (Executable Tools - Zero-dependency)
+- `scripts/skill_synthesizer.py`: Core CLI tool for Skill Synthesizer.
 
-
+### `references/` (On-Demand Knowledge)
+- `references/guide.md`: Specifications, templates, and contract test design rules.

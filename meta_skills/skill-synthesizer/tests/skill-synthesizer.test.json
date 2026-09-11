@@ -1,7 +1,7 @@
 {
   "eval_set_id": "skill-synthesizer_edd",
   "name": "skill-synthesizer_edd",
-  "description": "Google ADK 2.0 Native EvalSet for skill-synthesizer meta-skill",
+  "description": "Google ADK 2.0 Native EvalSet for skill-synthesizer",
   "skill_name": "skill-synthesizer",
   "eval_cases": [
     {
@@ -13,7 +13,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Synthesize a Python action policy to navigate right towards goal"
+                "text": "Please execute skill synthesizer workflow with --help parameter"
               }
             ]
           },
@@ -21,7 +21,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Generated choose_action policy navigating right."
+                "text": "usage_help"
               }
             ]
           },
@@ -31,7 +31,10 @@
                 "name": "run_skill_script",
                 "args": {
                   "skill_name": "skill-synthesizer",
-                  "file_path": "src/acr_agi3/agent/llm_agent.py"
+                  "file_path": "scripts/skill_synthesizer.py",
+                  "args": [
+                    "--help"
+                  ]
                 }
               }
             ]
@@ -42,9 +45,16 @@
         {
           "rubric_id": "r_skill-synthesizer_001_1",
           "rubric_content": {
-            "text_property": "synthesizes compliant choose_action policy function"
+            "text_property": "correctly invokes run_skill_script with skill_synthesizer.py"
           },
           "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_skill-synthesizer_001_2",
+          "rubric_content": {
+            "text_property": "verifies execution output without cluttering context window"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     },
@@ -57,7 +67,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Generate contract test cases with 3 positive and 3 negative boundary scenarios"
+                "text": "Run skill-synthesizer task for target data"
               }
             ]
           },
@@ -65,7 +75,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Contract test cases generated with required boundary conditions."
+                "text": "execution_confirmation"
               }
             ]
           },
@@ -75,7 +85,11 @@
                 "name": "run_skill_script",
                 "args": {
                   "skill_name": "skill-synthesizer",
-                  "file_path": "src/acr_agi3/agent/llm_agent.py"
+                  "file_path": "scripts/skill_synthesizer.py",
+                  "positional_args": [
+                    "sample_value"
+                  ],
+                  "args": {}
                 }
               }
             ]
@@ -86,9 +100,16 @@
         {
           "rubric_id": "r_skill-synthesizer_002_1",
           "rubric_content": {
-            "text_property": "creates 3 positive and 3 negative test cases"
+            "text_property": "runs run_skill_script with skill_synthesizer.py inputs"
           },
           "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_skill-synthesizer_002_2",
+          "rubric_content": {
+            "text_property": "preserves data structure"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     },
@@ -101,7 +122,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Compose existing verified skills test_step_right and test_step_down into diagonal movement"
+                "text": "Process batch operations using skill-synthesizer"
               }
             ]
           },
@@ -109,7 +130,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Synthesized composite policy combining horizontal and vertical verified subroutines."
+                "text": "batch_summary"
               }
             ]
           },
@@ -119,7 +140,11 @@
                 "name": "run_skill_script",
                 "args": {
                   "skill_name": "skill-synthesizer",
-                  "file_path": "src/acr_agi3/agent/llm_agent.py"
+                  "file_path": "scripts/skill_synthesizer.py",
+                  "positional_args": [
+                    "batch_item_1"
+                  ],
+                  "args": {}
                 }
               }
             ]
@@ -130,9 +155,16 @@
         {
           "rubric_id": "r_skill-synthesizer_003_1",
           "rubric_content": {
-            "text_property": "composes verified subroutines properly"
+            "text_property": "handles multiple items properly"
           },
           "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_skill-synthesizer_003_2",
+          "rubric_content": {
+            "text_property": "produces clear structured batch output"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     },
@@ -145,7 +177,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Extract affordance roles from game frame"
+                "text": "Summarize the architectural benefits of Google ADK 2.0"
               }
             ]
           },
@@ -153,7 +185,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Use env-observer for spatial affordance classification."
+                "text": "conceptual_summary"
               }
             ]
           },
@@ -166,9 +198,9 @@
         {
           "rubric_id": "r_skill-synthesizer_neg_001_1",
           "rubric_content": {
-            "text_property": "does NOT invoke skill-synthesizer for frame observation"
+            "text_property": "does not trigger skill-synthesizer"
           },
-          "type": "TOOL_USE_QUALITY"
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     },
@@ -181,7 +213,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Diagnose runtime IndexError exception from crash log"
+                "text": "What is the capital of France?"
               }
             ]
           },
@@ -189,7 +221,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Routing to failure-diagnoser for traceback inspection."
+                "text": "factual_answer"
               }
             ]
           },
@@ -202,9 +234,9 @@
         {
           "rubric_id": "r_skill-synthesizer_neg_002_1",
           "rubric_content": {
-            "text_property": "does NOT trigger skill-synthesizer for crash diagnosis"
+            "text_property": "does not trigger skill-synthesizer"
           },
-          "type": "TOOL_USE_QUALITY"
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     },
@@ -217,7 +249,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Decompose long game into intermediate milestones"
+                "text": "Explain the internal implementation of skill-synthesizer without running tools"
               }
             ]
           },
@@ -225,7 +257,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Use subgoal-decomposer to plan intermediate stages."
+                "text": "explanation_text"
               }
             ]
           },
@@ -238,9 +270,9 @@
         {
           "rubric_id": "r_skill-synthesizer_neg_003_1",
           "rubric_content": {
-            "text_property": "does NOT trigger skill-synthesizer for subgoal planning"
+            "text_property": "does not trigger skill-synthesizer"
           },
-          "type": "TOOL_USE_QUALITY"
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     }

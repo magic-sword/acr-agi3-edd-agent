@@ -1,7 +1,7 @@
 {
   "eval_set_id": "constraint-learner_edd",
   "name": "constraint-learner_edd",
-  "description": "Google ADK 2.0 Native EvalSet for constraint-learner meta-skill",
+  "description": "Google ADK 2.0 Native EvalSet for constraint-learner",
   "skill_name": "constraint-learner",
   "eval_cases": [
     {
@@ -13,7 +13,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Extract dead-end constraint from trajectory where box was pushed into concave corner (0, 0)"
+                "text": "Please execute constraint learner workflow with --help parameter"
               }
             ]
           },
@@ -21,7 +21,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Constraint extracted: Avoid pushing movable blocks into non-retrievable 2-wall corner cells."
+                "text": "usage_help"
               }
             ]
           },
@@ -31,7 +31,10 @@
                 "name": "run_skill_script",
                 "args": {
                   "skill_name": "constraint-learner",
-                  "file_path": "src/acr_agi3/meta/human_vcgt.py"
+                  "file_path": "scripts/constraint_learner.py",
+                  "args": [
+                    "--help"
+                  ]
                 }
               }
             ]
@@ -42,9 +45,16 @@
         {
           "rubric_id": "r_constraint-learner_001_1",
           "rubric_content": {
-            "text_property": "learns corner deadlock constraints from loss trajectory"
+            "text_property": "correctly invokes run_skill_script with constraint_learner.py"
           },
           "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_constraint-learner_001_2",
+          "rubric_content": {
+            "text_property": "verifies execution output without cluttering context window"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     },
@@ -57,7 +67,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Formulate pruning rule from trajectory stepping on hazard trap"
+                "text": "Run constraint-learner task for target data"
               }
             ]
           },
@@ -65,7 +75,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Pruning rule formulated: Prohibit any action that places agent within hazard coordinate set."
+                "text": "execution_confirmation"
               }
             ]
           },
@@ -75,7 +85,11 @@
                 "name": "run_skill_script",
                 "args": {
                   "skill_name": "constraint-learner",
-                  "file_path": "src/acr_agi3/meta/human_vcgt.py"
+                  "file_path": "scripts/constraint_learner.py",
+                  "positional_args": [
+                    "sample_value"
+                  ],
+                  "args": {}
                 }
               }
             ]
@@ -86,9 +100,16 @@
         {
           "rubric_id": "r_constraint-learner_002_1",
           "rubric_content": {
-            "text_property": "extracts hazard avoidance constraints"
+            "text_property": "runs run_skill_script with constraint_learner.py inputs"
           },
           "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_constraint-learner_002_2",
+          "rubric_content": {
+            "text_property": "preserves data structure"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     },
@@ -101,7 +122,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Analyze key retrieval constraint: door (5) cannot be passed before key (4) acquired"
+                "text": "Process batch operations using constraint-learner"
               }
             ]
           },
@@ -109,7 +130,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Constraint formulated: Door cell remains impassable obstacle until key possession flag is true."
+                "text": "batch_summary"
               }
             ]
           },
@@ -119,7 +140,11 @@
                 "name": "run_skill_script",
                 "args": {
                   "skill_name": "constraint-learner",
-                  "file_path": "src/acr_agi3/meta/human_vcgt.py"
+                  "file_path": "scripts/constraint_learner.py",
+                  "positional_args": [
+                    "batch_item_1"
+                  ],
+                  "args": {}
                 }
               }
             ]
@@ -130,9 +155,16 @@
         {
           "rubric_id": "r_constraint-learner_003_1",
           "rubric_content": {
-            "text_property": "extracts prerequisite state dependency constraint"
+            "text_property": "handles multiple items properly"
           },
           "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_constraint-learner_003_2",
+          "rubric_content": {
+            "text_property": "produces clear structured batch output"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     },
@@ -145,7 +177,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Choose action for current step"
+                "text": "Summarize the architectural benefits of Google ADK 2.0"
               }
             ]
           },
@@ -153,7 +185,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Use action policy choose_action directly."
+                "text": "conceptual_summary"
               }
             ]
           },
@@ -166,9 +198,9 @@
         {
           "rubric_id": "r_constraint-learner_neg_001_1",
           "rubric_content": {
-            "text_property": "does NOT trigger constraint-learner for runtime action decisions"
+            "text_property": "does not trigger constraint-learner"
           },
-          "type": "TOOL_USE_QUALITY"
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     },
@@ -181,7 +213,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Classify affordance roles from game frame"
+                "text": "What is the capital of France?"
               }
             ]
           },
@@ -189,7 +221,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Use env-observer for affordance classification."
+                "text": "factual_answer"
               }
             ]
           },
@@ -202,9 +234,9 @@
         {
           "rubric_id": "r_constraint-learner_neg_002_1",
           "rubric_content": {
-            "text_property": "does NOT trigger constraint-learner on frame affordance observation"
+            "text_property": "does not trigger constraint-learner"
           },
-          "type": "TOOL_USE_QUALITY"
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     },
@@ -217,7 +249,7 @@
             "role": "user",
             "parts": [
               {
-                "text": "Run contract tests on game simulation environment"
+                "text": "Explain the internal implementation of constraint-learner without running tools"
               }
             ]
           },
@@ -225,7 +257,7 @@
             "role": "model",
             "parts": [
               {
-                "text": "Use contract-tester for simulation testing."
+                "text": "explanation_text"
               }
             ]
           },
@@ -238,9 +270,9 @@
         {
           "rubric_id": "r_constraint-learner_neg_003_1",
           "rubric_content": {
-            "text_property": "does NOT trigger constraint-learner for contract testing"
+            "text_property": "does not trigger constraint-learner"
           },
-          "type": "TOOL_USE_QUALITY"
+          "type": "FINAL_RESPONSE_QUALITY"
         }
       ]
     }

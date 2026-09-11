@@ -1,67 +1,68 @@
 ---
 name: contract-tester
 description: |
-  Executes contract tests and simulation gating for action policies to guarantee safety.
-  Use when verifying generated action policies on simulation environments before deployment.
-  Do NOT use for observing raw frames or generating python code blocks.
+  Executes EDD contract test gates and sandboxed simulations for ACR-AGI-3 skills.
+  Use when the user asks to validate generated skills, run contract tests, or check firewall gates.
+  Do NOT use for synthesizing new skills or diagnosing failure causes.
 license: MIT
-allowed-tools: run_skill_script
+allowed-tools: run_skill_script load_skill_resource
 metadata:
+  pattern: workflow
   version: "2.0.0"
-  pattern: "meta-workflow"
   inputs:
-    - name: skill_name
+    - name: skill_path
       type: str
-      description: Name of skill to verify
-    - name: test_env
-      type: GameEnvironment
-      description: Game environment simulator instance
+      description: Directory path of candidate skill
+    - name: eval_cases
+      type: list[dict]
+      description: 3 positive and 3 negative test cases
   outputs:
-    - name: is_solved
+    - name: passed
       type: bool
-      description: Whether the policy cleared the stage within limit
-    - name: test_report
+      description: True if 100% of test cases pass
+    - name: report
       type: dict
-      description: Execution details (steps taken, reward, history)
+      description: Detailed test run report
 ---
 
-# Contract Tester Meta-Skill
+# Contract Tester
 
 ## When to use
-- Verify newly synthesized game action policies against positive and negative contract tests.
-- Run deterministic multi-step game simulation loops to detect collisions, oscillation loops, or timeouts.
-- Gatekeeper validation before registering skills into the permanent verified skill library.
+- Execute Evaluation-Driven Development (EDD) contract test suites against candidate skills.
+- Enforce the 100% pass firewall gate (3 positive + 3 negative cases) before skill adoption.
+- Run deterministic sandbox simulations to detect boundary violations, infinite loops, and exceptions.
 
 ## When NOT to use
-- Observing initial visual game frames (use `env-observer`).
-- Writing or refactoring policy code (use `skill-synthesizer`).
-- Deep failure root-cause traceback extraction (use `failure-diagnoser`).
+- Generating new skills or writing test definitions (use `skill-synthesizer`).
+- Diagnosing why a contract test failed (use `failure-diagnoser`).
+- Direct static transformation tests for ARC-1/2 puzzles.
 
 ## Workflow
-1. Environment Reset: Reset simulation environment and initialize policy globals.
-2. Step Loop Execution: Step through policy with closed-loop observations up to `max_steps`:
-   ```python
-   verification = execute_and_verify_game_policy(code, env, max_steps=50)
+1. Reconnaissance and Test Ingestion: To inspect the candidate skill directory, test config, and evaluation cases:
+   ```bash
+   python scripts/contract_tester.py --input "data"
    ```
-3. Pass/Fail Decision: Check that `verification["success"]` is true with zero hazard/wall collisions.
-4. Routing: If passed, hand off to library registration; if failed, forward report to `failure-diagnoser`.
+2. Sandboxed Execution: To execute all 3 positive and 3 negative contract tests in an isolated Python environment with timeout safeguards.
+3. Firewall Gate Verdict: To verify all test assertions pass; emit promotion signal if passed, or route error logs to `failure-diagnoser`.
 
 ## Examples
-- Input: `test_mover` on 1D environment → Output: `{"is_solved": True, "steps_taken": 2, "final_reward": 1.0}`
+- Input: "Run contract tests on generated_skills/maze-solver" → Output: `Passed 6/6 contract tests (100%). Gate: APPROVED`
 
 ## Output format
-- Structured verification dictionary: `{"is_solved": bool, "success": bool, "steps_taken": int, "final_reward": float, "history": list}`.
+- Return direct operational summary and structured result files.
 
 ## Anti-patterns to avoid
-- Never approve policies that pass with negative reward or unresolved collision events.
-- Do not bypass negative boundary test cases (wall collision, hazard collision).
+- Never promote a skill if even 1 negative test fails (e.g., trap avoidance).
+- Do not run un-sandboxed code without timeout limits.
+- Do not read large scripts into LLM context window without running `--help`.
 
 ## Requirements & Prerequisites
 - Python: >= 3.10
-- External packages: numpy
+- External packages: pytest, numpy
 
 ## Bundled Resources
-### `references/`
-- Reference implementations in `src/acr_agi3/agent/llm/arc_tools.py` and `edd_tools.py`.
+### `scripts/` (Executable Tools - Zero-dependency)
+- `scripts/contract_tester.py`: Deterministic CLI tool for executing contract tests.
 
-
+### `references/` (On-Demand Knowledge)
+- `references/guide.md`: Specifications, failure criteria, and evaluation rules.
