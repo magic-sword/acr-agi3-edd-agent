@@ -9,7 +9,7 @@
 
 本プロジェクトは、Google ADK 2.0 および [`skill-edd-agent`](https://github.com/magic-sword/skill-edd-agent) の評価駆動開発（EDD）アーキテクチャを活用し、**不定・未知の ARC-AGI-3 ゲーム環境に適応するための「思考とスキル量産のメタスキル（Meta-Skills）」を自律的に開発・自己改善・評価する**ためのプロジェクトです。
 
-詳細なアーキテクチャ設計書は [ARCHITECTURE.md](file:///home/prog/work/kaggle/acr-agi3-edd-agent/ARCHITECTURE.md)、AI エージェントの行動指針は [AGENTS.md](file:///home/prog/work/kaggle/acr-agi3-edd-agent/AGENTS.md) を参照してください。
+詳細なアーキテクチャ設計書は [ARCHITECTURE.md](file:///home/prog/work/kaggle/acr-agi3-edd-agent/ARCHITECTURE.md)、AI エージェントの行動指針は [AGENTS.md](file:///home/prog/work/kaggle/acr-agi3-edd-agent/AGENTS.md)、学術論文（Paper Track）向けの設計経緯・認知科学的根拠は [docs/paper/RESEARCH_REPORT_META_SKILLS.md](file:///home/prog/work/kaggle/acr-agi3-edd-agent/docs/paper/RESEARCH_REPORT_META_SKILLS.md) を参照してください。
 
 ---
 

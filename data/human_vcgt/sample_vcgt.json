@@ -1,0 +1,55 @@
+[
+  {
+    "task_id": "vcgt_game_001",
+    "step_index": 1,
+    "environment": "grid_navigation_with_obstacles",
+    "observation": {
+      "grid_size": [10, 10],
+      "player_pos": [1, 1],
+      "goal_pos": [8, 8],
+      "wall_color": 1,
+      "player_color": 2,
+      "goal_color": 3
+    },
+    "human_vcgt": {
+      "goal": "Navigate player (color 2) to goal (color 3) while avoiding blue walls (color 1).",
+      "reasoning": "The map has open vertical corridors. Blue cells act as impassable boundaries. Moving right then down avoids the central barrier.",
+      "steps": [
+        "Move right along row 1 until column 6",
+        "Move down column 6 to bypass central wall",
+        "Move right and down to reach target at (8, 8)"
+      ],
+      "reflection": "Direct diagonal or straight down is blocked by wall at row 3-5. Subgoal requires detour."
+    },
+    "invariants_identified": [
+      "Blue cells (1) are static and impassable.",
+      "Player (2) moves 1 cell per step.",
+      "Reaching goal (3) triggers stage completion."
+    ]
+  },
+  {
+    "task_id": "vcgt_puzzle_002",
+    "step_index": 1,
+    "environment": "pattern_reconstruction",
+    "observation": {
+      "grid_size": [6, 6],
+      "shapes_detected": ["3x3 subgrid top-left", "3x3 subgrid bottom-right"],
+      "transformation": "point_reflection_180"
+    },
+    "human_vcgt": {
+      "goal": "Reconstruct the missing bottom-right pattern by rotating the top-left pattern 180 degrees.",
+      "reasoning": "Top-left has an asymmetric L-shape in red (color 2). The target area requires a point-symmetric counterpart in color 4.",
+      "steps": [
+        "Extract 3x3 region from (0, 0) to (2, 2)",
+        "Rotate 180 degrees using rot90(k=2)",
+        "Remap color 2 to color 4",
+        "Place into region (3, 3) to (5, 5)"
+      ],
+      "reflection": "Simple translation fails symmetry check. Point reflection preserves the global inversion invariant."
+    },
+    "invariants_identified": [
+      "Global canvas displays 180-degree rotational symmetry around center (2.5, 2.5).",
+      "Color pairs map deterministically: 2 -> 4."
+    ]
+  }
+]
