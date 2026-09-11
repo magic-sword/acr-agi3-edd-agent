@@ -1,0 +1,248 @@
+{
+  "eval_set_id": "constraint-learner_edd",
+  "name": "constraint-learner_edd",
+  "description": "Google ADK 2.0 Native EvalSet for constraint-learner meta-skill",
+  "skill_name": "constraint-learner",
+  "eval_cases": [
+    {
+      "eval_id": "constraint-learner_001",
+      "conversation": [
+        {
+          "invocation_id": "inv_constraint-learner_001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Extract dead-end constraint from trajectory where box was pushed into concave corner (0, 0)"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Constraint extracted: Avoid pushing movable blocks into non-retrievable 2-wall corner cells."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "constraint-learner",
+                  "file_path": "src/acr_agi3/meta/human_vcgt.py"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_constraint-learner_001_1",
+          "rubric_content": {
+            "text_property": "learns corner deadlock constraints from loss trajectory"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "constraint-learner_002",
+      "conversation": [
+        {
+          "invocation_id": "inv_constraint-learner_002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Formulate pruning rule from trajectory stepping on hazard trap"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Pruning rule formulated: Prohibit any action that places agent within hazard coordinate set."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "constraint-learner",
+                  "file_path": "src/acr_agi3/meta/human_vcgt.py"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_constraint-learner_002_1",
+          "rubric_content": {
+            "text_property": "extracts hazard avoidance constraints"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "constraint-learner_003",
+      "conversation": [
+        {
+          "invocation_id": "inv_constraint-learner_003",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Analyze key retrieval constraint: door (5) cannot be passed before key (4) acquired"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Constraint formulated: Door cell remains impassable obstacle until key possession flag is true."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "constraint-learner",
+                  "file_path": "src/acr_agi3/meta/human_vcgt.py"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_constraint-learner_003_1",
+          "rubric_content": {
+            "text_property": "extracts prerequisite state dependency constraint"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "constraint-learner_neg_001",
+      "conversation": [
+        {
+          "invocation_id": "inv_constraint-learner_neg_001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Choose action for current step"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Use action policy choose_action directly."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_constraint-learner_neg_001_1",
+          "rubric_content": {
+            "text_property": "does NOT trigger constraint-learner for runtime action decisions"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "constraint-learner_neg_002",
+      "conversation": [
+        {
+          "invocation_id": "inv_constraint-learner_neg_002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Classify affordance roles from game frame"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Use env-observer for affordance classification."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_constraint-learner_neg_002_1",
+          "rubric_content": {
+            "text_property": "does NOT trigger constraint-learner on frame affordance observation"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "constraint-learner_neg_003",
+      "conversation": [
+        {
+          "invocation_id": "inv_constraint-learner_neg_003",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Run contract tests on game simulation environment"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Use contract-tester for simulation testing."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_constraint-learner_neg_003_1",
+          "rubric_content": {
+            "text_property": "does NOT trigger constraint-learner for contract testing"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    }
+  ]
+}

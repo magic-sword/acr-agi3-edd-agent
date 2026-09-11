@@ -1,36 +1,63 @@
 ---
 name: constraint-learner
-description: 失敗した操作ログや手詰まり状態から、不可逆なデッドエンド（詰み）を回避するための禁止制約を自動学習するメタスキル。
-version: 1.0.0
-inputs:
-  - name: failed_trajectories
-    type: list[dict]
-    description: 失敗・手詰まりに終わった操作シーケンスのログ
-  - name: terminal_state
-    type: numpy.ndarray
-    description: 手詰まり・ゲームオーバーとなったグリッド状態
-outputs:
-  - name: deadend_constraints
-    type: list[dict]
-    description: 探索時に避けるべき禁止条件のリスト (例: コーナー押し込み禁止)
-  - name: pruning_rules
-    type: list[str]
-    description: プランナーやコード生成器に与える枝刈りルール
+description: |
+  Learns irreversible dead-end constraints (corner traps, hazard proximity, blocked pathways).
+  Use when analyzing failed trajectories to formulate pruning rules that prevent terminal deadlocks.
+  Do NOT use for successful action execution or frame affordance classification.
+license: MIT
+allowed-tools: run_skill_script
+metadata:
+  version: "1.0.0"
+  pattern: "meta-workflow"
+  inputs:
+    - name: failed_trajectories
+      type: list[dict]
+      description: Sequences of actions ending in deadlocks or traps
+  outputs:
+    - name: deadend_constraints
+      type: list[dict]
+      description: Explicit forbidden states and conditions
+    - name: pruning_rules
+      type: list[str]
+      description: Search pruning rules for planners and synthesis
 ---
 
 # Constraint Learner Meta-Skill
 
-## 概要
-人間プレイヤーが「一度ブロックを角に押し込んで詰んだら、二度と同じミスをしない」という学習能力を模倣したメタスキルです。
-失敗の経験から「やってはいけない状態（Dead-end States）」を抽出し、以降の推論やスキル生成における探索空間を劇的に削減します。
+## When to use
+- Analyze failed gameplay trajectories that ended in irreversible deadlocks or traps.
+- Extract forbidden state predicates (e.g., pushing movable items into irreversible corner traps).
+- Supply search pruning rules to `subgoal-decomposer` and negative contract tests to `skill-synthesizer`.
 
-## 主な学習対象制約 (Dead-End Categories)
-1. **不可逆な接触 (Irreversible Adhesion / Corner Trap)**:
-   - オブジェクトが引く手段のない壁の角（Corner）に押し込まれ、自由度が 0 になった状態。
-2. **色の混合・消失 (Irreversible Color Blend)**:
-   - 回収すべき色が背景色に塗りつぶされて情報が消失した状態。
-3. **境界突破 (Out-of-Grid Escape)**:
-   - 画面外に移動して再取得不能になった状態。
+## When NOT to use
+- Real-time action decision-making during normal gameplay.
+- Single-step collision diagnostics (use `failure-diagnoser`).
+- Direct Python policy writing (use `skill-synthesizer`).
 
-## 成果物の受け渡し
-抽出された禁止制約（`pruning_rules`）は、`subgoal-decomposer` の経路計画および `skill-synthesizer` の契約テスト（負例）に直ちに反映されます。
+## Workflow
+1. Trajectory Ingestion: Parse sequences of states and actions resulting in terminal loss or deadlock.
+2. Irreversibility Analysis: Detect points of no return (e.g., moving block adjacent to concave wall corners where no pull action exists).
+3. Rule Formulation: Formulate explicit pruning predicates:
+   ```json
+   {"forbidden_condition": "player at (r, c) when hazard is adjacent in heading direction"}
+   ```
+4. Rule Propagation: Feed negative constraints into `subgoal-decomposer` and `contract-tester`.
+
+## Examples
+- Trajectory: Block pushed into corner (0, 0) unable to be retrieved → Output rule: `Avoid pushing movable objects into concave corner cells`.
+
+## Output format
+- Structured list of `pruning_rules` and `deadend_constraints`.
+
+## Anti-patterns to avoid
+- Do not formulate overly aggressive pruning rules that eliminate valid narrow passages.
+- Do not confuse temporary detours with irreversible dead-ends.
+
+## Requirements & Prerequisites
+- Python: >= 3.10
+- External packages: numpy
+
+## Bundled Resources
+### `references/`
+- Reference implementations in `src/acr_agi3/meta/human_vcgt.py`.
+

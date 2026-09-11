@@ -1,41 +1,63 @@
 ---
 name: subgoal-decomposer
-description: 人間 VCGT 思考構造に基づき、ゲームクリア目的（ゴール到達、鍵回収、ゲート解錠等）を独立して検証可能な中間マイルストーン (Subgoals) の列に階層分解するメタスキル。
-version: 2.0.0
-inputs:
-  - name: observation
-    type: numpy.ndarray
-    description: 現在のゲーム環境観測グリッド配列 (H, W)
-  - name: affordances
-    type: dict
-    description: env-observer から得られたアフォーダンス情報 (agent, obstacles, goals, items)
-  - name: goal_description
-    type: str
-    description: 達成すべき最終ゲーム目的（例: 「鍵4を取得して扉5を開け、ゴール3に到達する」）
-outputs:
-  - name: subgoals
-    type: list[dict]
-    description: 順序付けられた中間目標のリスト (各マイルストーンの事前・終了条件・Waypoint付き)
-  - name: task_hierarchy
-    type: str
-    description: VCGT 形式の思考分解ツリー (Goal -> Reasoning -> Steps -> Reflection)
+description: |
+  Decomposes complex game objectives into verifiable intermediate milestones (Subgoals).
+  Use when planning sequential milestones (key retrieval, obstacle bypass, goal arrival).
+  Do NOT use for single-step primitive execution or post-mortem failure tracing.
+license: MIT
+allowed-tools: run_skill_script
+metadata:
+  version: "2.0.0"
+  pattern: "meta-workflow"
+  inputs:
+    - name: observation
+      type: numpy.ndarray
+      description: Current game observation grid
+    - name: affordances
+      type: dict
+      description: Extracted roles (agent, obstacles, goals, items)
+  outputs:
+    - name: subgoals
+      type: list[dict]
+      description: Ordered milestone list with preconditions and objectives
 ---
 
 # Subgoal Decomposer Meta-Skill
 
-## 概要
-人間プレイヤーの思考データセット (VCGT) で実証された、**「目的の階層的分解」** を司るメタスキルです。
-複雑なゲーム環境をいきなり一度に解こうとせず、**独立して検証可能な中間マイルストーン（Subgoals）** に自律分解することで、探索空間の爆発を防ぎます。
+## When to use
+- Plan sequential milestones (e.g., collect key, bypass obstacle, reach goal) for a game stage.
+- Break down complex multi-objective navigation tasks into independently testable subgoals.
+- Establish intermediate waypoint constraints based on Human Visual Concept Guided Thinking (VCGT).
 
-## VCGT 階層構造
-本メタスキルは、各サブゴールを以下の 4 層構造で定式化します：
+## When NOT to use
+- Executing single action primitives (use compiled action policies).
+- Low-level frame pixel feature extraction (use `env-observer`).
+- Diagnosing why a policy collided with a wall (use `failure-diagnoser`).
 
-1. **Objective (中間目標)**: 何を達成すべきか？
-   - *例: 「操作ブロックをターゲットの列と同じX座標に揃える」*
-2. **Reasoning Breakdown (推論・理由)**: なぜその目標が必要か？
-   - *例: 「ターゲットに押し込むためには、先に直線上の射線に位置する必要があるため」*
-3. **Preconditions (事前条件)**: 開始時点で満たすべき状態。
-4. **Postconditions (終了条件)**: 達成されたとみなす検証条件（テストアサーション）。
+## Workflow
+1. Affordance Ingestion: Receive current grid state, agent position, item positions, and goal coordinates.
+2. Topological Plan Formulation: Identify mandatory sequential bottlenecks (e.g. acquire item 4 before entering door 5).
+3. Milestone Generation: Output ordered `DecompositionPlan`:
+   ```python
+   plan = decomposer.decompose_game(obs)
+   ```
+4. Hand-off: Deliver subgoal milestones to `skill-synthesizer` for modular skill synthesis.
 
-## 成果物の受け渡し
-分解された各サブゴールは、`skill-synthesizer` に渡され、各中間ステップを達成するためのマクロスキル（例: `align_horizontally`, `push_to_boundary`）がオンデマンド合成されます。
+## Examples
+- Input: Map with key at (1, 7), wall at column 4, goal at (8, 8) → Output: 3 subgoals (`Acquire_item_color_4`, `BypassCentralObstacle`, `ReachGoalAndClearStage`).
+
+## Output format
+- Structured `DecompositionPlan` with list of `subgoals` containing `index`, `name`, `objective`, `reasoning`.
+
+## Anti-patterns to avoid
+- Never attempt to plan an entire multi-room maze as a single monolithic policy without subgoals.
+- Do not plan unreachable subgoals without checking impassable boundary connectivity.
+
+## Requirements & Prerequisites
+- Python: >= 3.10
+- External packages: numpy
+
+## Bundled Resources
+### `references/`
+- Reference implementations in `src/acr_agi3/meta/decomposer.py`.
+

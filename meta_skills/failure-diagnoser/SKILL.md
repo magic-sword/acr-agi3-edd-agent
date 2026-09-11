@@ -1,36 +1,64 @@
 ---
 name: failure-diagnoser
-description: 契約テストやゲームシミュレーション失敗（壁衝突スタック、トラップ接触、振動ループ）の原因を構造化解析し、行動ポリシー自己修復の修正指示を生成するメタスキル。
-version: 2.0.0
-inputs:
-  - name: test_report
-    type: dict
-    description: contract-tester または環境シミュレーションからの失敗情報
-outputs:
-  - name: diagnostic_summary
-    type: str
-    description: 失敗原因の要約（壁衝突スタック、トラップ突入、振動ループ、ステップ超過）
-  - name: repair_guidance
-    type: str
-    description: skill-synthesizer への修正指示（Waypoint 迂回経路設定、回避マージン確保など）
+description: |
+  Diagnoses simulation execution failures (wall collisions, trap hazards, oscillation loops).
+  Use when analyzing failure traces to generate actionable self-repair feedback for policy synthesis.
+  Do NOT use for successful test gating or direct frame observation.
+license: MIT
+allowed-tools: run_skill_script
+metadata:
+  version: "2.0.0"
+  pattern: "meta-workflow"
+  inputs:
+    - name: test_report
+      type: dict
+      description: Failure report from contract-tester or environment execution
+  outputs:
+    - name: diagnostic_summary
+      type: str
+      description: Root cause summary (collision, oscillation, timeout, exception)
+    - name: repair_guidance
+      type: str
+      description: Targeted feedback prompt for skill-synthesizer self-repair
 ---
 
-# Failure Diagnoser Meta-Skill (Evolver)
+# Failure Diagnoser Meta-Skill
 
-## 概要
-テストまたはゲームプレイで失敗した行動ポリシーを分析し、自律的な自己修復（Self-Repair Loop）をガイドするメタスキルです。
+## When to use
+- Analyze test failure reports when a policy crashes or fails simulation gating.
+- Diagnose wall collision deadlocks, hazard trap collisions, or oscillation loops.
+- Formulate prompt-guided self-repair feedback for `skill-synthesizer` iterative retry.
 
-## 主な診断パターンと修復指示
-1. **壁・障害物衝突スタック (Wall Collision / Obstacle Deadlock)**:
-   - 症状: 目標に向かう直線経路上に壁があり、その場から動けなくなる（衝突回数増加）。
-   - 修復指示: 壁の法線方向（直交方向）に一時的な迂回目標（Waypoint）を設定し、壁のエッジを回り込むロジックを追加。
-2. **危険ゾーン・トラップ接触 (Hazard / Trap Collision)**:
-   - 症状: 危険物セルに隣接した際、回避できずに接触してゲームオーバー。
-   - 修復指示: 危険物周辺 1 マスを「進入禁止コスト領域（Forbidden Zone）」としてマークし、行動選択から除外。
-3. **振動ループ・デッドロック (Oscillation / Infinite Loop)**:
-   - 症状: 直近の 2〜3 セル間を行ったり来たりし、ステップ数を浪費。
-   - 修復指示: 直近の訪問座標履歴（Visited History）をポリシーに保持し、未訪問の隣接セルを優先選択する。
-4. **ステップ数超過 (Timeout / Step Limit Exceeded)**:
-   - 症状: 壁やトラップを避けるあまり、目標から遠ざかり続けて制限ステップに到達。
-   - 修復指示: マンハッタン距離によるポテンシャル場（Heuristic Field）を強化し、目標方向への引き込み力を高める。
+## When NOT to use
+- Synthesizing new policies from scratch without failure context (use `skill-synthesizer`).
+- Gating passed policies into the verified library (use `contract-tester`).
+- Initial visual affordance parsing (use `env-observer`).
+
+## Workflow
+1. Failure Log Ingestion: Read execution report `verification` dictionary with `status`, `steps_taken`, and `error`.
+2. Root Cause Classification: Categorize into:
+   - Obstacle Deadlock: Repeated collisions with same wall cell.
+   - Hazard Collision: Negative terminal reward from hazard entry.
+   - Oscillation Loop: Alternating movements without spatial displacement.
+   - Timeout: Failing to reach goal within step budget.
+3. Repair Instruction Generation: Produce concrete algorithmic hints (e.g., add visited history buffer, add orthogonal detour waypoint).
+
+## Examples
+- Input: `{"status": "timeout", "steps_taken": 50, "last_pos": (1, 2), "wall": (1, 3)}` → Output: `{"diagnostic_summary": "Wall collision deadlock at (1, 3)", "repair_guidance": "Add orthogonal detour step (UP or DOWN) when wall blocked in heading direction."}`
+
+## Output format
+- Dictionary with `diagnostic_summary` and `repair_guidance` string.
+
+## Anti-patterns to avoid
+- Do not output vague advice ("try harder"); always specify exact coordinates and corrective maneuver.
+- Do not recommend random actions when deterministic detour waypoints are required.
+
+## Requirements & Prerequisites
+- Python: >= 3.10
+- External packages: numpy
+
+## Bundled Resources
+### `references/`
+- Reference implementations in `src/acr_agi3/agent/evolver.py` and `meta_agent.py`.
+
 

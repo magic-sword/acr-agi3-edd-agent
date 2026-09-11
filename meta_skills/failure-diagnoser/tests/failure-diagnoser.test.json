@@ -1,0 +1,248 @@
+{
+  "eval_set_id": "failure-diagnoser_edd",
+  "name": "failure-diagnoser_edd",
+  "description": "Google ADK 2.0 Native EvalSet for failure-diagnoser meta-skill",
+  "skill_name": "failure-diagnoser",
+  "eval_cases": [
+    {
+      "eval_id": "failure-diagnoser_001",
+      "conversation": [
+        {
+          "invocation_id": "inv_failure-diagnoser_001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Diagnose wall collision failure where agent repeatedly bumped into wall at (1, 3)"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Diagnosis: Wall collision deadlock at (1, 3). Repair recommendation: add orthogonal detour waypoint."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "failure-diagnoser",
+                  "file_path": "src/acr_agi3/agent/evolver.py"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_failure-diagnoser_001_1",
+          "rubric_content": {
+            "text_property": "diagnoses obstacle deadlocks and suggests detour waypoint"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "failure-diagnoser_002",
+      "conversation": [
+        {
+          "invocation_id": "inv_failure-diagnoser_002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Analyze oscillation loop between coordinates (2, 2) and (2, 3)"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Diagnosis: Infinite oscillation loop detected. Repair recommendation: maintain visited position buffer."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "failure-diagnoser",
+                  "file_path": "src/acr_agi3/agent/evolver.py"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_failure-diagnoser_002_1",
+          "rubric_content": {
+            "text_property": "identifies oscillation loop and recommends history tracking"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "failure-diagnoser_003",
+      "conversation": [
+        {
+          "invocation_id": "inv_failure-diagnoser_003",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Diagnose hazard collision termination at (4, 2) with reward -1.0"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Diagnosis: Lethal hazard trap entered at (4, 2). Repair recommendation: mark hazard coordinates in forbidden zone mask."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "failure-diagnoser",
+                  "file_path": "src/acr_agi3/agent/evolver.py"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_failure-diagnoser_003_1",
+          "rubric_content": {
+            "text_property": "diagnoses hazard collisions and suggests safety buffer"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "failure-diagnoser_neg_001",
+      "conversation": [
+        {
+          "invocation_id": "inv_failure-diagnoser_neg_001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Write a python function choose_action to solve stage"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Use skill-synthesizer for policy code creation."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_failure-diagnoser_neg_001_1",
+          "rubric_content": {
+            "text_property": "does NOT trigger failure-diagnoser on synthesis requests"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "failure-diagnoser_neg_002",
+      "conversation": [
+        {
+          "invocation_id": "inv_failure-diagnoser_neg_002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Check if policy passed all contract tests"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Use contract-tester for validation gating."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_failure-diagnoser_neg_002_1",
+          "rubric_content": {
+            "text_property": "does NOT trigger failure-diagnoser for successful test runs"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "failure-diagnoser_neg_003",
+      "conversation": [
+        {
+          "invocation_id": "inv_failure-diagnoser_neg_003",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Find player coordinates in initial game frame"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Use env-observer for spatial player localization."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_failure-diagnoser_neg_003_1",
+          "rubric_content": {
+            "text_property": "does NOT trigger failure-diagnoser on initial observation tasks"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    }
+  ]
+}

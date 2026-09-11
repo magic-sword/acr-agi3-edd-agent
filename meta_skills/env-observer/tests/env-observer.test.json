@@ -1,0 +1,248 @@
+{
+  "eval_set_id": "env-observer_edd",
+  "name": "env-observer_edd",
+  "description": "Google ADK 2.0 Native EvalSet for env-observer meta-skill",
+  "skill_name": "env-observer",
+  "eval_cases": [
+    {
+      "eval_id": "env-observer_001",
+      "conversation": [
+        {
+          "invocation_id": "inv_env-observer_001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Analyze the current game frame observation to identify player, goal, and obstacles"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Observed player at (1, 1), goal at (4, 4), and impassable wall boundaries along row 0."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "env-observer",
+                  "file_path": "src/acr_agi3/meta/observer.py"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_env-observer_001_1",
+          "rubric_content": {
+            "text_property": "correctly extracts spatial affordances from observation grid"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "env-observer_002",
+      "conversation": [
+        {
+          "invocation_id": "inv_env-observer_002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Analyze transition tuple where agent moved RIGHT from (1, 1) to (1, 2) without collision"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Transition analysis: Action.RIGHT resulted in successful displacement (0, 1), hit_obstacle is false."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "env-observer",
+                  "file_path": "src/acr_agi3/meta/observer.py"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_env-observer_002_1",
+          "rubric_content": {
+            "text_property": "extracts action displacement dynamics accurately"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "env-observer_003",
+      "conversation": [
+        {
+          "invocation_id": "inv_env-observer_003",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Detect interactive elements like key (4) and locked door (5) in game grid"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Detected interactable item_color_4 at (1, 3) and conditional barrier at (3, 3)."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "env-observer",
+                  "file_path": "src/acr_agi3/meta/observer.py"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_env-observer_003_1",
+          "rubric_content": {
+            "text_property": "identifies interactable items correctly"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "env-observer_neg_001",
+      "conversation": [
+        {
+          "invocation_id": "inv_env-observer_neg_001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Synthesize a full Python action policy code choosing Action.UP"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Use skill-synthesizer to generate executable action policies."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_env-observer_neg_001_1",
+          "rubric_content": {
+            "text_property": "does NOT trigger env-observer for code synthesis tasks"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "env-observer_neg_002",
+      "conversation": [
+        {
+          "invocation_id": "inv_env-observer_neg_002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Execute contract tests on an existing skill in the simulator"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Routing to contract-tester for simulation verification."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_env-observer_neg_002_1",
+          "rubric_content": {
+            "text_property": "does NOT trigger env-observer for contract test executions"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "env-observer_neg_003",
+      "conversation": [
+        {
+          "invocation_id": "inv_env-observer_neg_003",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Diagnose failure error log from timeout step limit"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Routing to failure-diagnoser for error root cause analysis."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_env-observer_neg_003_1",
+          "rubric_content": {
+            "text_property": "does NOT trigger env-observer on failure diagnosis requests"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    }
+  ]
+}

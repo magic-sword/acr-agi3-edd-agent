@@ -1,0 +1,248 @@
+{
+  "eval_set_id": "contract-tester_edd",
+  "name": "contract-tester_edd",
+  "description": "Google ADK 2.0 Native EvalSet for contract-tester meta-skill",
+  "skill_name": "contract-tester",
+  "eval_cases": [
+    {
+      "eval_id": "contract-tester_001",
+      "conversation": [
+        {
+          "invocation_id": "inv_contract-tester_001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Run simulation contract test for policy test_game_mover on Mock1DGameEnv"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Contract test passed: goal reached in 2 steps with reward 1.0."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "contract-tester",
+                  "file_path": "src/acr_agi3/agent/llm/edd_tools.py"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_contract-tester_001_1",
+          "rubric_content": {
+            "text_property": "executes policy simulation and validates goal arrival"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "contract-tester_002",
+      "conversation": [
+        {
+          "invocation_id": "inv_contract-tester_002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Verify if policy avoids wall collision at (1, 2) when navigating right"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Negative contract check passed: policy detects wall and chooses detour without collision."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "contract-tester",
+                  "file_path": "src/acr_agi3/agent/llm/edd_tools.py"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_contract-tester_002_1",
+          "rubric_content": {
+            "text_property": "verifies zero wall collision constraint"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "contract-tester_003",
+      "conversation": [
+        {
+          "invocation_id": "inv_contract-tester_003",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Check if policy execution terminates within max_steps threshold 50"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Timeout gating check passed: task completed in 14 steps."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "contract-tester",
+                  "file_path": "src/acr_agi3/agent/llm/edd_tools.py"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_contract-tester_003_1",
+          "rubric_content": {
+            "text_property": "verifies step limit constraints"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "contract-tester_neg_001",
+      "conversation": [
+        {
+          "invocation_id": "inv_contract-tester_neg_001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Write a python function to solve pathfinding"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Routing to skill-synthesizer for code writing."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_contract-tester_neg_001_1",
+          "rubric_content": {
+            "text_property": "does NOT trigger contract-tester on code synthesis requests"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "contract-tester_neg_002",
+      "conversation": [
+        {
+          "invocation_id": "inv_contract-tester_neg_002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Classify colors in raw grid frame"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Use env-observer for spatial color classification."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_contract-tester_neg_002_1",
+          "rubric_content": {
+            "text_property": "does NOT trigger contract-tester for frame perception"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "contract-tester_neg_003",
+      "conversation": [
+        {
+          "invocation_id": "inv_contract-tester_neg_003",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Explain why the agent died from poison hazard"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Routing to failure-diagnoser for hazard death explanation."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_contract-tester_neg_003_1",
+          "rubric_content": {
+            "text_property": "does NOT trigger contract-tester on post-mortem diagnosis"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    }
+  ]
+}

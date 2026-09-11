@@ -1,0 +1,248 @@
+{
+  "eval_set_id": "subgoal-decomposer_edd",
+  "name": "subgoal-decomposer_edd",
+  "description": "Google ADK 2.0 Native EvalSet for subgoal-decomposer meta-skill",
+  "skill_name": "subgoal-decomposer",
+  "eval_cases": [
+    {
+      "eval_id": "subgoal-decomposer_001",
+      "conversation": [
+        {
+          "invocation_id": "inv_subgoal-decomposer_001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Decompose stage with key (4) and locked door (5) into sequential subgoals"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Decomposition complete: Subgoal 1: Acquire key 4, Subgoal 2: Unlock door 5, Subgoal 3: Reach goal 3."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "subgoal-decomposer",
+                  "file_path": "src/acr_agi3/meta/decomposer.py"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_subgoal-decomposer_001_1",
+          "rubric_content": {
+            "text_property": "decomposes key-door dependency into proper sequential milestones"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "subgoal-decomposer_002",
+      "conversation": [
+        {
+          "invocation_id": "inv_subgoal-decomposer_002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Plan subgoals to bypass central wall obstacle blocking player (1, 1) and goal (8, 8)"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Formulated 2 subgoals: Subgoal 1: Navigate around central wall corner, Subgoal 2: Enter target zone."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "subgoal-decomposer",
+                  "file_path": "src/acr_agi3/meta/decomposer.py"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_subgoal-decomposer_002_1",
+          "rubric_content": {
+            "text_property": "generates obstacle bypass waypoint milestones"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "subgoal-decomposer_003",
+      "conversation": [
+        {
+          "invocation_id": "inv_subgoal-decomposer_003",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Convert Human VCGT sample record into DecompositionPlan object"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Converted VCGT log into 3 structured subgoals with constraints."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "subgoal-decomposer",
+                  "file_path": "src/acr_agi3/meta/decomposer.py"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_subgoal-decomposer_003_1",
+          "rubric_content": {
+            "text_property": "converts human vcgt logs to plan cleanly"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "subgoal-decomposer_neg_001",
+      "conversation": [
+        {
+          "invocation_id": "inv_subgoal-decomposer_neg_001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Execute simulation contract test for policy"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Routing to contract-tester for simulation execution."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_subgoal-decomposer_neg_001_1",
+          "rubric_content": {
+            "text_property": "does NOT trigger subgoal-decomposer for simulation testing"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "subgoal-decomposer_neg_002",
+      "conversation": [
+        {
+          "invocation_id": "inv_subgoal-decomposer_neg_002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Diagnose wall collision deadlock failure"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Routing to failure-diagnoser for deadlock analysis."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_subgoal-decomposer_neg_002_1",
+          "rubric_content": {
+            "text_property": "does NOT trigger subgoal-decomposer on error diagnosis"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "subgoal-decomposer_neg_003",
+      "conversation": [
+        {
+          "invocation_id": "inv_subgoal-decomposer_neg_003",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Synthesize python action policy function"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Routing to skill-synthesizer for python code generation."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_subgoal-decomposer_neg_003_1",
+          "rubric_content": {
+            "text_property": "does NOT trigger subgoal-decomposer for code synthesis"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    }
+  ]
+}

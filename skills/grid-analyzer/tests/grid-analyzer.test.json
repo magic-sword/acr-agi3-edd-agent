@@ -1,0 +1,267 @@
+{
+  "eval_set_id": "grid-analyzer_edd",
+  "name": "grid-analyzer_edd",
+  "description": "Google ADK 2.0 Native EvalSet for grid-analyzer",
+  "skill_name": "grid-analyzer",
+  "eval_cases": [
+    {
+      "eval_id": "grid-analyzer_001",
+      "conversation": [
+        {
+          "invocation_id": "inv_grid-analyzer_001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Analyze the grid [[1, 2], [2, 1]] using grid-analyzer"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Grid analysis complete: shape is [2, 2], colors are [1, 2], diagonal symmetry is true."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "grid-analyzer",
+                  "file_path": "scripts/analyze.py",
+                  "args": [
+                    "--input",
+                    "[[1, 2], [2, 1]]"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_grid-analyzer_001_1",
+          "rubric_content": {
+            "text_property": "correctly invokes run_skill_script with scripts/analyze.py"
+          },
+          "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_grid-analyzer_001_2",
+          "rubric_content": {
+            "text_property": "reports correct grid analysis results accurately"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "grid-analyzer_002",
+      "conversation": [
+        {
+          "invocation_id": "inv_grid-analyzer_002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Check symmetry and unique colors for grid [[3, 3, 3], [3, 0, 3], [3, 3, 3]]"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Grid is 3x3 with colors [0, 3], horizontal and vertical symmetries are both true."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "grid-analyzer",
+                  "file_path": "scripts/analyze.py",
+                  "args": [
+                    "--input",
+                    "[[3, 3, 3], [3, 0, 3], [3, 3, 3]]"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_grid-analyzer_002_1",
+          "rubric_content": {
+            "text_property": "correctly executes analysis for concentric grid"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "grid-analyzer_003",
+      "conversation": [
+        {
+          "invocation_id": "inv_grid-analyzer_003",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Count the color pixel frequencies in grid [[0, 5], [5, 5]]"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Color counts: {0: 1, 5: 3}."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "grid-analyzer",
+                  "file_path": "scripts/analyze.py",
+                  "args": [
+                    "--input",
+                    "[[0, 5], [5, 5]]"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_grid-analyzer_003_1",
+          "rubric_content": {
+            "text_property": "extracts correct color frequencies"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "grid-analyzer_neg_001",
+      "conversation": [
+        {
+          "invocation_id": "inv_grid-analyzer_neg_001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Move the player character one step RIGHT in the game environment"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Action Action.RIGHT dispatched to environment."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_grid-analyzer_neg_001_1",
+          "rubric_content": {
+            "text_property": "does NOT invoke grid-analyzer for game action step commands"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "grid-analyzer_neg_002",
+      "conversation": [
+        {
+          "invocation_id": "inv_grid-analyzer_neg_002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Transform grid [[1, 2], [3, 4]] by rotating it 90 degrees clockwise"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Transformed output grid is [[3, 1], [4, 2]]."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_grid-analyzer_neg_002_1",
+          "rubric_content": {
+            "text_property": "does NOT invoke grid-analyzer for transformation requests"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "grid-analyzer_neg_003",
+      "conversation": [
+        {
+          "invocation_id": "inv_grid-analyzer_neg_003",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Synthesize a new Python skill for pathfinding"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Initiating skill synthesis via skill-synthesizer."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_grid-analyzer_neg_003_1",
+          "rubric_content": {
+            "text_property": "does NOT trigger grid-analyzer on skill creation tasks"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    }
+  ]
+}

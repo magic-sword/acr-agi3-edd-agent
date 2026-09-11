@@ -1,29 +1,52 @@
 ---
 name: grid-analyzer
-description: ARC-AGI グリッドの形状、色ヒストグラム、幾何学的対称性（水平・垂直・対角）を静的に解析する決定論的スキル
-version: 1.0.0
-author: magic-sword
-tier: 1
-tools:
-  - scripts/analyze.py
+description: |
+  Analyzes ARC-AGI grid dimensions, color histograms, and geometric symmetries deterministically.
+  Use when the user asks to analyze grid properties, extract color counts, or detect symmetry.
+  Do NOT use for transforming grids or executing dynamic game action policies.
+license: MIT
+allowed-tools: run_skill_script
+metadata:
+  version: "1.0.0"
+  author: "magic-sword"
+  tier: 1
+  pattern: "workflow"
 ---
 
-# Grid Analyzer Skill
+# Grid Analyzer
 
-## 概要
-入力された ARC グリッド（2次元配列）を静的に解析し、推論エージェントがパターンや変換ルールを導出するための基礎特徴量を抽出します。
+## When to use
+- Analyze ARC-AGI 2D grid dimensions (height, width).
+- Compute color histograms and list unique colors present in the grid.
+- Check geometric horizontal, vertical, and diagonal symmetry flags.
 
-## 入力仕様
-- `grid`: 2次元整数配列（0〜9の値、最大 30x30）
+## When NOT to use
+- Dynamic game environment action policy execution (use `env-observer` or game agents).
+- Modifying or transforming grid pixel values (use specific transformation skills).
 
-## 出力仕様 (JSON)
-- `shape`: [行数, 列数]
-- `num_colors`: ユニークな色の総数
-- `colors`: 含まれる色一覧（昇順）
-- `color_counts`: 各色の画素数辞書
-- `symmetry`: 水平 (`horizontal`), 垂直 (`vertical`), 対角 (`diagonal`) の対称性フラグ (bool)
+## Workflow
+1. Input Inspection: Pass a 2D integer array (0-9 values) representing the ARC grid.
+2. Deterministic Analysis: Run `scripts/analyze.py`:
+   ```bash
+   python scripts/analyze.py --input "[[1, 2], [2, 1]]"
+   ```
+3. Output Validation: Verify JSON output containing shape, colors, color_counts, and symmetry.
 
-## 実行方法
-```bash
-python scripts/analyze.py --input "[[1, 2], [2, 1]]"
-```
+## Examples
+- Input: `[[1, 2], [2, 1]]` → Output: `{"shape": [2, 2], "num_colors": 2, "colors": [1, 2], "symmetry": {"horizontal": false, "vertical": false, "diagonal": true}}`
+
+## Output format
+- Structured JSON with keys: `shape`, `num_colors`, `colors`, `color_counts`, `symmetry`.
+
+## Anti-patterns to avoid
+- Do not feed 1D arrays or jagged lists without validation.
+- Do not attempt state transition or game affordance analysis with this static tool.
+
+## Requirements & Prerequisites
+- Python: >= 3.10
+- External packages: numpy
+
+## Bundled Resources
+### `scripts/`
+- `scripts/analyze.py`: Deterministic CLI script for grid analysis.
+

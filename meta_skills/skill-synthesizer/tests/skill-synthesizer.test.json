@@ -1,0 +1,248 @@
+{
+  "eval_set_id": "skill-synthesizer_edd",
+  "name": "skill-synthesizer_edd",
+  "description": "Google ADK 2.0 Native EvalSet for skill-synthesizer meta-skill",
+  "skill_name": "skill-synthesizer",
+  "eval_cases": [
+    {
+      "eval_id": "skill-synthesizer_001",
+      "conversation": [
+        {
+          "invocation_id": "inv_skill-synthesizer_001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Synthesize a Python action policy to navigate right towards goal"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Generated choose_action policy navigating right."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "skill-synthesizer",
+                  "file_path": "src/acr_agi3/agent/llm_agent.py"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_skill-synthesizer_001_1",
+          "rubric_content": {
+            "text_property": "synthesizes compliant choose_action policy function"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "skill-synthesizer_002",
+      "conversation": [
+        {
+          "invocation_id": "inv_skill-synthesizer_002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Generate contract test cases with 3 positive and 3 negative boundary scenarios"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Contract test cases generated with required boundary conditions."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "skill-synthesizer",
+                  "file_path": "src/acr_agi3/agent/llm_agent.py"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_skill-synthesizer_002_1",
+          "rubric_content": {
+            "text_property": "creates 3 positive and 3 negative test cases"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "skill-synthesizer_003",
+      "conversation": [
+        {
+          "invocation_id": "inv_skill-synthesizer_003",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Compose existing verified skills test_step_right and test_step_down into diagonal movement"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Synthesized composite policy combining horizontal and vertical verified subroutines."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "skill-synthesizer",
+                  "file_path": "src/acr_agi3/agent/llm_agent.py"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_skill-synthesizer_003_1",
+          "rubric_content": {
+            "text_property": "composes verified subroutines properly"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "skill-synthesizer_neg_001",
+      "conversation": [
+        {
+          "invocation_id": "inv_skill-synthesizer_neg_001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Extract affordance roles from game frame"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Use env-observer for spatial affordance classification."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_skill-synthesizer_neg_001_1",
+          "rubric_content": {
+            "text_property": "does NOT invoke skill-synthesizer for frame observation"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "skill-synthesizer_neg_002",
+      "conversation": [
+        {
+          "invocation_id": "inv_skill-synthesizer_neg_002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Diagnose runtime IndexError exception from crash log"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Routing to failure-diagnoser for traceback inspection."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_skill-synthesizer_neg_002_1",
+          "rubric_content": {
+            "text_property": "does NOT trigger skill-synthesizer for crash diagnosis"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "skill-synthesizer_neg_003",
+      "conversation": [
+        {
+          "invocation_id": "inv_skill-synthesizer_neg_003",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Decompose long game into intermediate milestones"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Use subgoal-decomposer to plan intermediate stages."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_skill-synthesizer_neg_003_1",
+          "rubric_content": {
+            "text_property": "does NOT trigger skill-synthesizer for subgoal planning"
+          },
+          "type": "TOOL_USE_QUALITY"
+        }
+      ]
+    }
+  ]
+}

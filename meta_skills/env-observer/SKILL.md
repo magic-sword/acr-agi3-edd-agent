@@ -1,50 +1,65 @@
 ---
 name: env-observer
-description: 未知の ARC-AGI-3 ゲーム環境から、アフォーダンス（自機・壁・ターゲット・危険物）・不変量・因果力学（行動による状態遷移）を抽出するメタスキル。
-version: 2.0.0
-inputs:
-  - name: observation
-    type: numpy.ndarray
-    description: 現在の環境観測グリッド配列 (H, W)
-  - name: transition_history
-    type: optional[list[dict]]
-    description: 過去の行動遷移ログ [obs, action, next_obs, reward, done]
-  - name: interaction_log
-    type: optional[list[dict]]
-    description: 人間 VCGT 思考解説ログまたはプレイ記録
-outputs:
-  - name: affordances
-    type: dict
-    description: アフォーダンス分類（agent, obstacles, goals, hazards, interactables）
-  - name: invariants
-    type: dict
-    description: 保存される環境特性（通過不能な壁色、背景色、グリッド境界）
-  - name: dynamics_rules
-    type: list[str]
-    description: 同定された因果規則（4近傍移動、壁衝突反発、キー取得によるドア解錠等）
+description: |
+  Extracts affordances (agent, obstacles, targets, hazards) and transition dynamics from ACR-AGI-3 games.
+  Use when observing game frames or analyzing state transitions to infer causal interaction rules.
+  Do NOT use for synthesising full action policy scripts or static puzzle grid transforms.
+license: MIT
+allowed-tools: run_skill_script
+metadata:
+  version: "2.0.0"
+  pattern: "meta-workflow"
+  inputs:
+    - name: observation
+      type: numpy.ndarray
+      description: Current observation grid array (H, W)
+    - name: transition_history
+      type: optional[list[dict]]
+      description: Past transition logs [obs, action, next_obs, reward, done]
+  outputs:
+    - name: affordances
+      type: dict
+      description: Identified roles (agent, obstacles, goals, hazards, interactables)
+    - name: dynamics_rules
+      type: list[str]
+      description: Inferred causality rules
 ---
 
 # Environment Observer Meta-Skill
 
-## 概要
-未知の動的ゲーム環境に直面したとき、最初に行うべき「観察・アフォーダンス同定・因果推論」を司るメタスキルです。
-静的な一括変換ではなく、**「何が操作可能な自機か」「何が通過不能な壁か」「どこがゴール/危険ゾーンか」** および **「行動によって環境がどう変化するか（Dynamics）」** を自律抽出します。
+## When to use
+- Observe raw 2D observation frames of an unknown ACR-AGI-3 game environment.
+- Classify visual gestalt components into gameplay affordance roles (Agent, Static Obstacles, Goal, Hazards, Interactables).
+- Analyze action transition tuples `(obs, action, next_obs, reward, done)` to extract physical causal dynamics.
 
-## 1. アフォーダンス同定 (Affordances - 人間 VCGT モデル準拠)
-観測グリッドおよび操作ログから、構成要素を以下のゲーム役割に分類します：
-* **Controlled Agent (自機/操作主体)**: 行動（UP, DOWN, LEFT, RIGHT 等）に連動して座標が変化する単一または複数のセル。
-* **Static Obstacles (静的壁/障害物)**: 移動行動を行っても通過できず、自機の侵入を遮る境界セル。
-* **Target / Goal (クリア目標)**: 自機が到達・接触することで報酬が得られ、ステージクリアとなる目標セル。
-* **Hazards / Traps (危険物/ペナルティ)**: 接触するとゲームオーバーまたはペナルティが発生する回避対象セル。
-* **Interactables (相互作用物/スイッチ/鍵)**: 接触することで他オブジェクト（扉や壁）の状態を変化させる要素。
+## When NOT to use
+- Static input-to-output puzzle grid transformations (ARC-1/2 style).
+- Synthesizing full executable Python action policies (use `skill-synthesizer`).
+- Running contract test simulation loops (use `contract-tester`).
 
-## 2. 抽出対象の不変量と因果力学 (Invariants & Dynamics)
-1. **空間・境界不変量**:
-   - グリッド寸法（H, W）、背景色（通常最頻色）、画面端のループ有無。
-2. **行動因果力学 (Action Causality)**:
-   - 1行動あたりの移動量（通常 1 セル/ステップ）。
-   - 壁に衝突した際の挙動（その場に留まる、または跳ね返る）。
-   - アイテム接触時のトリガー効果（鍵取得で対応する色の扉が消失するなど）。
+## Workflow
+1. Frame Affordance Analysis: Pass raw color observation grid to extract spatial boundaries, background, agent, obstacles, and items:
+   ```bash
+   python -m acr_agi3.meta.observer --frame "<observation_array>"
+   ```
+2. Transition Causality Extraction: Feed `(obs_before, action, obs_after)` tuples to identify move displacement, collision elasticity, or key-lock interaction.
+3. Structured Hand-off: Pass structured affordance report to `subgoal-decomposer` and `skill-synthesizer`.
 
-## 成果物の受け渡し
-抽出されたアフォーダンス辞書と因果規則は、`subgoal-decomposer` および `skill-synthesizer` に渡され、安全で最短なゲームクリア行動ポリシーの生成に直結します。
+## Examples
+- Input: 5x5 grid with agent at (1, 1), walls at row 0, goal at (4, 4) → Output: `{"player_pos": (1, 1), "goal_pos": (4, 4), "obstacles": [(0, 0), ...], "background": 0}`
+
+## Output format
+- Structured dictionary with keys: `grid_shape`, `background_color`, `player_pos`, `goal_pos`, `obstacles`, `hazards`, `interactables`.
+
+## Anti-patterns to avoid
+- Do not assume agent coordinate is always color 2 without checking motion displacement across steps.
+- Do not treat dynamic game grids as static matrix math transformations.
+
+## Requirements & Prerequisites
+- Python: >= 3.10
+- External packages: numpy
+
+## Bundled Resources
+### `references/`
+- Reference implementations in `src/acr_agi3/meta/observer.py`.
+
