@@ -126,3 +126,43 @@ def test_human_vcgt_loader_and_plan_conversion():
     assert "Example Task [vcgt_game_001]" in few_shot_prompt
     assert "Human Visual Concept-Guided Thinking (VCGT)" in few_shot_prompt
 
+
+def test_meta_skill_driven_agent_mock_solve():
+    """MetaSkillDrivenAgent のモック推論と診断パイプライン検証."""
+    from acr_agi3.agent.meta_agent import MetaSkillDrivenAgent
+
+    agent = MetaSkillDrivenAgent()
+
+    train_pairs = [
+        {
+            "input": [[1, 0], [0, 0]],
+            "output": [[2, 0], [0, 0]],
+        },
+        {
+            "input": [[0, 1], [0, 0]],
+            "output": [[0, 2], [0, 0]],
+        },
+    ]
+
+    obs, plan = agent.analyze_task(train_pairs)
+    assert obs.in_shape == (2, 2)
+    assert obs.out_shape == (2, 2)
+    assert plan.total_steps >= 1
+
+    prompt = agent.build_meta_prompt(train_pairs, obs, plan)
+    assert "Meta-Cognitive Analysis" in prompt
+    assert "Subgoal Plan" in prompt
+
+    # Failure Diagnoser のテスト
+    wrong_code = "def transform(grid):\n    return grid"
+    verification = {
+        "is_valid": False,
+        "passed_count": 0,
+        "total_count": 2,
+        "failures": [{"pair_index": 0, "reason": "output mismatch"}],
+    }
+    diag = agent.diagnose_failure(wrong_code, verification, train_pairs)
+    assert "Verification failed" in diag
+    assert "Cell (0, 0): Expected color 2, Got 1" in diag
+
+
