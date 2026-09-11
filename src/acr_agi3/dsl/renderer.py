@@ -5,6 +5,8 @@ ARC 公式 10 色カラーパレットに基づき、
 完全オフラインかつインメモリで動作します。
 """
 
+from typing import Optional
+
 import numpy as np
 from PIL import Image, ImageDraw
 
@@ -31,6 +33,7 @@ def render_grid_to_image(
     grid: np.ndarray,
     cell_size: int = 24,
     grid_line_width: int = 1,
+    scale: Optional[int] = None,
 ) -> Image.Image:
     """2次元グリッド配列をカラー画像 (PIL.Image) に変換する.
 
@@ -38,11 +41,15 @@ def render_grid_to_image(
         grid: (H, W) の 2D numpy 配列 (要素は 0〜9 の整数)
         cell_size: 1 セルあたりのピクセル幅・高さ
         grid_line_width: セル間の境界線の太さ (ピクセル)
+        scale: cell_size のエイリアス
 
     Returns:
         RGB 形式の PIL Image
     """
+    if scale is not None:
+        cell_size = scale
     arr = np.array(grid, dtype=int)
+
     if arr.ndim != 2:
         raise ValueError(f"Grid must be 2-dimensional, got shape {arr.shape}")
 

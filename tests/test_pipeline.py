@@ -1,13 +1,12 @@
 """ARC 推論および評価パイプライン全体の疎通・統合テスト."""
 
-from typing import Any, Dict
 
 import numpy as np
 
 from acr_agi3.agent.orchestrator import ARCOrchestrator
 from acr_agi3.dsl import primitives
 from acr_agi3.eval.harness import BenchmarkHarness
-from acr_agi3.eval.metrics import compute_pass_at_k, exact_match
+from acr_agi3.eval.metrics import compute_pass_at_k
 
 
 def test_dsl_primitives() -> None:
@@ -19,37 +18,57 @@ def test_dsl_primitives() -> None:
     assert np.array_equal(primitives.replace_color(grid, 1, 9), np.array([[9, 2], [3, 4]]))
 
 
-def test_orchestrator_solves_sample_task(sample_arc_task: Dict[str, Any]) -> None:
-    """Orchestrator がサンプルの ARC タスクを解けることを検証する."""
-    orchestrator = ARCOrchestrator()
-    train_pairs = [
-        {"input": np.array(p["input"]), "output": np.array(p["output"])}
-        for p in sample_arc_task["train"]
-    ]
-    test_in = np.array(sample_arc_task["test"][0]["input"])
-    expected_out = np.array(sample_arc_task["test"][0]["output"])
+def test_orchestrator_solves_game() -> None:
+    """Orchestrator がゲーム環境を解けることを検証する."""
+    from acr_agi3.agent.llm.local_model import LocalTransformersLlm
+    from acr_agi3.agent.meta_agent import MetaSkillDrivenAgent
+    from acr_agi3.game.vcgt_game import GridWorldGameEnv
 
-    preds = orchestrator.solve(train_pairs, test_in, max_attempts=2)
+    def mock_policy_fn(prompt: str) -> str:
+        return (
+            "```python\n"
+            "from acr_agi3.game.env import Action\n"
+            "def choose_action(obs, info=None):\n"
+            "    return Action.RIGHT\n"
+            "```"
+        )
 
-    assert len(preds) > 0
-    # 候補のいずれかが正解と一致すること
-    assert any(exact_match(p, expected_out) for p in preds)
+    mock_llm = LocalTransformersLlm(model_name_or_path="mock", generation_fn=mock_policy_fn)
+    meta_agent = MetaSkillDrivenAgent(model=mock_llm)
+    orchestrator = ARCOrchestrator(agent=meta_agent)
+
+    env = GridWorldGameEnv(grid_shape=(3, 3), initial_player_pos=(1, 0), goal_pos=(1, 1))
+    res = orchestrator.solve(env)
+
+    assert res["is_solved"] is True
+    assert res["policy_code"] is not None
 
 
-def test_benchmark_harness_integration(sample_arc_task: Dict[str, Any]) -> None:
-    """BenchmarkHarness による評価フローが正常に集計されることを検証する."""
+def test_benchmark_harness_game_integration() -> None:
+    """BenchmarkHarness によるゲーム環境評価フローが正常に集計されることを検証する."""
+    from acr_agi3.agent.llm.local_model import LocalTransformersLlm
+    from acr_agi3.agent.meta_agent import MetaSkillDrivenAgent
+    from acr_agi3.game.vcgt_game import GridWorldGameEnv
+
+    def mock_policy_fn(prompt: str) -> str:
+        return (
+            "```python\n"
+            "from acr_agi3.game.env import Action\n"
+            "def choose_action(obs, info=None):\n"
+            "    return Action.RIGHT\n"
+            "```"
+        )
+
+    mock_llm = LocalTransformersLlm(model_name_or_path="mock", generation_fn=mock_policy_fn)
+    agent = MetaSkillDrivenAgent(model=mock_llm)
     harness = BenchmarkHarness()
-    orchestrator = ARCOrchestrator()
 
-    res = harness.evaluate_task(
-        task=sample_arc_task,
-        solver_fn=lambda trains, test_in: orchestrator.solve(trains, test_in, max_attempts=2),
-        k=2,
-    )
-
+    env = GridWorldGameEnv(grid_shape=(3, 3), initial_player_pos=(1, 0), goal_pos=(1, 1))
+    res = harness.evaluate_game(env=env, agent=agent, task_id="test_stage")
     assert res["solved"] is True
-    assert len(res["test_cases"]) == 1
-    assert res["test_cases"][0]["is_correct"] is True
+    assert res["task_id"] == "test_stage"
+
+
 
 
 def test_metrics_pass_at_k() -> None:

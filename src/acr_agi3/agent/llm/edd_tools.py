@@ -10,8 +10,6 @@ import numpy as np
 from edd_agent_tools.packaging.scaffold import SkillScaffolder
 from edd_agent_tools.validation.validator import SkillValidator
 
-from acr_agi3.agent.llm.arc_tools import execute_and_verify_code
-
 logger = logging.getLogger(__name__)
 
 GENERATED_SKILLS_DIR = Path("generated_skills")
@@ -97,69 +95,6 @@ def edd_write_skill_code(name: str, code: str) -> str:
 
     return f"Saved skill implementation to {script_file}"
 
-
-def edd_run_contract_test(
-    name: str,
-    train_pairs: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """スキルの契約テスト（正例・負例）を実行し、EDD 防壁ゲートの合否結果を返します.
-
-    Args:
-        name: スキル識別名
-        train_pairs: 検証用入出力ペア一覧 [{'input': [[...]], 'output': [[...]]}]
-
-    Returns:
-        契約テスト結果 (is_valid, passed_count, total_count, failures)
-    """
-    norm_name = name.strip().replace(" ", "-").replace("_", "-").lower()
-    script_base = name.strip().replace(" ", "_").replace("-", "_").lower()
-    script_file = GENERATED_SKILLS_DIR / norm_name / "scripts" / f"{script_base}.py"
-
-    if not script_file.exists():
-        return {
-            "is_valid": False,
-            "error": f"Implementation file not found: {script_file}",
-            "passed_count": 0,
-            "total_count": len(train_pairs),
-        }
-
-    code = script_file.read_text(encoding="utf-8")
-    return execute_and_verify_code(code, train_pairs)
-
-
-def edd_execute_skill(
-    name: str,
-    input_grid: list[list[int]],
-) -> dict[str, Any]:
-    """検証済みの具象スキルを実行し、変換後グリッドを取得します.
-
-    Args:
-        name: スキル識別名
-        input_grid: 入力 2 次元配列
-
-    Returns:
-        実行結果 (success: bool, output_grid: list[list[int]], error: str)
-    """
-    norm_name = name.strip().replace(" ", "-").replace("_", "-").lower()
-    script_base = name.strip().replace(" ", "_").replace("-", "_").lower()
-    script_file = GENERATED_SKILLS_DIR / norm_name / "scripts" / f"{script_base}.py"
-
-    if not script_file.exists():
-        return {"success": False, "error": f"Skill not found: {script_file}"}
-
-    try:
-        code = script_file.read_text(encoding="utf-8")
-        local_scope: dict[str, Any] = {"np": np}
-        exec(code, {"np": np, "__builtins__": __builtins__}, local_scope)
-        if "transform" not in local_scope:
-            return {"success": False, "error": "Function 'transform' not defined"}
-
-        inp = np.array(input_grid, dtype=int)
-        out = local_scope["transform"](inp)
-        out_list = np.array(out, dtype=int).tolist()
-        return {"success": True, "output_grid": out_list}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
 
 
 def edd_run_game_contract_test(

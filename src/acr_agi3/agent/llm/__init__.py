@@ -1,7 +1,8 @@
 from acr_agi3.agent.llm.edd_tools import (
-    edd_execute_skill,
+    edd_execute_game_skill,
     edd_init_skill,
-    edd_run_contract_test,
+    edd_list_skills,
+    edd_register_verified_skill,
     edd_run_game_contract_test,
     edd_validate_skill,
     edd_write_skill_code,
@@ -15,7 +16,9 @@ __all__ = [
     "edd_init_skill",
     "edd_validate_skill",
     "edd_write_skill_code",
-    "edd_run_contract_test",
     "edd_run_game_contract_test",
-    "edd_execute_skill",
+    "edd_execute_game_skill",
+    "edd_list_skills",
+    "edd_register_verified_skill",
 ]
+

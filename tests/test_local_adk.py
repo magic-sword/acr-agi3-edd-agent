@@ -1,164 +1,131 @@
-"""Google ADK 2.0 × ローカル LLM の結合・単体テスト."""
+"""Google ADK 2.0 × ローカル LLM のゲームプレイ結合・単体テスト."""
 
 import asyncio
 
-import numpy as np
 from google.adk.agents import Agent
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai.types import Content, Part
 
 from acr_agi3.agent.llm.arc_tools import (
-    execute_and_verify_code,
+    execute_and_verify_game_policy,
     extract_python_code,
 )
 from acr_agi3.agent.llm.local_model import LocalTransformersLlm
-from acr_agi3.agent.llm_agent import LLMProgramSynthesisAgent
+from acr_agi3.agent.llm_agent import LLMGameAgent
+from acr_agi3.game.vcgt_game import GridWorldGameEnv
 
 
 def test_extract_python_code():
     """マークダウンコードブロックからの Python 抽出テスト."""
     text1 = (
-        "Here is the code:\n```python\ndef transform(grid):\n    return np.rot90(grid)\n```\nDone."
+        "Here is the code:\n```python\n"
+        "from acr_agi3.game.env import Action\n"
+        "def choose_action(obs):\n"
+        "    return Action.RIGHT\n```\nDone."
     )
-    assert extract_python_code(text1) == "def transform(grid):\n    return np.rot90(grid)"
+    assert "def choose_action" in extract_python_code(text1)
 
-    text2 = "```\ndef transform(grid):\n    return grid * 2\n```"
-    assert extract_python_code(text2) == "def transform(grid):\n    return grid * 2"
+    text2 = "```\ndef choose_action(obs):\n    return Action.UP\n```"
+    assert "def choose_action" in extract_python_code(text2)
 
-    text3 = "def transform(grid):\n    return grid"
-    assert extract_python_code(text3) == "def transform(grid):\n    return grid"
+    text3 = "def choose_action(obs):\n    return Action.DOWN"
+    assert extract_python_code(text3) == "def choose_action(obs):\n    return Action.DOWN"
 
 
-def test_execute_and_verify_code_success():
-    """正常に正解するコードの検証テスト."""
+def test_execute_and_verify_game_policy_success():
+    """ゲーム環境でゴールに到達する正常系テスト."""
+    env = GridWorldGameEnv(
+        grid_shape=(5, 5),
+        player_pos=(1, 1),
+        goal_pos=(1, 3),
+        walls=set(),
+    )
     code = """
-def transform(grid):
-    return np.rot90(grid, k=-1)
+from acr_agi3.game.env import Action
+def choose_action(obs):
+    return Action.RIGHT
 """
-    train_pairs = [
-        {
-            "input": np.array([[1, 2], [3, 4]]),
-            "output": np.rot90(np.array([[1, 2], [3, 4]]), k=-1),
-        },
-        {
-            "input": np.array([[5, 6], [7, 8]]),
-            "output": np.rot90(np.array([[5, 6], [7, 8]]), k=-1),
-        },
-    ]
-
-    result = execute_and_verify_code(code, train_pairs)
-    assert result["is_valid"] is True
-    assert result["passed_count"] == 2
-    assert result["total_count"] == 2
-    assert len(result["failures"]) == 0
+    result = execute_and_verify_game_policy(code, env, max_steps=10)
+    assert result["success"] is True
+    assert result["steps_taken"] == 2
+    assert result["final_reward"] == 1.0
 
 
-def test_execute_and_verify_code_failure():
-    """不正解コードの検証テスト."""
+def test_execute_and_verify_game_policy_failure():
+    """壁に阻まれてゴールに到達できない失敗テスト."""
+    env = GridWorldGameEnv(
+        grid_shape=(5, 5),
+        player_pos=(1, 1),
+        goal_pos=(1, 4),
+        walls={(1, 2)},
+    )
     code = """
-def transform(grid):
-    return grid  # 恒等変換 (正解ではない)
+from acr_agi3.game.env import Action
+def choose_action(obs):
+    return Action.RIGHT
 """
-    train_pairs = [
-        {
-            "input": np.array([[1, 2], [3, 4]]),
-            "output": np.rot90(np.array([[1, 2], [3, 4]]), k=-1),
-        }
-    ]
-
-    result = execute_and_verify_code(code, train_pairs)
-    assert result["is_valid"] is False
-    assert result["passed_count"] == 0
-    assert len(result["failures"]) == 1
-    assert "Grid values mismatch" in result["failures"][0]["reason"]
+    result = execute_and_verify_game_policy(code, env, max_steps=5)
+    assert result["success"] is False
+    assert result["steps_taken"] == 5
+    assert result["final_reward"] <= 0.0
 
 
-def test_execute_and_verify_code_syntax_error():
+def test_execute_and_verify_game_policy_syntax_error():
     """構文エラーのハンドリングテスト."""
-    code = "def transform(grid) return invalid syntax"
-    train_pairs = [{"input": np.array([[1]]), "output": np.array([[1]])}]
-
-    result = execute_and_verify_code(code, train_pairs)
-    assert result["is_valid"] is False
-    assert "Syntax/Compilation error" in result["error"]
+    env = GridWorldGameEnv(grid_shape=(3, 3), player_pos=(0, 0), goal_pos=(2, 2))
+    code = "def choose_action(obs) invalid syntax"
+    result = execute_and_verify_game_policy(code, env, max_steps=5)
+    assert result["success"] is False
+    assert "Syntax/Import error" in result["error"]
 
 
 def test_local_transformers_llm_with_adk_runner():
     """Google ADK 2.0 Runner と LocalTransformersLlm の連携テスト."""
 
     async def _run():
-
-        def mock_generate(prompt: str) -> str:
-            return "```python\ndef transform(grid):\n    return np.fliplr(grid)\n```"
-
-        llm = LocalTransformersLlm(
-            model_name_or_path="mock-qwen-coder",
-            generate_fn=mock_generate,
-        )
-
-        agent = Agent(
-            name="test_agent",
-            model=llm,
-            instruction="Solve ARC problem",
-        )
-        session_service = InMemorySessionService()
+        model = LocalTransformersLlm(model_name_or_path="mock")
+        agent = Agent(name="test_runner_agent", model=model, instruction="Test instruction.")
+        service = InMemorySessionService()
         runner = Runner(
             agent=agent,
             app_name="test_app",
-            session_service=session_service,
+            session_service=service,
             auto_create_session=True,
         )
 
-        message = Content(role="user", parts=[Part.from_text(text="Please write transform code.")])
+
+        msg = Content(role="user", parts=[Part.from_text(text="Synthesize action policy")])
         events = []
-        async for event in runner.run_async(
-            user_id="tester",
-            session_id="session_test_1",
-            new_message=message,
-        ):
+        async for event in runner.run_async(user_id="u1", session_id="s1", new_message=msg):
             events.append(event)
         return events
 
     events = asyncio.run(_run())
-
     assert len(events) > 0
-    # レスポンスに生成テキストが含まれていることを確認
-    collected_text = ""
-    for ev in events:
-        if hasattr(ev, "content") and ev.content:
-            for part in getattr(ev.content, "parts", []):
-                if hasattr(part, "text") and part.text:
-                    collected_text += part.text
-
-    assert "def transform" in collected_text
-    assert "np.fliplr" in collected_text
 
 
-def test_llm_program_synthesis_agent_solve():
-    """LLMProgramSynthesisAgent によるタスク解決テスト (End-to-End)."""
+def test_llm_game_agent_solve():
+    """LLMGameAgent によるゲーム解決テスト (End-to-End)."""
 
-    # 左右反転の正解コードを返すモック
-    def mock_correct_generator(prompt: str) -> str:
-        return "```python\ndef transform(grid):\n    return np.fliplr(grid)\n```"
+    def mock_action_generator(prompt: str) -> str:
+        return (
+            "```python\n"
+            "from acr_agi3.game.env import Action\n"
+            "def choose_action(obs):\n"
+            "    return Action.RIGHT\n"
+            "```"
+        )
 
     mock_llm = LocalTransformersLlm(
         model_name_or_path="mock-qwen",
-        generate_fn=mock_correct_generator,
+        generation_fn=mock_action_generator,
     )
+    agent = LLMGameAgent(llm=mock_llm)
+    env = GridWorldGameEnv(grid_shape=(3, 3), initial_player_pos=(1, 0), goal_pos=(1, 1))
+    res = agent.solve(env)
 
-    synthesis_agent = LLMProgramSynthesisAgent(model=mock_llm)
+    assert res["is_solved"] is True
+    assert res["policy_code"] is not None
 
-    train_pairs = [
-        {
-            "input": np.array([[1, 2, 3], [4, 5, 6]]),
-            "output": np.array([[3, 2, 1], [6, 5, 4]]),
-        }
-    ]
-    test_input = np.array([[7, 8, 9], [0, 1, 2]])
-    expected_output = np.array([[9, 8, 7], [2, 1, 0]])
 
-    predictions = synthesis_agent.solve(train_pairs=train_pairs, test_input=test_input)
-
-    assert len(predictions) == 1
-    assert np.array_equal(predictions[0], expected_output)

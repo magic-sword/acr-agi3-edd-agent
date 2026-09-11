@@ -25,12 +25,14 @@ class GridWorldGameEnv(GameEnvironment):
         goal_color: int = 3,
         hazard_color: int = 4,
         max_steps: int = 100,
+        player_pos: tuple[int, int] | None = None,
     ) -> None:
         self.grid_shape = grid_shape
-        self.initial_player_pos = initial_player_pos
+        self.initial_player_pos = player_pos if player_pos is not None else initial_player_pos
         self.goal_pos = goal_pos
         self.walls = walls or set()
         self.hazards = hazards or set()
+
 
         self.background_color = background_color
         self.wall_color = wall_color

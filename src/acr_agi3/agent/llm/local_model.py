@@ -28,6 +28,7 @@ class LocalTransformersLlm(BaseLlm):
         model_name_or_path: str = "local-offline-model",
         pipeline: Any = None,
         generate_fn: Optional[Callable[[str], str]] = None,
+        generation_fn: Optional[Callable[[str], str]] = None,
         device: str = "cuda",
         torch_dtype: Any = None,
         load_in_8bit: bool = False,
@@ -40,13 +41,15 @@ class LocalTransformersLlm(BaseLlm):
             model_name_or_path: モデル名またはローカルの重みディレクトリパス
             pipeline: 既存の transformers パイプライン (指定時はこれを優先)
             generate_fn: テストやカスタム生成用のコールバック関数 (fn(prompt) -> output_text)
+            generation_fn: generate_fn のエイリアス
             device: 実行デバイス ('cuda', 'cpu')
             torch_dtype: データ型 (torch.float16, torch.bfloat16等)
             load_in_8bit: 8bit量子化でロードするか
             load_in_4bit: 4bit量子化でロードするか
         """
         super().__init__(model=model_name_or_path, **kwargs)
-        self._generate_fn = generate_fn
+        self._generate_fn = generate_fn or generation_fn
+
 
         if pipeline is not None:
             self._pipeline = pipeline

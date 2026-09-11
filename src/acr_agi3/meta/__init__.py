@@ -2,11 +2,11 @@
 
 from acr_agi3.meta.decomposer import DecompositionPlan, Subgoal, SubgoalDecomposer
 from acr_agi3.meta.human_vcgt import VCGTDataset, VCGTExplanation, VCGTRecord
-from acr_agi3.meta.observer import AffordanceObject, MetaObserver, ObservationReport
+from acr_agi3.meta.observer import AffordanceObject, GameAffordanceReport, MetaObserver
 
 __all__ = [
     "MetaObserver",
-    "ObservationReport",
+    "GameAffordanceReport",
     "AffordanceObject",
     "SubgoalDecomposer",
     "Subgoal",
@@ -15,3 +15,4 @@ __all__ = [
     "VCGTRecord",
     "VCGTExplanation",
 ]
+

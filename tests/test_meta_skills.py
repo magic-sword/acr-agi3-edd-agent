@@ -9,76 +9,6 @@ from acr_agi3.meta.human_vcgt import VCGTDataset
 from acr_agi3.meta.observer import MetaObserver
 
 
-def test_meta_observer_pair_analysis():
-    """MetaObserver による不変量とアフォーダンス分析テスト."""
-    observer = MetaObserver()
-
-    # 入力: 3x3 (背景: 0, 物体: 1)
-    inp = np.array(
-        [
-            [0, 1, 0],
-            [1, 1, 0],
-            [0, 0, 0],
-        ]
-    )
-    # 出力: 6x6 (2倍拡大, 新色 2 が登場)
-    out = np.zeros((6, 6), dtype=int)
-    out[:3, :3] = inp
-    out[3:, 3:] = 2
-
-    report = observer.analyze_pair(inp, out)
-
-    assert report.in_shape == (3, 3)
-    assert report.out_shape == (6, 6)
-    assert report.shape_ratio == (2.0, 2.0)
-    assert report.background_color == 0
-    assert 2 in report.new_colors
-    assert report.transformation_hint == "scaling_or_tiling"
-    assert len(report.objects) == 1
-    assert report.objects[0].color == 1
-    assert report.objects[0].size == 3
-
-
-def test_meta_observer_task_summary():
-    """タスク全体の全 Train ペア集約テスト."""
-    observer = MetaObserver()
-    train_pairs = [
-        {"input": np.zeros((3, 3)), "output": np.zeros((6, 6))},
-        {"input": np.zeros((4, 4)), "output": np.zeros((8, 8))},
-    ]
-
-    summary = observer.analyze_task(train_pairs)
-    assert summary["consistent_shape_ratio"] == (2.0, 2.0)
-    assert summary["consistent_background"] == 0
-    assert summary["num_train_pairs"] == 2
-
-
-def test_subgoal_decomposer_vcgt_structure():
-    """SubgoalDecomposer による VCGT 構造の中間マイルストーン分解テスト."""
-    decomposer = SubgoalDecomposer()
-
-    # 形状が拡大し、新色が出るタスク
-    inp = np.array([[1, 0], [0, 1]])
-    out = np.array([[1, 0, 2], [0, 1, 2], [2, 2, 2]])
-
-    plan = decomposer.decompose(inp, out)
-
-    assert plan.total_steps >= 2
-    step_names = [s.name for s in plan.subgoals]
-    assert "AdjustGridDimensions" in step_names
-    assert "IntroduceNewColors" in step_names
-
-    # 各サブゴールに VCGT 思考理由 (reasoning) が含まれていることを確認
-    for subgoal in plan.subgoals:
-        assert len(subgoal.objective) > 0
-        assert len(subgoal.reasoning) > 0
-        assert len(subgoal.expected_operation) > 0
-
-    plan_dict = plan.to_dict()
-    assert "subgoals" in plan_dict
-    assert len(plan_dict["subgoals"]) == plan.total_steps
-
-
 def test_meta_skills_spec_files_exist():
     """meta_skills/ 配下の全メタスキル仕様書の存在確認."""
     repo_root = Path(__file__).resolve().parent.parent
@@ -129,43 +59,31 @@ def test_human_vcgt_loader_and_plan_conversion():
     assert "Human Visual Concept-Guided Thinking (VCGT)" in few_shot_prompt
 
 
-def test_meta_skill_driven_agent_mock_solve():
-    """MetaSkillDrivenAgent のモック推論と診断パイプライン検証."""
+def test_meta_skill_driven_agent_solve_game():
+    """MetaSkillDrivenAgent によるゲーム環境のメタ認知分解と行動ポリシー合成・解決テスト."""
+    from acr_agi3.agent.llm.local_model import LocalTransformersLlm
     from acr_agi3.agent.meta_agent import MetaSkillDrivenAgent
+    from acr_agi3.game.vcgt_game import GridWorldGameEnv
 
-    agent = MetaSkillDrivenAgent()
+    def mock_policy_fn(prompt: str) -> str:
+        return (
+            "```python\n"
+            "from acr_agi3.game.env import Action\n"
+            "def choose_action(obs, info=None):\n"
+            "    return Action.RIGHT\n"
+            "```"
+        )
 
-    train_pairs = [
-        {
-            "input": [[1, 0], [0, 0]],
-            "output": [[2, 0], [0, 0]],
-        },
-        {
-            "input": [[0, 1], [0, 0]],
-            "output": [[0, 2], [0, 0]],
-        },
-    ]
+    mock_llm = LocalTransformersLlm(model_name_or_path="mock", generation_fn=mock_policy_fn)
+    agent = MetaSkillDrivenAgent(model=mock_llm)
+    env = GridWorldGameEnv(grid_shape=(3, 3), initial_player_pos=(1, 0), goal_pos=(1, 1))
+    res = agent.solve_game(env)
 
-    obs, plan = agent.analyze_task(train_pairs)
-    assert obs.in_shape == (2, 2)
-    assert obs.out_shape == (2, 2)
-    assert plan.total_steps >= 1
+    assert res["is_solved"] is True
+    assert res["policy_code"] is not None
+    assert res["steps_taken"] > 0
 
-    prompt = agent.build_meta_prompt(train_pairs, obs, plan)
-    assert "Meta-Cognitive Analysis" in prompt
-    assert "Subgoal Plan" in prompt
 
-    # Failure Diagnoser のテスト
-    wrong_code = "def transform(grid):\n    return grid"
-    verification = {
-        "is_valid": False,
-        "passed_count": 0,
-        "total_count": 2,
-        "failures": [{"pair_index": 0, "reason": "output mismatch"}],
-    }
-    diag = agent.diagnose_failure(wrong_code, verification, train_pairs)
-    assert "Verification failed" in diag
-    assert "Cell (0, 0): Expected color 2, Got 1" in diag
 
 
 def test_meta_observer_game_frame_and_transition():

@@ -71,3 +71,26 @@ class BenchmarkHarness:
             "solved": task_solved,
             "test_cases": test_results,
         }
+
+    def evaluate_game(
+        self,
+        env: Any,
+        agent: Any,
+        max_steps: int = 50,
+        task_id: str = "eval_game",
+    ) -> Dict[str, Any]:
+        """ゲーム環境に対するエージェントの解法実行とクリア成否・ステップ数評価."""
+        if hasattr(agent, "solve_game"):
+            res = agent.solve_game(env, max_steps=max_steps, task_id=task_id)
+        elif hasattr(agent, "solve"):
+            res = agent.solve(env, max_steps=max_steps)
+        else:
+            raise ValueError(f"Agent {agent} does not support game solve interface.")
+
+        return {
+            "solved": res.get("is_solved", False),
+            "steps_taken": res.get("steps_taken", 0),
+            "task_id": task_id,
+            "details": res,
+        }
+

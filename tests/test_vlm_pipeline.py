@@ -2,7 +2,6 @@
 
 import asyncio
 import io
-from pathlib import Path
 
 import numpy as np
 from PIL import Image
@@ -52,7 +51,13 @@ def test_local_qwen_vl_mock():
     def mock_generate(prompt: str, images=None) -> str:
         assert images is not None
         assert len(images) > 0
-        return "```python\ndef transform(grid):\n    return np.rot90(grid)\n```"
+        return (
+            "```python\n"
+            "from acr_agi3.game.env import Action\n"
+            "def choose_action(obs, info=None):\n"
+            "    return Action.RIGHT\n"
+            "```"
+        )
 
     vlm = LocalQwenVL(model_name_or_path="mock", generate_fn=mock_generate)
 
@@ -86,41 +91,30 @@ def test_local_qwen_vl_mock():
     responses = asyncio.run(_test())
     assert len(responses) == 1
     text = responses[0].content.parts[0].text
-    assert "def transform" in text
-    assert "np.rot90" in text
+    assert "def choose_action" in text
+    assert "Action.RIGHT" in text
 
 
-def test_vlm_program_synthesis_agent_end_to_end(tmp_path: Path):
-    """VLMProgramSynthesisAgent の解法テスト (SKILL.md 読み込み + 画像入力)."""
-    # 一時的なスキルディレクトリと SKILL.md を作成
-    skill_dir = tmp_path / "skills" / "mock-skill"
-    skill_dir.mkdir(parents=True)
-    (skill_dir / "SKILL.md").write_text(
-        "---\nname: mock-skill\n---\nUse np.fliplr to flip horizontally.",
-        encoding="utf-8",
-    )
+def test_vlm_game_agent_end_to_end():
+    """VLMGameAgent によるゲーム環境の視覚認識とポリシー推論解決テスト."""
+    from acr_agi3.game.vcgt_game import GridWorldGameEnv
 
     def mock_generate(prompt: str, images=None) -> str:
-        # プロンプト内に SKILL.md の記述が含まれているか確認
-        return "```python\ndef transform(grid):\n    return np.fliplr(grid)\n```"
+        return (
+            "```python\n"
+            "from acr_agi3.game.env import Action\n"
+            "def choose_action(obs, info=None):\n"
+            "    return Action.RIGHT\n"
+            "```"
+        )
 
     mock_vlm = LocalQwenVL(model_name_or_path="mock", generate_fn=mock_generate)
-    agent = VLMProgramSynthesisAgent(
-        model=mock_vlm,
-        skills_dir=tmp_path / "skills",
-    )
+    agent = VLMProgramSynthesisAgent(model=mock_vlm)
 
-    assert "mock-skill" in agent.skills_context
+    env = GridWorldGameEnv(grid_shape=(3, 3), initial_player_pos=(1, 0), goal_pos=(1, 1))
+    res = agent.solve(env=env, max_steps=10)
 
-    train_pairs = [
-        {
-            "input": np.array([[1, 2, 3], [4, 5, 6]]),
-            "output": np.array([[3, 2, 1], [6, 5, 4]]),
-        }
-    ]
-    test_input = np.array([[7, 8, 9], [0, 1, 2]])
-    expected_output = np.array([[9, 8, 7], [2, 1, 0]])
+    assert res["is_solved"] is True
+    assert res["code"] is not None
 
-    predictions = agent.solve(train_pairs=train_pairs, test_input=test_input)
-    assert len(predictions) == 1
-    assert np.array_equal(predictions[0], expected_output)
+
