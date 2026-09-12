@@ -254,4 +254,6 @@ logs/
 
 # Kaggle submission artifacts
 submission.json
+deploy/
+
 
