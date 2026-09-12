@@ -88,8 +88,44 @@ class BenchmarkHarness:
             raise ValueError(f"Agent {agent} does not support game solve interface.")
 
         return {
-            "solved": res.get("is_solved", False),
+            "solved": res.get("is_solved", False) or res.get("cleared", False),
             "steps_taken": res.get("steps_taken", 0),
             "task_id": task_id,
             "details": res,
         }
+
+    def evaluate_game_suite(
+        self,
+        envs: Dict[str, Any],
+        agent: Any,
+        max_steps: int = 50,
+    ) -> Dict[str, Any]:
+        """複数のゲーム環境を一括評価し、スコアとクリア率を集計する."""
+        results = []
+        total_tasks = len(envs)
+        cleared_tasks = 0
+        total_steps = 0
+
+        for task_id, env in envs.items():
+            eval_res = self.evaluate_game(
+                env=env,
+                agent=agent,
+                max_steps=max_steps,
+                task_id=task_id,
+            )
+            results.append(eval_res)
+            if eval_res["solved"]:
+                cleared_tasks += 1
+            total_steps += eval_res["steps_taken"]
+
+        clear_rate = (cleared_tasks / total_tasks) if total_tasks > 0 else 0.0
+        avg_steps = (total_steps / total_tasks) if total_tasks > 0 else 0.0
+
+        return {
+            "total_tasks": total_tasks,
+            "cleared_tasks": cleared_tasks,
+            "clear_rate": clear_rate,
+            "average_steps": avg_steps,
+            "task_results": results,
+        }
+

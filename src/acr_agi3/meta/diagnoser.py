@@ -117,7 +117,7 @@ class FailureDiagnoser:
                 ),
                 "directive": (
                     "RUNTIME FIX: Always verify `if len(coords) > 0:` before indexing `coords[0]`."
-                    " If not found, return a default safe Action (e.g. Action.WAIT or Action.RIGHT)."
+                    " If not found, return a default safe Action (e.g. Action.WAIT)."
                 ),
                 "severity": "HIGH",
             }

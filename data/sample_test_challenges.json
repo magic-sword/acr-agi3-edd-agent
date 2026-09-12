@@ -1,0 +1,27 @@
+{
+  "task_maze_01": {
+    "grid_shape": [10, 10],
+    "initial_player_pos": [1, 1],
+    "goal_pos": [8, 8],
+    "walls": [
+      [5, 0], [5, 1], [5, 2], [5, 3], [5, 4], [5, 5], [5, 6], [5, 7]
+    ],
+    "hazards": []
+  },
+  "task_open_02": {
+    "grid_shape": [10, 10],
+    "initial_player_pos": [2, 2],
+    "goal_pos": [7, 7],
+    "walls": [],
+    "hazards": []
+  },
+  "task_hazard_03": {
+    "grid_shape": [10, 10],
+    "initial_player_pos": [1, 1],
+    "goal_pos": [8, 8],
+    "walls": [],
+    "hazards": [
+      [3, 3], [4, 4], [5, 5]
+    ]
+  }
+}

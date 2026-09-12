@@ -251,3 +251,7 @@ notebooks/.ipynb_checkpoints/
 
 # Runtime logs & experiment results
 logs/
+
+# Kaggle submission artifacts
+submission.json
+
