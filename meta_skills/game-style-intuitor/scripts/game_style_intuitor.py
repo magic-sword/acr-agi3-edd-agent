@@ -22,7 +22,10 @@ def analyze_game_style(obs: np.ndarray) -> Dict[str, Any]:
     num_colors = len(unique_colors)
 
     counts = np.bincount(obs.flatten(), minlength=10)
-    bg_color = int(np.argmax(counts))
+    if counts[0] > 0:
+        bg_color = 0
+    else:
+        bg_color = int(np.argmax(counts))
 
     top_edge = obs[0, :]
     bottom_edge = obs[h - 1, :]
@@ -38,21 +41,34 @@ def analyze_game_style(obs: np.ndarray) -> Dict[str, Any]:
 
     if h > 2 and w > 2:
         inner_obs = obs[1 : h - 1, 1 : w - 1]
-        h_sym = float(np.mean(inner_obs == np.fliplr(inner_obs)))
-        v_sym = float(np.mean(inner_obs == np.flipud(inner_obs)))
-        symmetry_score = max(h_sym, v_sym)
-        inner_non_bg = np.mean(inner_obs != bg_color)
+        fg_mask = inner_obs != bg_color
+        fg_count = int(np.sum(fg_mask))
+        inner_non_bg = float(np.mean(fg_mask))
+
+        if fg_count >= 4:
+            h_sym_match = int(np.sum(fg_mask & np.fliplr(fg_mask)))
+            v_sym_match = int(np.sum(fg_mask & np.flipud(fg_mask)))
+            h_sym_union = int(np.sum(fg_mask | np.fliplr(fg_mask)))
+            v_sym_union = int(np.sum(fg_mask | np.flipud(fg_mask)))
+
+            h_sym = float(h_sym_match / h_sym_union) if h_sym_union > 0 else 0.0
+            v_sym = float(v_sym_match / v_sym_union) if v_sym_union > 0 else 0.0
+            symmetry_score = max(h_sym, v_sym)
+        else:
+            symmetry_score = 0.0
     else:
         symmetry_score = 0.0
         inner_non_bg = 0.0
 
-    isolated_items = []
+    color_counts = {}
     for c in unique_colors:
         if c == bg_color:
             continue
         coords = np.argwhere(obs == c)
-        if 1 <= len(coords) <= 3:
-            isolated_items.append(int(c))
+        color_counts[int(c)] = len(coords)
+
+    isolated_items = [c for c, count in color_counts.items() if 1 <= count <= 2]
+    hazard_candidates = [c for c, count in color_counts.items() if 3 <= count <= 8]
 
     features = {
         "grid_shape": [h, w],
@@ -63,24 +79,10 @@ def analyze_game_style(obs: np.ndarray) -> Dict[str, Any]:
         "obstacle_density": round(obstacle_density, 3),
         "symmetry_score": round(symmetry_score, 3),
         "isolated_item_colors": isolated_items,
+        "hazard_colors": hazard_candidates,
     }
 
-    if len(isolated_items) >= 2:
-        return {
-            "style": "ITEM_TRIGGER_PUZZLE",
-            "description": (
-                "Multiple isolated colored objects detected. Sequential trigger or key-lock"
-                " mechanics active."
-            ),
-            "features": features,
-            "recommended_approach": (
-                "INTERACTION FIRST: Route to isolated item entities to alter game state"
-                " before exit."
-            ),
-            "recommended_domain": "inventory_puzzle",
-        }
-
-    if symmetry_score > 0.85 and inner_non_bg > 0.20:
+    if symmetry_score > 0.80 and inner_non_bg > 0.15:
         return {
             "style": "SYMMETRIC_PATTERN",
             "description": "Board exhibits high spatial symmetry. Geometric alignment game.",
@@ -103,7 +105,37 @@ def analyze_game_style(obs: np.ndarray) -> Dict[str, Any]:
             "recommended_domain": "exploration",
         }
 
-    if obstacle_density >= 0.20 and not has_edge_exit:
+    if len(hazard_candidates) >= 1 and not has_edge_exit:
+        return {
+            "style": "HAZARD_AVOIDANCE",
+            "description": (
+                "Dangerous hazard barrier zones detected. Lethal penalty or game over on"
+                " contact."
+            ),
+            "features": features,
+            "recommended_approach": (
+                "SAFETY FIRST: Identify and avoid entering fatal hazard cells while navigating"
+                " to destination."
+            ),
+            "recommended_domain": "hazard_avoidance",
+        }
+
+    if len(isolated_items) >= 3:
+        return {
+            "style": "ITEM_TRIGGER_PUZZLE",
+            "description": (
+                "Multiple isolated colored objects detected. Sequential trigger or key-lock"
+                " mechanics active."
+            ),
+            "features": features,
+            "recommended_approach": (
+                "INTERACTION FIRST: Route to isolated item entities to alter game state"
+                " before exit."
+            ),
+            "recommended_domain": "inventory_puzzle",
+        }
+
+    if obstacle_density >= 0.15 and not has_edge_exit:
         return {
             "style": "CLOSED_MAZE",
             "description": (

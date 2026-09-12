@@ -40,6 +40,26 @@ class FailureDiagnoser:
                 "severity": "CRITICAL",
             }
 
+        # 1-B. Action Enum 契約違反 (ActionEnumViolation)
+        if (
+            ("has no attribute" in err_msg and "Action" in err_msg)
+            or "is not a valid Action" in err_msg
+            or ("Action" in err_msg and "not defined" in err_msg)
+        ):
+            return {
+                "category": "ActionEnumViolation",
+                "root_cause": (
+                    "Returned invalid Action enum value, coordinate tuple, or non-existent action"
+                    " method."
+                ),
+                "directive": (
+                    "CONTRACT FIX: Return ONLY a valid Action enum (Action.UP, Action.DOWN,"
+                    " Action.LEFT, Action.RIGHT, Action.WAIT). Do NOT invent custom methods (e.g."
+                    " Action.MOVE_TO) or return coordinate tuples."
+                ),
+                "severity": "CRITICAL",
+            }
+
         # 2. 言語構文・実行例外 (Language / Runtime Exception)
         if "The truth value of an array with more than one element is ambiguous" in err_msg:
             return {

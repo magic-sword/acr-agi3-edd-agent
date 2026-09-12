@@ -55,3 +55,19 @@ def test_diagnose_safety_invariant_breach(diagnoser):
     assert res["category"] == "SafetyInvariantBreach"
     assert "SAFETY FIX" in res["directive"]
     assert res["severity"] == "CRITICAL"
+
+
+def test_diagnose_action_enum_violation(diagnoser):
+    """Action enum 契約違反・タプル返却の抽象診断テスト."""
+    err1 = "Policy execution error at step 1: type object 'Action' has no attribute 'MOVE_TO'"
+    res1 = diagnoser.diagnose(error=err1)
+    assert res1["category"] == "ActionEnumViolation"
+    assert "CONTRACT FIX" in res1["directive"]
+    assert "Action.UP" in res1["directive"]
+    assert res1["severity"] == "CRITICAL"
+
+    err2 = "Policy execution error at step 1: (np.int64(1), np.int64(2)) is not a valid Action"
+    res2 = diagnoser.diagnose(error=err2)
+    assert res2["category"] == "ActionEnumViolation"
+    assert "Action.UP" in res2["directive"]
+

@@ -11,14 +11,31 @@ import numpy as np
 
 
 def extract_python_code(text: str) -> str:
-    """LLM レスポンスから Python コードブロックを抽出."""
+    """LLM レスポンスから Python コードブロックを抽出 (関数の補完フォールバック付き)."""
     pattern = r"```(?:python)?\s*\n(.*?)\n```"
     matches = re.findall(pattern, text, re.DOTALL)
-    if matches:
-        return matches[-1].strip()
-    if "def choose_action" in text:
-        return text.strip()
-    return text.strip()
+    raw_code = matches[-1].strip() if matches else text.strip()
+
+    # すでに関数定義がある場合はそのまま返却
+    if "def choose_action" in raw_code or "def act" in raw_code:
+        return raw_code
+
+    # 1.5Bモデルが関数ヘッダーを省略して単一式またはボディのみを出力した場合の自動ラップ
+    lines = raw_code.strip().splitlines()
+    if len(lines) == 1 and ("Action." in lines[0] or lines[0].strip().startswith("return")):
+        stmt = lines[0].strip()
+        if not stmt.startswith("return"):
+            stmt = f"return {stmt}"
+        return (
+            "def choose_action(obs: np.ndarray, info: dict | None = None) -> Action:\n"
+            f"    {stmt}"
+        )
+
+    # 複数行の処理ブロックの場合、全体を4スペースインデントしてラップ
+    indented = "\n".join(f"    {line}" for line in lines)
+    if "return " not in raw_code:
+        indented += "\n    return Action.WAIT"
+    return f"def choose_action(obs: np.ndarray, info: dict | None = None) -> Action:\n{indented}"
 
 
 def execute_and_verify_game_policy(
