@@ -58,6 +58,10 @@ class ModelPathResolver:
 
         return None
 
+    def find_qwen_vl_path(self) -> Optional[Path]:
+        """find_qwen_vl_path のエイリアス (互換性用)."""
+        return self.resolve_model_path()
+
     @classmethod
     def resolve_data_dir(cls, custom_path: Optional[str | Path] = None) -> Path:
         """テストデータやゲーム定義が格納されたディレクトリを解決する."""

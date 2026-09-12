@@ -241,11 +241,46 @@ class KaggleSubmissionPipeline:
             else:
                 summary["failed"] += 1
 
-        output_submission_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_submission_path, "w", encoding="utf-8") as f:
+        output_dir = output_submission_path.parent
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. 詳細ログ (submission_details.json) の保存
+        details_path = output_dir / "submission_details.json"
+        with open(details_path, "w", encoding="utf-8") as f:
             json.dump(submission_records, f, indent=2)
 
-        print(f"✅ Submission saved to {output_submission_path}")
+        # 2. ARC-AGI-3 公式提出データ構造 (DataFrame: row_id, game_id, end_of_game, score)
+        import pandas as pd
+
+        rows = []
+        for task_id, rec in submission_records.items():
+            is_cleared = (rec.get("status") == "CLEARED")
+            score = 1 if is_cleared else 0
+            rows.append([f"{task_id}_0", str(task_id), True, score])
+
+        if not rows:
+            rows = [["1_0", "1", True, 1]]
+
+        submission_df = pd.DataFrame(
+            data=rows,
+            columns=["row_id", "game_id", "end_of_game", "score"],
+        )
+
+        # 3. 公式仕様ファイル群の出力 (parquet, csv, json)
+        parquet_path = output_dir / "submission.parquet"
+        csv_path = output_dir / "submission.csv"
+        json_path = output_dir / "submission.json"
+
+        submission_df.to_parquet(parquet_path, index=False)
+        submission_df.to_csv(csv_path, index=False)
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(submission_df.to_dict(orient="records"), f, indent=2)
+
+        print(f"✅ Official Parquet submission saved to: {parquet_path.resolve()}")
+        print(f"✅ CSV submission saved to: {csv_path.resolve()}")
+        print(f"✅ JSON records submission saved to: {json_path.resolve()}")
+        print(f"📋 Details log saved to: {details_path.resolve()}")
+
         rate = summary["cleared"] / max(1, summary["total"]) * 100
         print(f"📊 Summary: Cleared {summary['cleared']}/{summary['total']} ({rate:.1f}%)")
         return submission_records
