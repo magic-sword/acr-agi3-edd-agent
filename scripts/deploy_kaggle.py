@@ -92,7 +92,7 @@ def prepare_deploy_dir(notebook_slug: str = "acr-agi3-agent-submission") -> Path
         "enable_gpu": "true",
         "enable_tpu": "false",
         "enable_internet": "false",
-        "dataset_sources": [],
+        "dataset_sources": [f"{username}/acr-agi3-source"],
         "competition_sources": [],
         "kernel_sources": [],
         "model_sources": [],
@@ -102,7 +102,7 @@ def prepare_deploy_dir(notebook_slug: str = "acr-agi3-agent-submission") -> Path
     with open(meta_file, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2)
 
-    print(f"📋 Generated kernel metadata: {kernel_id}")
+    print(f"📋 Generated kernel metadata (with dataset source {username}/acr-agi3-source): {kernel_id}")
     return deploy_dir
 
 
@@ -151,11 +151,16 @@ def push_dataset(dataset_slug: str = "acr-agi3-source") -> None:
 
     deploy_ds_dir = REPO_ROOT / "deploy" / "kaggle_dataset"
     deploy_ds_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(dist_tar, deploy_ds_dir / dist_tar.name)
+
+    # src ディレクトリを丸ごとコピー
+    target_src = deploy_ds_dir / "src"
+    if target_src.exists():
+        shutil.rmtree(target_src)
+    shutil.copytree(REPO_ROOT / "src", target_src)
 
     username = get_kaggle_username()
     metadata = {
-        "title": "ACR-AGI-3 Source Package",
+        "title": "acr-agi3-source",
         "id": f"{username}/{dataset_slug}",
         "licenses": [{"name": "mit"}],
     }
@@ -168,12 +173,12 @@ def push_dataset(dataset_slug: str = "acr-agi3-source") -> None:
         "kaggle", "datasets", "version",
         "-p", str(deploy_ds_dir),
         "-m", "Auto-update source package",
-        "-r", "zip",
+        "-r", "tar",
     ]
     res = subprocess.run(cmd_version, capture_output=True, text=True)
     if res.returncode != 0:
         res = subprocess.run(
-            ["kaggle", "datasets", "create", "-p", str(deploy_ds_dir), "-r", "zip"],
+            ["kaggle", "datasets", "create", "-p", str(deploy_ds_dir), "-r", "tar"],
             capture_output=True,
             text=True,
         )
