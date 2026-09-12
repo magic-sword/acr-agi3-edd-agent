@@ -196,7 +196,23 @@ class MetaSkillDrivenAgent:
                 else f"{base_prompt}\n\n[DIAGNOSTIC FEEDBACK]:\n{feedback}"
             )
             session_id = f"game_sess_{task_id}_{attempt}"
-            resp = asyncio.run(self._run_agent_turn(prompt, session_id=session_id))
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                try:
+                    import nest_asyncio
+                    nest_asyncio.apply()
+                    coro = self._run_agent_turn(prompt, session_id=session_id)
+                    resp = loop.run_until_complete(coro)
+                except Exception:
+                    coro = self._run_agent_turn(prompt, session_id=session_id)
+                    resp = asyncio.run(coro)
+            else:
+                resp = asyncio.run(self._run_agent_turn(prompt, session_id=session_id))
+
             code = extract_python_code(resp)
 
             # シミュレーション検証
