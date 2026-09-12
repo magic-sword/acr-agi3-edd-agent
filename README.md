@@ -172,16 +172,34 @@ edd diagnose grid-analyzer
 
 ---
 
-## 🏆 Kaggle 提出
+## 🏆 Kaggle 提出 & デプロイ
 
-`notebooks/submission_template.ipynb` をベースに提出用ノートブックを作成します。
+詳細な運用手順書は [KAGGLE_SUBMISSION_GUIDE.md](file:///home/prog/work/kaggle/acr-agi3-edd-agent/KAGGLE_SUBMISSION_GUIDE.md)、コマンドチートシートは [docs/KAGGLE_CLI_COMMANDS.md](file:///home/prog/work/kaggle/acr-agi3-edd-agent/docs/KAGGLE_CLI_COMMANDS.md) を参照してください。
 
-**重要な制約事項:**
-- Kaggle 評価環境では **インターネット接続なし**
-- 外部 API (Gemini, Claude 等) は **利用不可**
-- 必要な依存はすべて **オフライン** で提供する必要あり
+### 1. コマンドラインからの 1 発自動デプロイ
+```bash
+# ノートブックのビルド & Kaggle へのプッシュ (Save & Run All 実行開始)
+docker exec arc-agi3-dev python3 scripts/deploy_kaggle.py --push
+
+# 実行ステータスの確認
+docker exec arc-agi3-dev python3 scripts/deploy_kaggle.py --status
+```
+
+### 2. ローカルでの事前検証 & スコア計測
+```bash
+# Kaggle 同等環境でのシミュレーション & スコア計測 (5課題走破)
+docker exec arc-agi3-dev python3 scripts/kaggle_local_simulation.py
+
+# 提出パイプライン結合テスト
+docker exec arc-agi3-dev pytest tests/test_submission_pipeline.py -v
+```
+
+**重要な制約事項 (完全オフライン互換):**
+- Kaggle 評価環境では **インターネット接続なし** (`local_files_only=True`)
+- 外部 API は **利用不可**（ローカル推論アダプター `LocalTransformersLlm` を使用）
+- 提出ノートブックは内部に自己解凍コードを内蔵しており、**追加データセット不要で完全自己完結動作**
 - 実行時間: **最大 9 時間**
-- GPU: **RTX Pro 6000 (96GB VRAM)**
+- GPU: **RTX Pro 6000 (96GB VRAM) / T4 x2**
 
 ---
 
