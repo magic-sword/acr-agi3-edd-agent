@@ -71,3 +71,12 @@ def test_diagnose_action_enum_violation(diagnoser):
     assert res2["category"] == "ActionEnumViolation"
     assert "Action.UP" in res2["directive"]
 
+
+def test_diagnose_empty_coordinates_index_error(diagnoser):
+    """空座標配列参照例外の抽象診断テスト."""
+    err = "Policy execution error at step 1: index 0 is out of bounds for axis 0 with size 0"
+    res = diagnoser.diagnose(error=err)
+    assert res["category"] == "EmptyCoordinatesIndexError"
+    assert "len(coords)" in res["directive"]
+    assert res["severity"] == "HIGH"
+

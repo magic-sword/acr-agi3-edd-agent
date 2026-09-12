@@ -107,8 +107,23 @@ class FailureDiagnoser:
                 "severity": "HIGH",
             }
 
+        # 2-B. 空配列参照例外 (Empty Coordinates Index Error)
+        if "out of bounds for axis" in err_msg or "IndexError" in err_msg:
+            return {
+                "category": "EmptyCoordinatesIndexError",
+                "root_cause": (
+                    "Accessing index [0] on an empty coordinate array when target/player is not"
+                    " found."
+                ),
+                "directive": (
+                    "RUNTIME FIX: Always verify `if len(coords) > 0:` before indexing `coords[0]`."
+                    " If not found, return a default safe Action (e.g. Action.WAIT or Action.RIGHT)."
+                ),
+                "severity": "HIGH",
+            }
+
         # 3. 振る舞い停滞・目標未達 (Behavioral Stagnation / Timeout)
-        if steps_taken >= 40 or "timeout" in err_msg.lower() or err_msg == "None":
+        if steps_taken >= 30 or "timeout" in err_msg.lower() or err_msg == "None":
             return {
                 "category": "BehavioralStagnation",
                 "root_cause": (
