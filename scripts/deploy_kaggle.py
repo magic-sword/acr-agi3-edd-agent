@@ -79,12 +79,28 @@ def prepare_deploy_dir(notebook_slug: str = "acr-agi3-agent-submission") -> Path
     shutil.copy2(src_nb, dst_nb)
     print(f"📄 Copied notebook to {dst_nb}")
 
-    # 3. kernel-metadata.json の作成
+    # 3. kernel-metadata.json の作成 / 既存維持
+    meta_file = deploy_dir / "kernel-metadata.json"
     username = get_kaggle_username()
-    kernel_id = f"{username}/{notebook_slug}"
+    existing_meta = {}
+    if meta_file.exists():
+        try:
+            with open(meta_file, "r", encoding="utf-8") as f:
+                existing_meta = json.load(f)
+        except Exception:
+            pass
+
+    # 既存のID/タイトルがある場合は優先（notebook94c84cdf06等）
+    if notebook_slug == "acr-agi3-agent-submission" and "id" in existing_meta:
+        kernel_id = existing_meta["id"]
+        title = existing_meta.get("title", notebook_slug)
+    else:
+        kernel_id = f"{username}/{notebook_slug}"
+        title = notebook_slug
+
     metadata = {
         "id": kernel_id,
-        "title": notebook_slug,
+        "title": title,
         "code_file": "submission_template.ipynb",
         "language": "python",
         "kernel_type": "notebook",
@@ -92,13 +108,12 @@ def prepare_deploy_dir(notebook_slug: str = "acr-agi3-agent-submission") -> Path
         "enable_gpu": "true",
         "enable_tpu": "false",
         "enable_internet": "false",
-        "dataset_sources": [f"{username}/acr-agi3-source"],
-        "competition_sources": ["arc-prize-2026-arc-agi-3"],
+        "dataset_sources": existing_meta.get("dataset_sources", [f"{username}/acr-agi3-source"]),
+        "competition_sources": existing_meta.get("competition_sources", ["arc-prize-2026-arc-agi-3"]),
         "kernel_sources": [],
         "model_sources": [],
     }
 
-    meta_file = deploy_dir / "kernel-metadata.json"
     with open(meta_file, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2)
 
