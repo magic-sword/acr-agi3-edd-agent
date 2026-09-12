@@ -93,7 +93,7 @@ def prepare_deploy_dir(notebook_slug: str = "acr-agi3-agent-submission") -> Path
         "enable_tpu": "false",
         "enable_internet": "false",
         "dataset_sources": [f"{username}/acr-agi3-source"],
-        "competition_sources": [],
+        "competition_sources": ["arc-prize-2026-arc-agi-3"],
         "kernel_sources": [],
         "model_sources": [],
     }
@@ -102,7 +102,9 @@ def prepare_deploy_dir(notebook_slug: str = "acr-agi3-agent-submission") -> Path
     with open(meta_file, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2)
 
-    print(f"📋 Generated kernel metadata (with dataset source {username}/acr-agi3-source): {kernel_id}")
+    print(
+        f"📋 Generated kernel metadata (linked to competition 'arc-prize-2026-arc-agi-3'): {kernel_id}"
+    )
     return deploy_dir
 
 
