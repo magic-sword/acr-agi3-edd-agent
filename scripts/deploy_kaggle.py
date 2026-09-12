@@ -26,8 +26,27 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
+def ensure_auth_env() -> None:
+    """新トークン (~/.kaggle/access_token) または環境変数から認証を確立."""
+    import os
+
+    if "KAGGLE_API_TOKEN" not in os.environ:
+        candidates = [
+            Path.home() / ".kaggle/access_token",
+            Path("/root/.kaggle/access_token"),
+            REPO_ROOT / ".kaggle/access_token",
+        ]
+        for p in candidates:
+            if p.exists():
+                token = p.read_text().strip()
+                if token:
+                    os.environ["KAGGLE_API_TOKEN"] = token
+                    break
+
+
 def get_kaggle_username() -> str:
-    """kaggle.json からユーザー名を取得."""
+    """ユーザー名を取得 (デフォルト: magicsword001)."""
+    ensure_auth_env()
     kaggle_json_candidates = [
         Path.home() / ".kaggle/kaggle.json",
         Path("/root/.kaggle/kaggle.json"),
@@ -65,7 +84,7 @@ def prepare_deploy_dir(notebook_slug: str = "acr-agi3-agent-submission") -> Path
     kernel_id = f"{username}/{notebook_slug}"
     metadata = {
         "id": kernel_id,
-        "title": "ACR-AGI-3 Agent Submission",
+        "title": notebook_slug,
         "code_file": "submission_template.ipynb",
         "language": "python",
         "kernel_type": "notebook",
