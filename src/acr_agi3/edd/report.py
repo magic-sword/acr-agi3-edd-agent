@@ -1,6 +1,8 @@
-"""EDD 診断レポートフォーマッター (Report Formatter).
+"""EDD 診断レポートフォーマッター (Report Formatter Adapter).
 
 コンソール表示および Markdown 出力用の整形を行う。
+上流の edd_agent_tools が利用可能な場合はそちらへ委譲し、
+Kaggle 本番等のオフライン環境ではローカルロジックにフォールバックする。
 """
 
 from __future__ import annotations
@@ -9,12 +11,19 @@ from typing import List
 
 from acr_agi3.edd.analyzer import DiagnosticReport
 
+try:
+    from edd_agent_tools.evaluation import EDDReportFormatter as UpstreamFormatter  # type: ignore
+except ImportError:
+    UpstreamFormatter = None
+
 
 class EDDReportFormatter:
-    """診断結果を人間可読な形式に整形するフォーマッター."""
+    """診断結果を人間可読な形式に整形するフォーマッター (Adapter)."""
 
     @staticmethod
     def format_console_summary(reports: List[DiagnosticReport]) -> str:
+        if UpstreamFormatter is not None:
+            return UpstreamFormatter.format_console_summary(reports)
         lines = []
         lines.append("=" * 78)
         lines.append("🔬 [EDD DIAGNOSTIC TELEMETRY & ROOT-CAUSE ANALYSIS]")
