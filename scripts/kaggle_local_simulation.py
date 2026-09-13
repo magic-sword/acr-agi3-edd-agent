@@ -29,6 +29,14 @@ import arc_agi
 from arc_agi import Arcade, OperationMode
 from arcengine import FrameData, GameAction, GameState
 
+from acr_agi3.edd import (
+    DiagnosticAnalyzer,
+    DiagnosticReport,
+    EDDReportFormatter,
+    SessionTelemetry,
+    StepTelemetry,
+)
+
 
 def resolve_environments_dir() -> Path:
     """公式環境ディレクトリのパスを解決."""
@@ -77,7 +85,9 @@ def load_notebook_agent():
 def run_single_game(
     arcade: Arcade,
     game_id: str,
-    agent_class: Any,
+    title: str = "Unknown",
+    baseline: Optional[List[int]] = None,
+    agent_class: Any = None,
     max_steps: int = 80,
     scorecard_id: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -112,6 +122,13 @@ def run_single_game(
         )
     ]
 
+    session_telemetry = SessionTelemetry(
+        game_id=game_id,
+        title=title,
+        baseline_actions=baseline,
+        initial_shape=(len(obs.frame), len(obs.frame[0])) if obs.frame else (0, 0),
+    )
+
     steps = 0
     errors = []
 
@@ -122,6 +139,7 @@ def run_single_game(
         if latest_frame.state is GameState.WIN:
             break
 
+        t_act_start = time.time()
         try:
             action = agent.choose_action(frames, latest_frame)
         except Exception as e:
@@ -149,10 +167,45 @@ def run_single_game(
             errors.append("step returned None")
             break
 
+        time_taken_ms = (time.time() - t_act_start) * 1000.0
+
+        # フレーム差分・有効性の数理計算
+        old_grid = latest_frame.frame or []
+        new_grid = [arr.tolist() for arr in res.frame] if res.frame is not None else []
+        diff_count = 0
+        changed_colors = set()
+        if old_grid and new_grid and len(old_grid) == len(new_grid) and len(old_grid[0]) == len(new_grid[0]):
+            for r in range(len(old_grid)):
+                for c in range(len(old_grid[0])):
+                    if old_grid[r][c] != new_grid[r][c]:
+                        diff_count += 1
+                        val = new_grid[r][c]
+                        color_repr = tuple(val) if isinstance(val, list) else val
+                        changed_colors.add(color_repr)
+
+        is_eff = (diff_count > 0) or (res.levels_completed > latest_frame.levels_completed) or (res.state is GameState.WIN)
+
+        step_telemetry = StepTelemetry(
+            step_index=steps,
+            action_id=getattr(action, "value", -1),
+            action_name=getattr(action, "name", str(action)),
+            action_data=data,
+            reasoning=reasoning,
+            state_before=str(latest_frame.state),
+            state_after=str(res.state),
+            levels_completed=res.levels_completed,
+            win_levels=res.win_levels,
+            pixels_changed=diff_count,
+            changed_colors=list(changed_colors),
+            is_effective=is_eff,
+            time_taken_ms=time_taken_ms,
+        )
+        session_telemetry.add_step(step_telemetry)
+
         steps += 1
         new_frame = FrameData(
             game_id=res.game_id,
-            frame=[arr.tolist() for arr in res.frame],
+            frame=new_grid,
             state=res.state,
             levels_completed=res.levels_completed,
             win_levels=res.win_levels,
@@ -167,6 +220,12 @@ def run_single_game(
     last_frame = frames[-1]
     is_cleared = (last_frame.state is GameState.WIN) or (last_frame.levels_completed >= last_frame.win_levels and last_frame.win_levels > 0)
 
+    session_telemetry.final_state = str(last_frame.state)
+    session_telemetry.total_levels_completed = last_frame.levels_completed
+    session_telemetry.total_win_levels = last_frame.win_levels
+
+    diagnostic_report = DiagnosticAnalyzer.analyze(session_telemetry)
+
     return {
         "game_id": game_id,
         "status": "WIN" if is_cleared else str(last_frame.state).replace("GameState.", ""),
@@ -174,6 +233,7 @@ def run_single_game(
         "win_levels": last_frame.win_levels,
         "steps": steps,
         "errors": errors,
+        "diagnostics": diagnostic_report,
     }
 
 
@@ -216,6 +276,8 @@ def run_local_simulation(max_games: Optional[int] = None, max_steps: int = 80) -
         res = run_single_game(
             arcade=arcade,
             game_id=g_id,
+            title=title,
+            baseline=baseline,
             agent_class=agent_class,
             max_steps=max_steps,
             scorecard_id=card_id,
@@ -226,10 +288,11 @@ def run_local_simulation(max_games: Optional[int] = None, max_steps: int = 80) -
 
         status_mark = "🏆" if res["status"] == "WIN" else ("⭐" if res["levels_completed"] > 0 else "❌")
         err_msg = f" | ERRORS: {res['errors']}" if res["errors"] else ""
+        diag: DiagnosticReport = res["diagnostics"]
         print(
             f"[{idx:02d}/{len(target_envs):02d}] {status_mark} {g_id:<14} ({title:<6}) | "
             f"Levels: {res['levels_completed']:2d}/{res['win_levels']:2d} | "
-            f"Steps: {res['steps']:2d} | Status: {res['status']:<12}{err_msg}"
+            f"Steps: {res['steps']:2d} | EffRatio: {diag.effective_ratio*100:4.1f}% | Stag: {diag.max_consecutive_stagnation:2d}s | {diag.dominant_failure_category:<26}{err_msg}"
         )
 
     elapsed = time.time() - t_start
@@ -250,6 +313,18 @@ def run_local_simulation(max_games: Optional[int] = None, max_steps: int = 80) -
     print(f"Official Scorecard Score: {official_score:.4f} (Kaggle Leaderboard Metric)")
     print(f"Total Simulation Time:    {elapsed:.2f}s ({elapsed/max(1, len(results)):.2f}s/env)")
     print("=" * 78)
+
+    # EDD 診断サマリーの出力
+    reports = [r["diagnostics"] for r in results]
+    print("\n" + EDDReportFormatter.format_console_summary(reports))
+
+    # 診断結果の永続化 (logs/edd_diagnostics.json)
+    logs_dir = REPO_ROOT / "logs"
+    logs_dir.mkdir(exist_ok=True)
+    diag_file = logs_dir / "edd_diagnostics.json"
+    with open(diag_file, "w", encoding="utf-8") as f:
+        json.dump([r.to_dict() for r in reports], f, indent=2)
+    print(f"\n💾 Saved structured EDD diagnostic reports to: {diag_file}")
 
     # 提出用 Parquet のスキーマ検証
     working_parquet = REPO_ROOT / "deploy" / "kaggle_kernel" / "submission.parquet"
