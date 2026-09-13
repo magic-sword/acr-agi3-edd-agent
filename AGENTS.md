@@ -50,6 +50,12 @@ ACR-AGI-3 は **「未知の動的ゲーム環境において、状態観測か�
    * 新規スキルを作成・初期化する際は、必ず MCP ツール **`edd_init_skill`**（または `SkillScaffolder`）を用いて標準ディレクトリ構造（`SKILL.md`, `scripts/`, `tests/`）を生成すること。
    * スキルを作成・編集した後は、必ず MCP ツール **`edd_validate_skill`** を実行し、Markdown-First / Progressive Disclosure 規約に対する **エラー 0 件・警告 0 件** を確認してからコミットすること。
 
+9. **Kaggle Dataset 直参照（Read-Only）アーキテクチャの徹底**
+   * メタスキル（`meta_skills/`）およびソースコード（`src/`）は、ノートブック内に Base64/辞書として埋め込んで物理再展開してはならない（コード肥大化・I/Oオーバーヘッドの禁止）。
+   * Kaggle 本番環境では、Kaggle Dataset（`/kaggle/input/acr-agi3-agent/`）のフォルダ構造をそのまま直接インポート・参照すること。
+   * 提出ノートブック（`notebooks/submission_template.ipynb`）は、エージェントをロードして Gateway を叩くだけの極小・クリーンな構成（数十行）を維持すること。
+   * 実行時動的生成スキル（`generated_skills/`）のみを書き込み可能領域（`/kaggle/working/generated_skills`）で扱うこと。
+
 ---
 
 ## 🧩 Google ADK 準拠 3段階 Progressive Disclosure 設計思想

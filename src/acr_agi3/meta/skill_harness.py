@@ -38,9 +38,12 @@ class SkillHarness:
         if search_paths is None:
             repo_root = Path(__file__).resolve().parent.parent.parent.parent
             candidates = [
-                Path("/kaggle/working/meta_skills"),
+                # 1. Kaggle 本番 Dataset (Read-Only 直参照)
+                Path("/kaggle/input/acr-agi3-agent/meta_skills"),
                 Path("/kaggle/input/acr-agi3-source/meta_skills"),
+                # 2. ローカル開発環境 / Docker
                 repo_root / "meta_skills",
+                # 3. 実行時動的生成スキル (Read-Write)
                 Path("/kaggle/working/generated_skills"),
                 repo_root / "generated_skills",
             ]
