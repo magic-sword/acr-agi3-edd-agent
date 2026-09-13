@@ -8,6 +8,7 @@ ARC Prize 2026 - ARC-AGI-3 の公式ゲーム環境 (25 environment_files) お�
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import random
@@ -90,6 +91,7 @@ def run_single_game(
     agent_class: Any = None,
     max_steps: int = 80,
     scorecard_id: Optional[str] = None,
+    verbose: bool = False,
 ) -> Dict[str, Any]:
     """1つの公式ゲーム環境に対してエージェントを実行し、結果を収集."""
     env = arcade.make(game_id, scorecard_id=scorecard_id)
@@ -202,6 +204,16 @@ def run_single_game(
         )
         session_telemetry.add_step(step_telemetry)
 
+        if verbose:
+            eff_sym = "✅" if is_eff else "❌"
+            act_label = getattr(action, "name", str(action))
+            coords = f" pos=({data.get('x', 0)}, {data.get('y', 0)})" if "x" in data else ""
+            print(
+                f"    [Step {steps:02d}] {act_label:<7}{coords:<15} | Eff: {eff_sym} | "
+                f"ΔPixels: {diff_count:3d} | Level: {res.levels_completed}/{res.win_levels} | "
+                f"State: {str(res.state).replace('GameState.', '')} ({time_taken_ms:.1f}ms)"
+            )
+
         steps += 1
         new_frame = FrameData(
             game_id=res.game_id,
@@ -234,10 +246,15 @@ def run_single_game(
         "steps": steps,
         "errors": errors,
         "diagnostics": diagnostic_report,
+        "session_telemetry": session_telemetry,
     }
 
 
-def run_local_simulation(max_games: Optional[int] = None, max_steps: int = 80) -> None:
+def run_local_simulation(
+    max_games: Optional[int] = None,
+    max_steps: int = 80,
+    verbose: bool = False,
+) -> None:
     """公式 ARC-AGI-3 オフライン環境での完全シミュレーション & スコア計測."""
     print("=" * 78)
     print("🚀 [ARC-AGI-3 LOCAL SIMULATION] Official Offline Verification & Leaderboard Scoring")
@@ -272,7 +289,10 @@ def run_local_simulation(max_games: Optional[int] = None, max_steps: int = 80) -
         g_id = env_info.game_id
         title = getattr(env_info, "title", g_id)
         baseline = getattr(env_info, "baseline_actions", [])
-        
+
+        if verbose:
+            print(f"\n--- [{idx:02d}/{len(target_envs):02d}] Starting {g_id} ({title}) ---")
+
         res = run_single_game(
             arcade=arcade,
             game_id=g_id,
@@ -281,6 +301,7 @@ def run_local_simulation(max_games: Optional[int] = None, max_steps: int = 80) -
             agent_class=agent_class,
             max_steps=max_steps,
             scorecard_id=card_id,
+            verbose=verbose,
         )
         res["title"] = title
         res["baseline"] = baseline
@@ -289,8 +310,9 @@ def run_local_simulation(max_games: Optional[int] = None, max_steps: int = 80) -
         status_mark = "🏆" if res["status"] == "WIN" else ("⭐" if res["levels_completed"] > 0 else "❌")
         err_msg = f" | ERRORS: {res['errors']}" if res["errors"] else ""
         diag: DiagnosticReport = res["diagnostics"]
+        prefix = "  Result -> " if verbose else f"[{idx:02d}/{len(target_envs):02d}] "
         print(
-            f"[{idx:02d}/{len(target_envs):02d}] {status_mark} {g_id:<14} ({title:<6}) | "
+            f"{prefix}{status_mark} {g_id:<14} ({title:<6}) | "
             f"Levels: {res['levels_completed']:2d}/{res['win_levels']:2d} | "
             f"Steps: {res['steps']:2d} | EffRatio: {diag.effective_ratio*100:4.1f}% | Stag: {diag.max_consecutive_stagnation:2d}s | {diag.dominant_failure_category:<26}{err_msg}"
         )
@@ -323,8 +345,23 @@ def run_local_simulation(max_games: Optional[int] = None, max_steps: int = 80) -
     logs_dir.mkdir(exist_ok=True)
     diag_file = logs_dir / "edd_diagnostics.json"
     with open(diag_file, "w", encoding="utf-8") as f:
-        json.dump([r.to_dict() for r in reports], f, indent=2)
+        json.dump([r.to_dict() if hasattr(r, "to_dict") else r.model_dump() for r in reports], f, indent=2)
     print(f"\n💾 Saved structured EDD diagnostic reports to: {diag_file}")
+
+    # 詳細ステップテレメトリの永続化 (logs/step_telemetry_detailed.json)
+    detailed_file = logs_dir / "step_telemetry_detailed.json"
+    detailed_data = []
+    for r in results:
+        sess = r["session_telemetry"]
+        if hasattr(sess, "model_dump"):
+            detailed_data.append(sess.model_dump())
+        elif hasattr(sess, "__dataclass_fields__"):
+            detailed_data.append(dataclasses.asdict(sess))
+        else:
+            detailed_data.append(str(sess))
+    with open(detailed_file, "w", encoding="utf-8") as f:
+        json.dump(detailed_data, f, indent=2)
+    print(f"📄 Saved step-by-step detailed telemetry to: {detailed_file}")
 
     # 提出用 Parquet のスキーマ検証
     working_parquet = REPO_ROOT / "deploy" / "kaggle_kernel" / "submission.parquet"
@@ -347,6 +384,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Kaggle Local Simulation & Scoring")
     parser.add_argument("-n", "--num-games", type=int, default=None, help="Number of games to evaluate (default: all)")
     parser.add_argument("-s", "--max-steps", type=int, default=80, help="Max steps per game (default: 80)")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Print detailed step-by-step telemetry logs")
     args = parser.parse_args()
 
-    run_local_simulation(max_games=args.num_games, max_steps=args.max_steps)
+    run_local_simulation(max_games=args.num_games, max_steps=args.max_steps, verbose=args.verbose)
