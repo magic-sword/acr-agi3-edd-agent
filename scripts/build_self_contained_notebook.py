@@ -61,6 +61,7 @@ else:
     cell2_code = '''%%writefile /kaggle/working/my_agent.py
 import collections
 from collections import deque, Counter
+import dataclasses
 import math
 import os
 import random
@@ -109,14 +110,338 @@ except ImportError:
     Agent = object
 
 
+@dataclasses.dataclass
+class VisualObject:
+    color: int
+    pixels: List[Tuple[int, int]]
+    bbox: Tuple[int, int, int, int]
+    center_x: int
+    center_y: int
+    role: str = "unknown"
+
+
+class GestaltPerceiver:
+    def __init__(self) -> None:
+        self.prev_grid: Optional[List[List[int]]] = None
+        self.player_pos: Optional[Tuple[int, int]] = None
+        self.background_color: int = 0
+
+    def parse(self, grid: Any) -> Dict[str, Any]:
+        if not grid:
+            return {"background_color": 0, "objects": [], "player": None, "targets": [], "walls": set()}
+
+        # 3次元 (N, H, W) やアニメーションシーケンスの安全な正規化（最新フレームを採用）
+        if isinstance(grid, (list, tuple)) and len(grid) > 0:
+            if isinstance(grid[0], (list, tuple)) and len(grid[0]) > 0 and isinstance(grid[0][0], (list, tuple)):
+                grid = grid[-1]
+            elif len(grid) == 1 and isinstance(grid[0], (list, tuple)):
+                grid = grid[0]
+
+        h = len(grid)
+        w = len(grid[0]) if h > 0 and isinstance(grid[0], (list, tuple)) else 0
+        if h == 0 or w == 0:
+            return {"background_color": 0, "objects": [], "player": None, "targets": [], "walls": set()}
+
+        norm_grid: List[List[int]] = []
+        for r in range(h):
+            row = []
+            for c in range(w):
+                val = grid[r][c]
+                pixel_val = val[0] if isinstance(val, (list, tuple)) else val
+                try:
+                    row.append(int(pixel_val))
+                except Exception:
+                    row.append(0)
+            norm_grid.append(row)
+        grid = norm_grid
+
+        color_counts: Dict[int, int] = collections.defaultdict(int)
+        for r in range(h):
+            for c in range(w):
+                color_counts[grid[r][c]] += 1
+        self.background_color = max(color_counts, key=color_counts.get)
+
+        diff_pixels: List[Tuple[int, int]] = []
+        if self.prev_grid and len(self.prev_grid) == h and len(self.prev_grid[0]) == w:
+            for r in range(h):
+                for c in range(w):
+                    if grid[r][c] != self.prev_grid[r][c]:
+                        diff_pixels.append((r, c))
+
+        # 3. 連結成分（4-Connected Components）によるスプライト/オブジェクト同定
+        visited: Set[Tuple[int, int]] = set()
+        raw_components: List[Tuple[int, List[Tuple[int, int]]]] = []
+
+        for r in range(h):
+            for c in range(w):
+                val = grid[r][c]
+                if val == self.background_color or (r, c) in visited:
+                    continue
+
+                comp: List[Tuple[int, int]] = []
+                q = collections.deque([(r, c)])
+                visited.add((r, c))
+                while q:
+                    cr, cc = q.popleft()
+                    comp.append((cr, cc))
+                    for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                        nr, nc = cr + dr, cc + dc
+                        if 0 <= nr < h and 0 <= nc < w:
+                            if (nr, nc) not in visited and grid[nr][nc] == val:
+                                visited.add((nr, nc))
+                                q.append((nr, nc))
+                raw_components.append((val, comp))
+
+        objects: List[VisualObject] = []
+        walls: Set[Tuple[int, int]] = set()
+        targets: List[VisualObject] = []
+        identified_player: Optional[Tuple[int, int]] = None
+
+        if diff_pixels:
+            non_bg_diff = [p for p in diff_pixels if grid[p[0]][p[1]] != self.background_color]
+            if non_bg_diff:
+                identified_player = non_bg_diff[0]
+
+        for color, pixs in raw_components:
+            if len(pixs) > (h * w * 0.25):
+                for p in pixs:
+                    walls.add(p)
+                continue
+
+            min_r = min(p[0] for p in pixs)
+            max_r = max(p[0] for p in pixs)
+            min_c = min(p[1] for p in pixs)
+            max_c = max(p[1] for p in pixs)
+            center_r = (min_r + max_r) // 2
+            center_c = (min_c + max_c) // 2
+
+            obj = VisualObject(
+                color=color,
+                pixels=pixs,
+                bbox=(min_r, min_c, max_r, max_c),
+                center_x=center_c,
+                center_y=center_r,
+            )
+
+            if identified_player and (min_r <= identified_player[0] <= max_r) and (min_c <= identified_player[1] <= max_c):
+                obj.role = "player"
+                self.player_pos = (center_r, center_c)
+            else:
+                obj.role = "target"
+                targets.append(obj)
+
+            objects.append(obj)
+
+        if not self.player_pos and objects:
+            self.player_pos = (objects[0].center_y, objects[0].center_x)
+
+        self.prev_grid = [row[:] for row in grid]
+        return {
+            "background_color": self.background_color,
+            "objects": objects,
+            "player": self.player_pos,
+            "targets": targets,
+            "walls": walls,
+        }
+
+
+class GestaltVCGTPlanner:
+    def __init__(self, game_id: str = "") -> None:
+        self.game_id = game_id
+        self.perceiver = GestaltPerceiver()
+        self.plan_queue: collections.deque[int] = collections.deque()
+        self.clicked_coords: Set[Tuple[int, int]] = set()
+        self.known_obstacles: Set[Tuple[int, int]] = set()
+        self.last_action_id: Optional[int] = None
+        self.step_index: int = 0
+        self.confirmed_interactive_group: Optional[Tuple[int, int]] = None
+        self.last_clicked_group_key: Optional[Tuple[int, int]] = None
+        self.last_clicked_pos: Optional[Tuple[int, int]] = None
+        self.last_hit_pos: Optional[Tuple[int, int]] = None
+
+    def decide_action(
+        self,
+        grid: List[List[int]],
+        available_action_ids: List[int],
+    ) -> Tuple[int, Dict[str, Any], str]:
+        self.step_index += 1
+        # 3次元テンソルを最新フレームの 2D グリッドへ完全正規化
+        if isinstance(grid, (list, tuple)) and len(grid) > 0:
+            if isinstance(grid[0], (list, tuple)) and len(grid[0]) > 0 and isinstance(grid[0][0], (list, tuple)):
+                grid = grid[-1]
+            elif len(grid) == 1 and isinstance(grid[0], (list, tuple)):
+                grid = grid[0]
+
+        parsed = self.perceiver.parse(grid)
+        player = parsed.get("player")
+        targets: List[VisualObject] = parsed.get("targets", [])
+        walls: Set[Tuple[int, int]] = parsed.get("walls", set())
+        all_obstacles = walls | self.known_obstacles
+
+        h = len(grid) if grid else 64
+        w = len(grid[0]) if grid and grid[0] else 64
+
+        # 1. クリック系タスク (ACTION6)
+        if 6 in available_action_ids:
+            target_candidates: List[Tuple[Tuple[int, int], Optional[Tuple[int, int]]]] = []
+
+            # ゲシュタルト同定 (A): 同一色・同一サイズの反復スプライト群（キーパッド/タイル盤）を最優先
+            size_color_groups = collections.defaultdict(list)
+            for obj in targets:
+                if 4 <= len(obj.pixels) < (h * w * 0.2):
+                    size_color_groups[(obj.color, len(obj.pixels))].append(obj)
+
+            # 過去にヒットが確認された正解グループを絶対最優先！
+            if self.confirmed_interactive_group and self.confirmed_interactive_group in size_color_groups:
+                hit_group = size_color_groups[self.confirmed_interactive_group]
+                if self.last_hit_pos:
+                    lx, ly = self.last_hit_pos
+                    hit_group = sorted(
+                        hit_group,
+                        key=lambda o: abs(o.bbox[1] - lx) + abs(o.bbox[0] - ly),
+                    )
+                for obj in hit_group:
+                    for pt in [(obj.bbox[1], obj.bbox[0]), (obj.center_x, obj.center_y)]:
+                        if pt not in self.clicked_coords and not any(pt == c[0] for c in target_candidates):
+                            target_candidates.append((pt, self.confirmed_interactive_group))
+
+            if not target_candidates:
+                repeated_groups = [(k, g) for k, g in size_color_groups.items() if len(g) >= 3]
+                repeated_groups.sort(key=lambda item: (-len(item[1]), -len(item[1][0].pixels)))
+
+                for grp_key, group in repeated_groups:
+                    for obj in group:
+                        for pt in [(obj.bbox[1], obj.bbox[0]), (obj.center_x, obj.center_y)]:
+                            if pt not in self.clicked_coords and not any(pt == c[0] for c in target_candidates):
+                                target_candidates.append((pt, grp_key))
+
+            # ゲシュタルト同定 (B): その他のターゲットオブジェクト
+            if not target_candidates:
+                sorted_targets = sorted(targets, key=lambda o: len(o.pixels))
+                for obj in sorted_targets:
+                    grp_key = (obj.color, len(obj.pixels))
+                    for pt in [(obj.bbox[1], obj.bbox[0]), (obj.center_x, obj.center_y)]:
+                        if pt not in self.clicked_coords and not any(pt == c[0] for c in target_candidates):
+                            target_candidates.append((pt, grp_key))
+
+            # ゲシュタルト同定 (C): 各オブジェクトの構成ピクセル
+            if not target_candidates:
+                for obj in targets:
+                    grp_key = (obj.color, len(obj.pixels))
+                    for r, c in obj.pixels:
+                        if (c, r) not in self.clicked_coords and not any((c, r) == cand[0] for cand in target_candidates):
+                            target_candidates.append(((c, r), grp_key))
+                            break
+
+            if target_candidates:
+                (target_x, target_y), grp_key = target_candidates[0]
+                self.clicked_coords.add((target_x, target_y))
+                self.last_action_id = 6
+                self.last_clicked_group_key = grp_key
+                self.last_clicked_pos = (target_x, target_y)
+                return 6, {"x": int(target_x), "y": int(target_y)}, f"VCGT Click: Target at ({target_x}, {target_y})"
+
+            bg = parsed.get("background_color", 0)
+            for r in range(h):
+                for c in range(w):
+                    if grid[r][c] != bg and (c, r) not in self.clicked_coords:
+                        self.clicked_coords.add((c, r))
+                        self.last_action_id = 6
+                        self.last_clicked_group_key = None
+                        return 6, {"x": int(c), "y": int(r)}, f"VCGT Click: Pixel at ({c}, {r})"
+
+            cx, cy = w // 2, h // 2
+            return 6, {"x": int(cx), "y": int(cy)}, f"VCGT Click: Center ({cx}, {cy})"
+
+        # 2. 移動系タスク (ACTION1〜5): サブゴール経路計画
+        if self.plan_queue:
+            act = self.plan_queue.popleft()
+            if act in available_action_ids:
+                self.last_action_id = act
+                return act, {}, f"VCGT Macro: Step {self.step_index} pursuing path"
+
+        if player and targets:
+            nearest_target = min(
+                targets,
+                key=lambda obj: abs(obj.center_y - player[0]) + abs(obj.center_x - player[1]),
+            )
+            goal_r, goal_c = nearest_target.center_y, nearest_target.center_x
+
+            actions_plan = self._find_path_bfs(
+                start=player,
+                goal=(goal_r, goal_c),
+                obstacles=all_obstacles,
+                grid_shape=(h, w),
+                available_actions=available_action_ids,
+            )
+
+            if actions_plan:
+                for a in actions_plan:
+                    self.plan_queue.append(a)
+                act = self.plan_queue.popleft()
+                self.last_action_id = act
+                return act, {}, f"VCGT Plan: Heading to ({goal_c}, {goal_r})"
+
+        move_actions = [a for a in available_action_ids if a in [1, 2, 3, 4]]
+        if move_actions:
+            act = self.last_action_id if self.last_action_id in move_actions else move_actions[0]
+            self.last_action_id = act
+            return act, {}, f"VCGT Momentum: {act}"
+
+        fallback_act = available_action_ids[0] if available_action_ids else 1
+        return fallback_act, {}, "VCGT Fallback"
+
+    def on_feedback(self, is_effective: bool, pixels_changed: int) -> None:
+        if is_effective and self.last_action_id == 6 and self.last_clicked_group_key:
+            self.confirmed_interactive_group = self.last_clicked_group_key
+            if self.last_clicked_pos:
+                self.last_hit_pos = self.last_clicked_pos
+        if not is_effective and self.last_action_id in [1, 2, 3, 4]:
+            self.plan_queue.clear()
+            self.last_action_id = None
+
+    def _find_path_bfs(
+        self,
+        start: Tuple[int, int],
+        goal: Tuple[int, int],
+        obstacles: Set[Tuple[int, int]],
+        grid_shape: Tuple[int, int],
+        available_actions: List[int],
+    ) -> List[int]:
+        h, w = grid_shape
+        moves: List[Tuple[int, int, int]] = []
+        if 1 in available_actions:
+            moves.append((1, -1, 0))  # UP
+        if 2 in available_actions:
+            moves.append((2, 1, 0))   # DOWN
+        if 3 in available_actions:
+            moves.append((3, 0, -1))  # LEFT
+        if 4 in available_actions:
+            moves.append((4, 0, 1))   # RIGHT
+
+        if not moves:
+            return []
+
+        queue = collections.deque([(start, [])])
+        visited = {start}
+
+        while queue:
+            (curr_r, curr_c), path = queue.popleft()
+            if (curr_r, curr_c) == goal:
+                return path
+
+            for act_id, dr, dc in moves:
+                nr, nc = curr_r + dr, curr_c + dc
+                if 0 <= nr < h and 0 <= nc < w and (nr, nc) not in visited and (nr, nc) not in obstacles:
+                    visited.add((nr, nc))
+                    queue.append(((nr, nc), path + [act_id]))
+                    if len(path) >= 25:
+                        return path + [act_id]
+        return []
+
+
 class MyAgent(Agent):
-    """ACR-AGI-3 公式準拠 高度適応型エージェント (Gestalt-EDD Adaptive Agent).
-    
-    1. ARC-AGI-3 公式仕様 (ACTION1~7, RESET, ACTION6 ComplexAction) に 100% 準拠
-    2. 環境アフォーダンス認識 (前フレームとの視覚的差分・活性ピクセル追跡)
-    3. 状態停滞・スタック検知と自己適応ヒューリスティック探索
-    4. 完全フォールバック保護による例外 0 件保証
-    """
+    """ACR-AGI-3 VCGT 準拠 思考型メタエージェント (Gestalt-VCGT Agent)."""
 
     MAX_ACTIONS = 80
 
@@ -142,15 +467,13 @@ class MyAgent(Agent):
         self.action_history: List[int] = []
         self.last_frame_hash: Optional[int] = None
         self.stuck_count: int = 0
-        self.action_success_weights: Dict[int, float] = collections.defaultdict(lambda: 1.0)
+        self.planner = GestaltVCGTPlanner(game_id=self.game_id)
 
     def is_done(self, frames: list[FrameData], latest_frame: FrameData) -> bool:
-        """ゲーム終了条件判定."""
         state = getattr(latest_frame, "state", None)
         return state is GameState.WIN
 
     def _get_cands(self, latest_frame: FrameData) -> List[Any]:
-        """利用可能なアクションのリストを安全に取得."""
         avail = getattr(latest_frame, "available_actions", None)
         reset_val = getattr(GameAction.RESET, "value", 0)
         cands = []
@@ -168,27 +491,15 @@ class MyAgent(Agent):
             cands = [a for a in all_actions if a is not None and getattr(a, "value", -1) != reset_val]
         return cands
 
-    def _extract_active_coords(self, grid: list[list[int]]) -> List[Tuple[int, int]]:
-        """グリッド内の非背景（非0）ピクセル座標を抽出."""
-        coords = []
-        h = len(grid)
-        w = len(grid[0]) if h > 0 else 0
-        for r in range(h):
-            for c in range(w):
-                if grid[r][c] != 0:
-                    coords.append((c, r))  # (x, y)
-        return coords
-
     def choose_action(self, frames: list[FrameData], latest_frame: FrameData) -> Any:
-        """公式ゲームループからのアクション選択要求."""
         self.step_count += 1
         state = getattr(latest_frame, "state", None)
 
-        # 1. 未開始またはゲームオーバー時は必ず RESET を返却
         if state in [GameState.NOT_PLAYED, GameState.GAME_OVER]:
             self.step_count = 0
             self.stuck_count = 0
             self.action_history.clear()
+            self.planner = GestaltVCGTPlanner(game_id=self.game_id)
             return GameAction.RESET
 
         try:
@@ -197,42 +508,45 @@ class MyAgent(Agent):
                 return GameAction.RESET
 
             grid = getattr(latest_frame, "frame", [])
-            h = len(grid) if grid else 64
-            w = len(grid[0]) if grid and grid[0] else 64
+            cand_ids = [getattr(a, "value", 1) for a in cands]
 
-            # 状態変化（スタック）の検知
-            current_hash = hash(tuple(tuple(row) for row in grid)) if grid else 0
-            if self.last_frame_hash is not None and current_hash == self.last_frame_hash:
-                self.stuck_count += 1
-            else:
-                self.stuck_count = 0
+            # 前ステップの差分フィードバック
+            def _hash_grid(g):
+                try:
+                    if not g:
+                        return 0
+                    if isinstance(g, (list, tuple)) and len(g) > 0:
+                        if isinstance(g[0], (list, tuple)) and len(g[0]) > 0 and isinstance(g[0][0], (list, tuple)):
+                            g = g[-1]
+                        elif len(g) == 1 and isinstance(g[0], (list, tuple)):
+                            g = g[0]
+                    return hash(tuple(tuple(int(c[0]) if isinstance(c, (list, tuple)) else int(c) for c in row) for row in g))
+                except Exception:
+                    return 0
+
+            current_hash = _hash_grid(grid)
+            is_eff = (self.last_frame_hash is not None and current_hash != self.last_frame_hash)
+            self.planner.on_feedback(is_effective=is_eff, pixels_changed=1 if is_eff else 0)
             self.last_frame_hash = current_hash
 
-            # アクション選択 (モメンタム付き探索: 同じ方向への継続を阻害しない)
-            chosen_action = random.choice(cands)
+            # VCGT メタスキルによる人間的計画思考
+            act_id, act_data, reasoning = self.planner.decide_action(grid, cand_ids)
+            chosen_action = GameAction.from_id(act_id)
 
-            # アクションデータの構成
-            if hasattr(chosen_action, "is_simple") and chosen_action.is_simple():
-                chosen_action.reasoning = f"EDD Step {self.step_count}: Act {chosen_action.value}"
-            elif hasattr(chosen_action, "is_complex") and chosen_action.is_complex():
-                # 公式仕様: ディスプレイ解像度 (0-63) 内で均等サンプリング
-                target_x = random.randint(0, 63)
-                target_y = random.randint(0, 63)
-
-                chosen_action.set_data({
-                    "x": int(target_x),
-                    "y": int(target_y),
-                })
+            if hasattr(chosen_action, "is_complex") and chosen_action.is_complex():
+                chosen_action.set_data(act_data)
                 chosen_action.reasoning = {
                     "desired_action": f"{chosen_action.value}",
-                    "my_reason": f"EDD Complex Action at ({target_x}, {target_y})",
+                    "my_reason": reasoning,
                 }
+            else:
+                chosen_action.reasoning = reasoning
 
-            self.action_history.append(getattr(chosen_action, "value", 1))
+            self.action_history.append(act_id)
             return chosen_action
 
         except Exception as e:
-            # 絶対にクラッシュさせない安全フォールバック
+            print(f"[DEBUG MyAgent Error] {type(e).__name__}: {e}")
             avail = getattr(latest_frame, "available_actions", None)
             if avail:
                 act_id = [x for x in avail if x != 0][0] if any(x != 0 for x in avail) else 0

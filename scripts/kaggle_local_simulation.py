@@ -121,6 +121,9 @@ def run_single_game(
             levels_completed=0,
             state=obs.state,
             frame=[arr.tolist() for arr in obs.frame],
+            guid=getattr(obs, "guid", ""),
+            win_levels=getattr(obs, "win_levels", 0),
+            available_actions=getattr(obs, "available_actions", None),
         )
     ]
 
@@ -171,19 +174,34 @@ def run_single_game(
 
         time_taken_ms = (time.time() - t_act_start) * 1000.0
 
-        # フレーム差分・有効性の数理計算
-        old_grid = latest_frame.frame or []
-        new_grid = [arr.tolist() for arr in res.frame] if res.frame is not None else []
+        # フレーム差分・有効性の数理計算 (3D テンソルを 2D に安全展開して比較)
+        def _extract_2d(g):
+            if not g:
+                return []
+            if isinstance(g, (list, tuple)) and len(g) > 0:
+                if isinstance(g[0], (list, tuple)) and len(g[0]) > 0 and isinstance(g[0][0], (list, tuple)):
+                    g = g[-1]
+                elif len(g) == 1 and isinstance(g[0], (list, tuple)):
+                    g = g[0]
+            return g
+
+        raw_old = latest_frame.frame or []
+        raw_new = [arr.tolist() for arr in res.frame] if res.frame is not None else []
+        old_grid = _extract_2d(raw_old)
+        new_grid = _extract_2d(raw_new)
+
         diff_count = 0
         changed_colors = set()
         if old_grid and new_grid and len(old_grid) == len(new_grid) and len(old_grid[0]) == len(new_grid[0]):
             for r in range(len(old_grid)):
                 for c in range(len(old_grid[0])):
-                    if old_grid[r][c] != new_grid[r][c]:
+                    val_o = old_grid[r][c]
+                    val_n = new_grid[r][c]
+                    o_scalar = val_o[0] if isinstance(val_o, (list, tuple)) else val_o
+                    n_scalar = val_n[0] if isinstance(val_n, (list, tuple)) else val_n
+                    if o_scalar != n_scalar:
                         diff_count += 1
-                        val = new_grid[r][c]
-                        color_repr = tuple(val) if isinstance(val, list) else val
-                        changed_colors.add(color_repr)
+                        changed_colors.add(n_scalar)
 
         is_eff = (diff_count > 0) or (res.levels_completed > latest_frame.levels_completed) or (res.state is GameState.WIN)
 
@@ -217,7 +235,7 @@ def run_single_game(
         steps += 1
         new_frame = FrameData(
             game_id=res.game_id,
-            frame=new_grid,
+            frame=raw_new,
             state=res.state,
             levels_completed=res.levels_completed,
             win_levels=res.win_levels,
