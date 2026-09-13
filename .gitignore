@@ -260,5 +260,7 @@ scripts/test_*.py
 scratch/
 data/human_vcgt/results.csv
 *.csv
+/my_agent.py
+
 
 

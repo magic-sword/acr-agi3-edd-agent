@@ -4,9 +4,12 @@ from pathlib import Path
 
 import numpy as np
 
-from acr_agi3.meta.decomposer import SubgoalDecomposer
-from acr_agi3.meta.human_vcgt import VCGTDataset
-from acr_agi3.meta.observer import MetaObserver
+from acr_agi3.agent.human_vcgt import VCGTDataset
+from acr_agi3.meta.skill_harness import SkillHarness
+
+_harness = SkillHarness()
+MetaObserver = _harness.get_skill_module("env-observer").MetaObserver
+SubgoalDecomposer = _harness.get_skill_module("subgoal-decomposer").SubgoalDecomposer
 
 
 def test_meta_skills_spec_files_exist():
@@ -97,7 +100,7 @@ def test_meta_observer_game_frame_and_transition():
     grid[4, 4] = 3  # ゴール (4, 4)
     grid[1, 3] = 4  # 鍵 (1, 3)
 
-    report = observer.analyze_frame(grid)
+    report = observer.analyze_frame(grid, known_roles={"agent": 2, "goal": 3})
     assert report.grid_shape == (5, 5)
     assert report.background_color == 0
     assert report.player_pos == (1, 1)
@@ -145,7 +148,7 @@ def test_subgoal_decomposer_game_milestones():
     grid[1, 7] = 4  # 鍵
     grid[3:7, 4] = 1  # 中央の縦壁
 
-    plan = decomposer.decompose_game(grid)
+    plan = decomposer.decompose_game(grid, known_roles={"agent": 2, "goal": 3})
 
     assert plan.total_steps >= 3
     step_names = [s.name for s in plan.subgoals]

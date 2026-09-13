@@ -47,25 +47,21 @@ class DynamicAffordanceReport:
     obstacles: Set[Tuple[int, int]] = dataclasses.field(default_factory=set)
     all_objects: List[VisualObject] = dataclasses.field(default_factory=list)
     controllable_verified: bool = False
+    goal_pos: Optional[Tuple[int, int]] = None
+    interactables: Dict[str, Tuple[int, int]] = dataclasses.field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.goal_pos is None and self.target_candidates:
+            t = self.target_candidates[0]
+            self.goal_pos = (int(round(t.center_r)), int(round(t.center_c)))
 
     @property
     def player_pos(self) -> Optional[Tuple[int, int]]:
         return self.agent_pos
 
     @property
-    def goal_pos(self) -> Optional[Tuple[int, int]]:
-        if self.target_candidates:
-            t = self.target_candidates[0]
-            return (int(round(t.center_r)), int(round(t.center_c)))
-        return None
-
-    @property
     def hazards(self) -> Set[Tuple[int, int]]:
         return set()
-
-    @property
-    def interactables(self) -> Dict[str, Tuple[int, int]]:
-        return {}
 
 
 # 後方互換性エイリアス
@@ -142,11 +138,10 @@ class MetaObserver:
                 if obj.color == self.identified_agent_color:
                     agent_obj = obj
                     agent_obj.role = "agent"
-                    controllable_verified = True
                     break
-
-        if agent_obj is None and raw_objects:
-            small_objs = [o for o in raw_objects if o.size < max(4, h * w * 0.05)]
+        elif not agent_obj:
+            # 未検証時は最小の特異オブジェクトを自機仮説として初期化
+            small_objs = [o for o in raw_objects if o.size <= 4]
             if small_objs:
                 agent_obj = min(small_objs, key=lambda o: o.size)
                 agent_obj.role = "agent_candidate"
@@ -156,12 +151,17 @@ class MetaObserver:
         for obj in raw_objects:
             if agent_obj and obj.obj_id == agent_obj.obj_id:
                 continue
+            if known_roles and (obj.color == known_roles.get("wall") or obj.color == known_roles.get("obstacle")):
+                obj.role = "obstacle"
+                for r, c in obj.pixels:
+                    obstacles.add((r, c))
+                continue
             is_large = obj.size > (h * w * 0.08)
             aspect_ratio = max(
                 (obj.bounding_box[2] - obj.bounding_box[0] + 1) / max(1, (obj.bounding_box[3] - obj.bounding_box[1] + 1)),
                 (obj.bounding_box[3] - obj.bounding_box[1] + 1) / max(1, (obj.bounding_box[2] - obj.bounding_box[0] + 1)),
             )
-            is_line = aspect_ratio > 4.0 and obj.size > 8
+            is_line = aspect_ratio >= 3.0 and obj.size >= 3
             if is_large or is_line:
                 obj.role = "obstacle"
                 for r, c in obj.pixels:
@@ -182,8 +182,12 @@ class MetaObserver:
                 d = abs(obj.center_r - agent_obj.center_r) + abs(obj.center_c - agent_obj.center_c)
                 dist_score = 1.0 / (1.0 + d * 0.05)
 
-            obj.target_score = (color_rarity * 2.0) + (size_compactness * 1.5) + dist_score
-            obj.role = "target_candidate"
+            if known_roles and "goal" in known_roles and obj.color == known_roles["goal"]:
+                obj.target_score = 1000.0
+                obj.role = "goal"
+            else:
+                obj.target_score = (color_rarity * 2.0) + (size_compactness * 1.5) + dist_score
+                obj.role = "target_candidate"
             target_candidates.append(obj)
 
         target_candidates.sort(key=lambda o: o.target_score, reverse=True)
@@ -192,6 +196,19 @@ class MetaObserver:
         agent_pos = None
         if agent_obj:
             agent_pos = (int(round(agent_obj.center_r)), int(round(agent_obj.center_c)))
+
+        goal_pos = None
+        interactables = {}
+        for obj in target_candidates:
+            if obj.role == "goal" or (known_roles and obj.color == known_roles.get("goal")):
+                if goal_pos is None:
+                    goal_pos = (int(round(obj.center_r)), int(round(obj.center_c)))
+            else:
+                interactables[f"item_color_{obj.color}"] = (int(round(obj.center_r)), int(round(obj.center_c)))
+
+        if goal_pos is None and target_candidates:
+            first_target = target_candidates[0]
+            goal_pos = (int(round(first_target.center_r)), int(round(first_target.center_c)))
 
         return DynamicAffordanceReport(
             grid_shape=(h, w),
@@ -202,11 +219,52 @@ class MetaObserver:
             obstacles=obstacles,
             all_objects=raw_objects,
             controllable_verified=controllable_verified,
+            goal_pos=goal_pos,
+            interactables=interactables,
         )
 
     def register_collision(self, r: int, c: int) -> None:
         """移動に失敗したセルを障害物として動的学習."""
         self.known_obstacles.add((r, c))
+
+    def analyze_transition(
+        self,
+        obs_before: np.ndarray,
+        action: Any,
+        obs_after: np.ndarray,
+        reward: float = 0.0,
+        done: bool = False,
+        known_roles: Optional[Dict[str, int]] = None,
+    ) -> Dict[str, Any]:
+        """行動前後の観測遷移から因果規則（移動の成否、壁の衝突、効果）を抽出."""
+        rep_before = self.analyze_frame(obs_before, known_roles=known_roles)
+        rep_after = self.analyze_frame(obs_after, known_roles=known_roles)
+
+        p_before = rep_before.player_pos
+        p_after = rep_after.player_pos
+
+        moved = (p_before != p_after) if (p_before and p_after) else False
+        displacement = (
+            (p_after[0] - p_before[0], p_after[1] - p_before[1])
+            if (p_before and p_after)
+            else (0, 0)
+        )
+
+        hit_obstacle = False
+        action_name = action.name if hasattr(action, "name") else str(action)
+        if not moved and action_name in ("UP", "DOWN", "LEFT", "RIGHT", "1", "2", "3", "4"):
+            hit_obstacle = True
+
+        return {
+            "action": action_name,
+            "moved": moved,
+            "displacement": displacement,
+            "hit_obstacle": hit_obstacle,
+            "reward": reward,
+            "done": done,
+            "player_pos_before": p_before,
+            "player_pos_after": p_after,
+        }
 
     def _extract_components(self, grid: np.ndarray, bg_color: int) -> List[VisualObject]:
         """グリッドから 4 近傍連結成分オブジェクトを高速抽出."""

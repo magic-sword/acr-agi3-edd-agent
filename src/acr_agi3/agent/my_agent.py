@@ -10,7 +10,7 @@ import random
 import time
 from typing import Any, Dict, List, Optional
 
-from acr_agi3.meta.gestalt_planner import MetaSkillHarnessPlanner
+from acr_agi3.agent.planner import MetaSkillHarnessPlanner
 
 try:
     from arcengine import FrameData, GameAction, GameState

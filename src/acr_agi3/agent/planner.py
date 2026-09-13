@@ -1,4 +1,4 @@
-"""ACR-AGI-3 未知環境自律適応型 メタスキルハーネス (Meta-Skill Harness).
+"""ACR-AGI-3 未知環境自律適応型行動プランナー (MetaSkillHarnessPlanner).
 
 特定のゲーム環境に特化したハードコードを排し、
 1. Meta-Observer: 観測グリッド/画像から動的差分相関による自機・ターゲット・障害物アフォーダンス同定
@@ -19,7 +19,7 @@ from acr_agi3.meta.skill_harness import SkillHarness
 
 
 class MetaSkillHarnessPlanner:
-    """未知ゲーム環境において自律的にアフォーダンスを同定し、行動スキルを動的合成・修復するハーネス."""
+    """未知ゲーム環境において自律的にアフォーダンスを同定し、行動スキルを動的合成・修復するプランナー."""
 
     def __init__(self, game_id: str = "") -> None:
         self.game_id = game_id

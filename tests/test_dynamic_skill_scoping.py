@@ -2,7 +2,9 @@
 
 import numpy as np
 
-from acr_agi3.meta.intuitor import GameStyleIntuitor
+from acr_agi3.meta.skill_harness import SkillHarness
+
+GameStyleIntuitor = SkillHarness().get_skill_module("game-style-intuitor").GameStyleIntuitor
 
 
 def test_dynamic_skill_scoping_domain_isolation():

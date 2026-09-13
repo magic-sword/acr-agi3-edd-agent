@@ -34,7 +34,7 @@ from acr_agi3.agent.llm.edd_tools import (
 )
 from acr_agi3.agent.llm.local_model import LocalTransformersLlm
 from acr_agi3.game.env import GameEnvironment
-from acr_agi3.meta.human_vcgt import VCGTDataset
+from acr_agi3.agent.human_vcgt import VCGTDataset
 from acr_agi3.meta.skill_harness import SkillHarness
 
 logger = logging.getLogger(__name__)

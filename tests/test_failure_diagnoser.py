@@ -2,7 +2,9 @@
 
 import pytest
 
-from acr_agi3.meta.diagnoser import FailureDiagnoser
+from acr_agi3.meta.skill_harness import SkillHarness
+
+FailureDiagnoser = SkillHarness().get_skill_module("failure-diagnoser").FailureDiagnoser
 
 
 @pytest.fixture

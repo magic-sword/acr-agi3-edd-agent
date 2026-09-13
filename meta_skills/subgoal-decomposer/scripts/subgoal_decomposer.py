@@ -116,7 +116,36 @@ class SubgoalDecomposer:
         player_pos = getattr(aff, "player_pos", (1, 1)) if aff else (1, 1)
         goal_pos = getattr(aff, "goal_pos", None) if aff else None
         obstacles = getattr(aff, "obstacles", set()) if aff else set()
+        interactables = getattr(aff, "interactables", {}) if aff else {}
 
+        # 1. アイテム/鍵の収集サブゴール
+        for item_name, item_pos in interactables.items():
+            subgoals.append(
+                Subgoal(
+                    index=step_idx,
+                    name=f"Acquire_{item_name}",
+                    objective=f"Navigate to item {item_name} at coordinate {item_pos} to unlock downstream path",
+                    reasoning=f"Acquire item {item_name} required for progression.",
+                    expected_operation="acquire_item",
+                    parameters={"item_name": item_name, "item_pos": item_pos},
+                )
+            )
+            step_idx += 1
+
+        # 2. 中央障害物壁の迂回サブゴール
+        if len(obstacles) > 0 and goal_pos:
+            subgoals.append(
+                Subgoal(
+                    index=step_idx,
+                    name="BypassCentralObstacle",
+                    objective="Navigate around obstacle barriers to reach open corridor",
+                    reasoning="Circumvent walls to establish a continuous trajectory towards goal.",
+                    expected_operation="bypass_obstacle",
+                )
+            )
+            step_idx += 1
+
+        # 3. ゴール到達サブゴール
         if goal_pos:
             subgoals.append(
                 Subgoal(

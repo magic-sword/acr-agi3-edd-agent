@@ -169,6 +169,9 @@ class GameStyleIntuitor:
     def intuit(self, obs: np.ndarray) -> Dict[str, Any]:
         return analyze_game_style(obs)
 
+    def analyze_style(self, obs: np.ndarray) -> Dict[str, Any]:
+        return analyze_game_style(obs)
+
 
 def run(input_val: str | None = None) -> str:
     """CLI 実行エントリポイント."""

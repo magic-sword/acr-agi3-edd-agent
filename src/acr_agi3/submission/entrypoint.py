@@ -244,6 +244,10 @@ class KaggleSubmissionPipeline:
         output_dir = output_submission_path.parent
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        # 0. 指定された出力先パス (output_submission_path) への直接書き出し
+        with open(output_submission_path, "w", encoding="utf-8") as f:
+            json.dump(submission_records, f, indent=2)
+
         # 1. 詳細ログ (submission_details.json) の保存
         details_path = output_dir / "submission_details.json"
         with open(details_path, "w", encoding="utf-8") as f:

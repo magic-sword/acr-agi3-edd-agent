@@ -3,7 +3,9 @@
 import numpy as np
 import pytest
 
-from acr_agi3.meta.intuitor import GameStyleIntuitor
+from acr_agi3.meta.skill_harness import SkillHarness
+
+GameStyleIntuitor = SkillHarness().get_skill_module("game-style-intuitor").GameStyleIntuitor
 
 
 @pytest.fixture
