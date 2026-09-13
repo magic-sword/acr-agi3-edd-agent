@@ -255,5 +255,7 @@ logs/
 # Kaggle submission artifacts
 submission.json
 deploy/
+data/competition/
+scripts/test_*.py
 
 
