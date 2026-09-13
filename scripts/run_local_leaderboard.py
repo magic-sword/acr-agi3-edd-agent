@@ -63,12 +63,33 @@ def load_submission_agent():
     with open(nb_path, "r", encoding="utf-8") as f:
         nb_data = json.load(f)
 
-    cell2_source = nb_data["cells"][2]["source"]
-    code_lines = [line for line in cell2_source if not line.startswith("%%writefile")]
-    exec_code = "".join(code_lines)
-
+    # 1. スキル展開セル等のセットアップセルを実行
     agent_globals: Dict[str, Any] = {}
-    exec(exec_code, agent_globals)
+    for cell in nb_data.get("cells", []):
+        if cell.get("cell_type") != "code":
+            continue
+        src = "".join(cell.get("source", []))
+        if "skills_payload" in src:
+            try:
+                exec(src, agent_globals)
+            except Exception:
+                pass
+
+    # 2. MyAgent クラスを含むセルを探索して実行
+    agent_cell_src = None
+    for cell in nb_data.get("cells", []):
+        if cell.get("cell_type") != "code":
+            continue
+        src = "".join(cell.get("source", []))
+        if "class MyAgent" in src:
+            agent_cell_src = src
+            break
+
+    if not agent_cell_src:
+        raise ValueError("submission_template.ipynb 内に MyAgent クラスを含むセルが見つかりません。")
+
+    code_lines = [line for line in agent_cell_src.splitlines(keepends=True) if not line.startswith("%%writefile")]
+    exec("".join(code_lines), agent_globals)
 
     agent_class = agent_globals.get("MyAgent")
     if agent_class is None:

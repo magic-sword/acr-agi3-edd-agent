@@ -50,17 +50,24 @@ class SkillHarness:
     """Progressive Disclosure を管理するスキルハーネス基盤."""
 
     def __init__(self, search_paths: Optional[List[Path]] = None) -> None:
-        repo_root = Path(__file__).resolve().parent.parent.parent.parent
         if search_paths is None:
-            self.search_paths = [
+            repo_root = Path(__file__).resolve().parent.parent.parent.parent
+            candidates = [
+                Path("/kaggle/working/meta_skills"),
+                Path("/kaggle/input/acr-agi3-source/meta_skills"),
                 repo_root / "meta_skills",
+                Path("/kaggle/working/generated_skills"),
                 repo_root / "generated_skills",
             ]
+            self.search_paths = [p for p in candidates if p.exists()]
+            if not self.search_paths:
+                self.search_paths = [repo_root / "meta_skills", repo_root / "generated_skills"]
         else:
             self.search_paths = search_paths
 
         self._metadata_cache: Dict[str, SkillMetadata] = {}
         self._instructions_cache: Dict[str, str] = {}
+        self._module_cache: Dict[str, Any] = {}
         self.refresh()
 
     def refresh(self) -> None:
@@ -241,3 +248,36 @@ class SkillHarness:
         except Exception as e:
             logger.error(f"Error executing skill script {script_file}: {e}", exc_info=True)
             return {"success": False, "error": f"{type(e).__name__}: {e}"}
+
+    def get_skill_module(self, skill_name: str, script_name: Optional[str] = None) -> Any:
+        """スキルフォルダ配下のスクリプトモジュールをロードして返却."""
+        cache_key = f"{skill_name}:{script_name or 'default'}"
+        if cache_key in self._module_cache:
+            return self._module_cache[cache_key]
+
+        meta = self._metadata_cache.get(skill_name)
+        if not meta:
+            alt_name = skill_name.replace("_", "-")
+            meta = self._metadata_cache.get(alt_name)
+        if not meta:
+            raise KeyError(f"Skill '{skill_name}' not found.")
+
+        scripts_dir = meta.skill_dir / "scripts"
+        target_name = script_name or skill_name.replace("-", "_")
+        script_file = scripts_dir / f"{target_name}.py"
+        if not script_file.exists():
+            py_files = list(scripts_dir.glob("*.py"))
+            if py_files:
+                script_file = py_files[0]
+            else:
+                raise FileNotFoundError(f"No python script in {scripts_dir}")
+
+        spec = importlib.util.spec_from_file_location(f"skill_{meta.name}_{target_name}", script_file)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Could not load spec for {script_file}")
+
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        self._module_cache[cache_key] = module
+        return module

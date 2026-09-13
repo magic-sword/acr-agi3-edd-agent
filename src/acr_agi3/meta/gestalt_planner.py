@@ -15,14 +15,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 
-from acr_agi3.meta.observer import DynamicAffordanceReport, MetaObserver, VisualObject
-from acr_agi3.meta.synthesizer import (
-    AffordanceNavigationSkill,
-    BaseSkillPolicy,
-    FrontierExplorationSkill,
-    InteractiveClickSkill,
-    MetaSkillSynthesizer,
-)
+from acr_agi3.meta.skill_harness import SkillHarness
 
 
 class MetaSkillHarnessPlanner:
@@ -30,8 +23,12 @@ class MetaSkillHarnessPlanner:
 
     def __init__(self, game_id: str = "") -> None:
         self.game_id = game_id
-        self.observer = MetaObserver()
-        self.synthesizer = MetaSkillSynthesizer()
+        self.harness = SkillHarness()
+        obs_mod = self.harness.get_skill_module("env-observer")
+        syn_mod = self.harness.get_skill_module("skill-synthesizer")
+        self.syn_mod = syn_mod
+        self.observer = obs_mod.MetaObserver()
+        self.synthesizer = syn_mod.MetaSkillSynthesizer()
 
         self.step_index: int = 0
         self.last_action_id: Optional[int] = None
@@ -94,7 +91,7 @@ class MetaSkillHarnessPlanner:
 
         # 6. スキルが失敗・行き止まりの場合：Failure Diagnoser による自己修復
         self.synthesizer.blacklist_current_target()
-        fallback_skill = FrontierExplorationSkill()
+        fallback_skill = self.syn_mod.FrontierExplorationSkill()
         fallback_act = fallback_skill.choose_action(report)
         if fallback_act not in available_action_ids:
             fallback_act = available_action_ids[0]
