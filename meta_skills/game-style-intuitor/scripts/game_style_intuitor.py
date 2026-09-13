@@ -160,6 +160,16 @@ def analyze_game_style(obs: np.ndarray) -> Dict[str, Any]:
     }
 
 
+class GameStyleIntuitor:
+    """ゲームスタイル分類エンジン."""
+
+    def analyze(self, obs: np.ndarray) -> Dict[str, Any]:
+        return analyze_game_style(obs)
+
+    def intuit(self, obs: np.ndarray) -> Dict[str, Any]:
+        return analyze_game_style(obs)
+
+
 def run(input_val: str | None = None) -> str:
     """CLI 実行エントリポイント."""
     if not input_val:

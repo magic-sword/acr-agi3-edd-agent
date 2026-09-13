@@ -163,6 +163,27 @@ def diagnose_failure(raw_data: Any) -> Dict[str, Any]:
     }
 
 
+class FailureDiagnoser:
+    """抽象故障診断・修復エンジン."""
+
+    def diagnose(
+        self,
+        error: Any = None,
+        steps_taken: int = 0,
+        code: str = "",
+        raw_verification: Any = None,
+    ) -> Dict[str, Any]:
+        data = {
+            "error": error,
+            "steps_taken": steps_taken,
+            "code": code,
+            "raw_verification": raw_verification,
+        }
+        res = diagnose_failure(data)
+        res["category"] = res.get("failure_category", "GeneralFailure")
+        return res
+
+
 def run(input_val: str | None = None) -> str:
     """Core task execution."""
     if not input_val:

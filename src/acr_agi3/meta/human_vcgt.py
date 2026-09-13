@@ -7,7 +7,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from acr_agi3.meta.decomposer import DecompositionPlan, Subgoal
+from acr_agi3.meta.skill_harness import SkillHarness
+
+_harness = SkillHarness()
+_dec_mod = _harness.get_skill_module("subgoal-decomposer")
+DecompositionPlan = _dec_mod.DecompositionPlan
+Subgoal = _dec_mod.Subgoal
 
 
 @dataclass
