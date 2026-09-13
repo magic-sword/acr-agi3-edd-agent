@@ -57,26 +57,12 @@ class MetaSkillDrivenAgent:
         # 3段階 Progressive Disclosure スキルハーネス
         self.harness = SkillHarness()
 
-        # ADK ツール関数群 (Progressive Disclosure & EDD)
-        def list_available_skills() -> str:
-            """[Level 1] 利用可能なメタスキル・生成スキルの軽量カタログを取得します."""
-            return self.harness.get_level1_catalog()
+        # Google ADK 2.0 公式 SkillToolset (Progressive Disclosure L1/L2/L3)
+        self.skill_toolset = self.harness.get_toolset()
 
-        def load_skill_instructions(skill_name: str) -> str:
-            """[Level 2] 指定されたスキルの完全な指示・ワークフロー (SKILL.md 本文) をオンデマンドで開示します."""
-            try:
-                return self.harness.load_skill_instructions(skill_name)
-            except Exception as e:
-                return f"Error loading skill '{skill_name}': {e}"
-
-        def execute_skill_script(skill_name: str, script_name: str, input_data: dict[str, Any]) -> dict[str, Any]:
-            """[Level 3] スキル配下の scripts/ をオンデマンド実行し、構造化結果を取得します."""
-            return self.harness.execute_skill_script(skill_name, script_name, input_data)
-
-        self.progressive_tools = [
-            list_available_skills,
-            load_skill_instructions,
-            execute_skill_script,
+        # ADK ツール群 (SkillToolset + EDD ツール群)
+        self.tools = [
+            self.skill_toolset,
             edd_init_skill,
             edd_validate_skill,
             edd_write_skill_code,
@@ -97,17 +83,17 @@ class MetaSkillDrivenAgent:
         # Google ADK 2.0 Agent
         instruction = (
             "You are an elite AI researcher solving ACR-AGI-3 interactive games.\n"
-            "You operate under the Progressive Disclosure (3-tier) Skill Architecture:\n"
-            "- Level 1: Use `list_available_skills` to see available meta-skills with low context cost.\n"
-            "- Level 2: Call `load_skill_instructions` to open a skill's SKILL.md when you need its workflow.\n"
-            "- Level 3: Call `execute_skill_script` to run deterministic tools (e.g. env-observer, contract-tester).\n"
+            "You operate under the Progressive Disclosure (3-tier) Skill Architecture powered by Google ADK 2.0:\n"
+            "- Level 1: Use `list_skills` to inspect available skills with minimal context consumption.\n"
+            "- Level 2: Call `load_skill` to open a skill's SKILL.md body on-demand.\n"
+            "- Level 3: Call `run_skill_script` or `load_skill_resource` to execute deterministic scripts or fetch assets.\n"
             "Follow the EDD principle: break tasks into subgoals, create verified skills with 3 positive and 3 negative tests, and compose them."
         )
 
         self.adk_agent = Agent(
             name=self.name,
             model=self.model,
-            tools=self.progressive_tools,
+            tools=self.tools,
             instruction=instruction,
         )
         self.session_service = InMemorySessionService()

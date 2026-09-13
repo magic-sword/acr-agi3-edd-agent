@@ -40,10 +40,11 @@ ACR-AGI-3 は **「未知の動的ゲーム環境において、状態観測か�
 
 7. **Google ADK 2.0 準拠「3段階 Progressive Disclosure（段階的開示）」の徹底**
    * 単なる Python スクリプトの直接呼び出しや、プロンプトへの全量指示一括注入を行わないこと。
-   * **Level 1 (Metadata)**: `SKILL.md` の YAML Frontmatter カタログのみをコンテキストに常駐させ、極小トークンでスキルを俯瞰すること。
-   * **Level 2 (Instructions)**: エージェントが必要に応じてトリガーした時のみ、該当スキルの `SKILL.md` 本文（ワークフロー・思考プロトコル）をオンデマンド展開すること。
-   * **Level 3 (Execution)**: スキル配下の `scripts/` または許可されたツール（`allowed-tools`）をオンデマンド実行すること。
-   * スキルの管理・ロード・実行は必ず [`src/acr_agi3/meta/skill_harness.py`](file:///home/prog/work/kaggle/acr-agi3-edd-agent/src/acr_agi3/meta/skill_harness.py) の `SkillHarness` を経由すること。
+   * **車輪の再発明の禁止**: 独自パーサーや独自 Progressive Disclosure ツールを自作せず、Google ADK 2.0 公式の `google.adk.skills.load_skills_from_dir` および `google.adk.tools.skill_toolset.SkillToolset` を直接活用すること。
+   * **Level 1 (Metadata)**: `SKILL.md` の YAML Frontmatter カタログのみをコンテキストに常駐させ、極小トークンでスキルを俯瞰すること（ADK `list_skills`）。
+   * **Level 2 (Instructions)**: エージェントが必要に応じてトリガーした時のみ、該当スキルの `SKILL.md` 本文（ワークフロー・思考プロトコル）をオンデマンド展開すること（ADK `load_skill`）。
+   * **Level 3 (Execution)**: スキル配下の `scripts/` または許可されたツール（`allowed-tools`）をオンデマンド実行すること（ADK `run_skill_script`, `load_skill_resource`）。
+   * スキルの管理・ロード・実行は必ず [`src/acr_agi3/meta/skill_harness.py`](file:///home/prog/work/kaggle/acr-agi3-edd-agent/src/acr_agi3/meta/skill_harness.py) の `SkillHarness`（ADK 公式ラッパー）を経由すること。
 
 8. **EDD MCP ツール（`edd-agent`）によるスキル作成・静的検証の必須化**
    * 新規スキルを作成・初期化する際は、必ず MCP ツール **`edd_init_skill`**（または `SkillScaffolder`）を用いて標準ディレクトリ構造（`SKILL.md`, `scripts/`, `tests/`）を生成すること。

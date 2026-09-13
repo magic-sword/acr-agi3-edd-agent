@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from acr_agi3.meta.gestalt_planner import GestaltVCGTPlanner, MetaSkillHarnessPlanner
 from acr_agi3.meta.human_vcgt import VCGTDataset, VCGTExplanation, VCGTRecord
-from acr_agi3.meta.skill_harness import SkillHarness, SkillMetadata
+from acr_agi3.meta.skill_harness import Skill, SkillHarness, SkillMetadata
 
 # meta_skills/ フォルダ構造から動的インポート解決 (Single Source of Truth)
 _harness = SkillHarness()
@@ -39,6 +39,7 @@ FailureDiagnoser = _diag_mod.FailureDiagnoser
 GameStyleIntuitor = _int_mod.GameStyleIntuitor
 
 __all__ = [
+    "Skill",
     "SkillHarness",
     "SkillMetadata",
     "MetaSkillHarnessPlanner",
