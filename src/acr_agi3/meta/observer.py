@@ -43,6 +43,30 @@ class DynamicAffordanceReport:
     all_objects: List[VisualObject] = dataclasses.field(default_factory=list)
     controllable_verified: bool = False
 
+    @property
+    def player_pos(self) -> Optional[Tuple[int, int]]:
+        return self.agent_pos
+
+    @property
+    def goal_pos(self) -> Optional[Tuple[int, int]]:
+        if self.target_candidates:
+            t = self.target_candidates[0]
+            return (int(round(t.center_r)), int(round(t.center_c)))
+        return None
+
+    @property
+    def hazards(self) -> Set[Tuple[int, int]]:
+        return set()
+
+    @property
+    def interactables(self) -> Dict[str, Tuple[int, int]]:
+        return {}
+
+
+# 後方互換性エイリアス
+AffordanceObject = VisualObject
+GameAffordanceReport = DynamicAffordanceReport
+
 
 class MetaObserver:
     """未知のゲーム環境から不変量とアフォーダンスを自律抽出するメタ認知エンジン."""
@@ -60,6 +84,8 @@ class MetaObserver:
         grid: np.ndarray,
         recent_action: Optional[int] = None,
         displaced_pixels: Optional[List[Tuple[int, int]]] = None,
+        known_roles: Optional[Dict[str, int]] = None,
+        **kwargs: Any,
     ) -> DynamicAffordanceReport:
         """単一フレームまたは遷移情報からアフォーダンスを自律同定."""
         arr = np.array(grid, dtype=int)

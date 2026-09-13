@@ -58,7 +58,7 @@ metadata:
 
 ## Requirements & Prerequisites
 - Python: >= 3.10
-- External packages: pytest, numpy
+- External packages: pytest, numpy, acr_agi3
 
 ## Bundled Resources
 ### `scripts/` (Executable Tools - Zero-dependency)

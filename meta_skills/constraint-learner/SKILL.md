@@ -55,6 +55,7 @@ metadata:
 
 ## Requirements & Prerequisites
 - Python: >= 3.10
+- External packages: numpy
 
 ## Bundled Resources
 ### `scripts/` (Executable Tools - Zero-dependency)

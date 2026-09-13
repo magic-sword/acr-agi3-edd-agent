@@ -1,10 +1,14 @@
-"""メタスキル駆動型自律プログラミングエージェント (Meta-Skill Driven Synthesis Agent).
+"""Google ADK 2.0 準拠 Progressive Disclosure メタスキル駆動型自律エージェント.
 
-MetaObserver, SubgoalDecomposer, VCGTDataset, FailureDiagnoser を Google ADK 2.0 に統合し、
-高精度な自己改善ループ（Self-Correction）を実現します。
+3段階の段階的開示 (Progressive Disclosure) によりコンテキスト消費を抑制しつつ、
+タスク状況に応じて必要なメタスキル (Observer, Intuitor, Decomposer, Tester, Diagnoser) を
+動的にトリガー・ロード・実行して自己修復ループを回します。
 """
 
+from __future__ import annotations
+
 import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -30,16 +34,14 @@ from acr_agi3.agent.llm.edd_tools import (
 )
 from acr_agi3.agent.llm.local_model import LocalTransformersLlm
 from acr_agi3.game.env import GameEnvironment
-from acr_agi3.meta.decomposer import SubgoalDecomposer
-from acr_agi3.meta.diagnoser import FailureDiagnoser
 from acr_agi3.meta.human_vcgt import VCGTDataset
-from acr_agi3.meta.observer import MetaObserver
+from acr_agi3.meta.skill_harness import SkillHarness
 
 logger = logging.getLogger(__name__)
 
 
 class MetaSkillDrivenAgent:
-    """メタスキル（Observer, Decomposer, VCGT, Diagnoser, EDD）を統合した自己改善エージェント."""
+    """Google ADK 2.0 準拠 3段階 Progressive Disclosure メタスキル自己改善エージェント."""
 
     def __init__(
         self,
@@ -52,13 +54,29 @@ class MetaSkillDrivenAgent:
         self.name = name
         self.app_name = app_name
 
-        # メタスキル層のコンポーネント
-        self.observer = MetaObserver()
-        self.decomposer = SubgoalDecomposer(observer=self.observer)
-        self.diagnoser = FailureDiagnoser()
+        # 3段階 Progressive Disclosure スキルハーネス
+        self.harness = SkillHarness()
 
-        # EDD ツールセット (ライブラリ検索・実行ツールを含む)
-        self.edd_tools = [
+        # ADK ツール関数群 (Progressive Disclosure & EDD)
+        def list_available_skills() -> str:
+            """[Level 1] 利用可能なメタスキル・生成スキルの軽量カタログを取得します."""
+            return self.harness.get_level1_catalog()
+
+        def load_skill_instructions(skill_name: str) -> str:
+            """[Level 2] 指定されたスキルの完全な指示・ワークフロー (SKILL.md 本文) をオンデマンドで開示します."""
+            try:
+                return self.harness.load_skill_instructions(skill_name)
+            except Exception as e:
+                return f"Error loading skill '{skill_name}': {e}"
+
+        def execute_skill_script(skill_name: str, script_name: str, input_data: dict[str, Any]) -> dict[str, Any]:
+            """[Level 3] スキル配下の scripts/ をオンデマンド実行し、構造化結果を取得します."""
+            return self.harness.execute_skill_script(skill_name, script_name, input_data)
+
+        self.progressive_tools = [
+            list_available_skills,
+            load_skill_instructions,
+            execute_skill_script,
             edd_init_skill,
             edd_validate_skill,
             edd_write_skill_code,
@@ -76,21 +94,21 @@ class MetaSkillDrivenAgent:
             except Exception as e:
                 logger.warning(f"Failed to load VCGT dataset from {vcgt_path}: {e}")
 
-        # Google ADK 2.0 Agent (EDD ツールをバインド)
+        # Google ADK 2.0 Agent
+        instruction = (
+            "You are an elite AI researcher solving ACR-AGI-3 interactive games.\n"
+            "You operate under the Progressive Disclosure (3-tier) Skill Architecture:\n"
+            "- Level 1: Use `list_available_skills` to see available meta-skills with low context cost.\n"
+            "- Level 2: Call `load_skill_instructions` to open a skill's SKILL.md when you need its workflow.\n"
+            "- Level 3: Call `execute_skill_script` to run deterministic tools (e.g. env-observer, contract-tester).\n"
+            "Follow the EDD principle: break tasks into subgoals, create verified skills with 3 positive and 3 negative tests, and compose them."
+        )
+
         self.adk_agent = Agent(
             name=self.name,
             model=self.model,
-            tools=self.edd_tools,
-            instruction=(
-                "You are an elite AI researcher and programmer solving ACR-AGI-3 interactive games "
-                "guided by Human Visual Concept Guided Thinking (VCGT) and "
-                "Evaluation-Driven Development (EDD).\n"
-                "You have access to EDD tools: edd_init_skill, edd_write_skill_code, "
-                "edd_validate_skill, edd_run_game_contract_test, edd_list_skills, "
-                "edd_execute_game_skill, edd_register_verified_skill.\n"
-                "Break down game tasks into subgoals, create verified skills for each subgoal, "
-                "and compose them to solve the game."
-            ),
+            tools=self.progressive_tools,
+            instruction=instruction,
         )
         self.session_service = InMemorySessionService()
         self.runner = Runner(
@@ -141,40 +159,79 @@ class MetaSkillDrivenAgent:
         task_id: str = "game_task",
         max_retries: int = 2,
     ) -> Dict[str, Any]:
-        """ACR-AGI-3 ゲーム環境に対するメタスキル駆動型解決 (スキル再利用・合成ループ対応)."""
+        """ACR-AGI-3 ゲーム環境に対するメタスキル駆動型解決 (Progressive Disclosure ライフサイクル)."""
         initial_obs = env.reset()
-        aff_report = self.observer.analyze_frame(initial_obs)
-        plan = self.decomposer.decompose_game(initial_obs)
 
-        logger.info(f"Task {task_id}: Generated {plan.total_steps} subgoals.")
-        for sg in plan.subgoals:
-            logger.info(f"  [Subgoal {sg.index}] {sg.name}: {sg.objective}")
+        # ---------------------------------------------------------------------
+        # 1. Level 1: メタデータカタログの取得 & スキルの自律トリガー
+        # ---------------------------------------------------------------------
+        self.harness.refresh()
+        catalog_summary = self.harness.get_level1_catalog()
+        logger.info(f"Task {task_id}: Loaded Level 1 Catalog with {len(self.harness.list_skills())} skills.")
 
-        # 1. 蓄積された検証済みスキルライブラリの取得
+        # ---------------------------------------------------------------------
+        # 2. Level 2 & 3: env-observer のオンデマンド実行
+        # ---------------------------------------------------------------------
+        obs_res = self.harness.execute_skill_script(
+            skill_name="env-observer",
+            script_name="env_observer",
+            input_data={"grid": initial_obs.tolist() if isinstance(initial_obs, np.ndarray) else initial_obs},
+        )
+        aff_report = obs_res.get("result", {})
+
+        # ---------------------------------------------------------------------
+        # 3. Level 2 & 3: game-style-intuitor のオンデマンド実行
+        # ---------------------------------------------------------------------
+        style_res = self.harness.execute_skill_script(
+            skill_name="game-style-intuitor",
+            script_name="game_style_intuitor",
+            input_data={"grid": initial_obs.tolist() if isinstance(initial_obs, np.ndarray) else initial_obs},
+        )
+        style_report = style_res.get("result", {})
+        if isinstance(style_report, str):
+            try:
+                style_report = json.loads(style_report)
+            except Exception:
+                style_report = {}
+
+        # ---------------------------------------------------------------------
+        # 4. Level 2 & 3: subgoal-decomposer のオンデマンド実行
+        # ---------------------------------------------------------------------
+        decomp_res = self.harness.execute_skill_script(
+            skill_name="subgoal-decomposer",
+            script_name="subgoal_decomposer",
+            input_data={"grid": initial_obs.tolist() if isinstance(initial_obs, np.ndarray) else initial_obs},
+        )
+        plan_dict = decomp_res.get("result", {})
+
+        logger.info(
+            f"Affordances: agent={aff_report.get('agent_pos')}, "
+            f"targets={len(aff_report.get('target_candidates', []))}, "
+            f"style={style_report.get('style', 'GENERAL')}"
+        )
+
+        # 5. 検証済み具象スキルライブラリの取得
         verified_skills = edd_list_skills(verified_only=True)
         library_section = ""
         if verified_skills:
-            library_lines = [
-                "## Available Verified Skill Library (You can reuse or compose these):"
-            ]
+            library_lines = ["## Reusable Verified Skills:"]
             for vs in verified_skills:
-                library_lines.append(f"- Skill '{vs['name']}': {vs['description']}")
-            library_lines.append(
-                "You can compose these verified skills as subroutines or build on their logic.\n"
-            )
-            library_section = "\n".join(library_lines)
+                library_lines.append(f"- `{vs['name']}`: {vs['description']}")
+            library_section = "\n".join(library_lines) + "\n"
 
+        # 6. LLM プロンプト構築 (Level 1 カタログ + 構造化観測のみの低コンテキスト構成)
         base_prompt = (
-            f"Solve ARC-AGI-3 dynamic game: {plan.task_hint}\n"
-            f"Environment shape: {aff_report.grid_shape}, "
-            f"Background: {aff_report.background_color}\n"
+            f"Solve ARC-AGI-3 dynamic game: {plan_dict.get('task_hint', 'task')}\n"
+            f"Game Style: {style_report.get('style', 'GENERAL')} - {style_report.get('recommended_approach', '')}\n"
+            f"Grid Shape: {aff_report.get('grid_shape', [10, 10])}, Background: {aff_report.get('background_color', 0)}\n"
+            f"Agent Pos: {aff_report.get('agent_pos')}\n"
+            f"{catalog_summary}\n"
             f"{library_section}\n"
             f"Subgoals:\n"
             + "\n".join(
-                f"- {s.name}: {s.objective} (Reasoning: {s.reasoning})" for s in plan.subgoals
+                f"- Step {sg.get('step')}: {sg.get('name')} - {sg.get('objective')}"
+                for sg in plan_dict.get("subgoals", [])
             )
-            + "\n\nConstraints:\n"
-            + "\n".join(f"- {c}" for c in plan.constraints)
             + "\n\nWrite a complete Python action policy function:\n"
             "```python\n"
             "from acr_agi3.game.env import Action\n"
@@ -215,33 +272,56 @@ class MetaSkillDrivenAgent:
 
             code = extract_python_code(resp)
 
-            # シミュレーション検証
+            # 7. Level 2 & 3: contract-tester による防壁ゲート事前検証
+            contract_res = self.harness.execute_skill_script(
+                skill_name="contract-tester",
+                script_name="contract_tester",
+                input_data={"policy_code": code},
+            )
+            contract_report = contract_res.get("result", {})
+            logger.info(
+                f"Attempt {attempt}: Contract Gate Passed={contract_report.get('passed', False)} "
+                f"({contract_report.get('total_passed', 0)}/{contract_report.get('total_cases', 6)})"
+            )
+
+            # シミュレーション実行
             verification = execute_and_verify_game_policy(code, env, max_steps=max_steps)
 
             if verification["success"]:
-                # 2. 合格したスキルをライブラリに正式登録
+                # 合格したスキルをライブラリに正式登録
                 skill_name = f"policy_{task_id}"
                 edd_init_skill(skill_name)
                 edd_write_skill_code(skill_name, code)
                 edd_register_verified_skill(
                     name=skill_name,
-                    description=plan.task_hint,
+                    description=plan_dict.get("task_hint", "solved policy"),
                     tags=["game_policy", "verified_solution"],
                 )
+                self.harness.refresh()
                 logger.info(f"Registered verified skill '{skill_name}' to skill library.")
                 break
 
-            # 失敗診断 (FailureDiagnoser メタスキルによる抽象診断と蒸留)
-            diag = self.diagnoser.diagnose(
-                error=verification.get("error"),
-                steps_taken=verification.get("steps_taken", 0),
-                code=code,
-                raw_verification=verification,
+            # 8. Level 2 & 3: failure-diagnoser による失敗診断と自己修復ディレクティブ生成
+            diag_res = self.harness.execute_skill_script(
+                skill_name="failure-diagnoser",
+                script_name="failure_diagnoser",
+                input_data={
+                    "error": verification.get("error"),
+                    "steps_taken": verification.get("steps_taken", 0),
+                    "code": code,
+                },
             )
+            diag = diag_res.get("result", {})
+            if isinstance(diag, str):
+                try:
+                    diag = json.loads(diag)
+                except Exception:
+                    diag = {"failure_category": "Unknown", "root_cause": diag, "directive": "Retry"}
+
             feedback = (
-                f"[DIAGNOSIS CATEGORY: {diag['category']}]\n"
-                f"Root Cause: {diag['root_cause']}\n"
-                f"Directive: {diag['directive']}"
+                f"[DIAGNOSIS CATEGORY: {diag.get('failure_category', 'GeneralFailure')}]\n"
+                f"Root Cause: {diag.get('root_cause', '')}\n"
+                f"Directive: {diag.get('directive', 'Ensure valid action')}"
             )
 
         return {
@@ -251,7 +331,7 @@ class MetaSkillDrivenAgent:
             "code": code,
             "policy_code": code,
             "steps_taken": verification.get("steps_taken", 0),
-            "plan": plan,
+            "plan": plan_dict,
             "aff_report": aff_report,
-            "available_skills_count": len(verified_skills),
+            "available_skills_count": len(self.harness.list_skills()),
         }

@@ -58,6 +58,7 @@ metadata:
 
 ## Requirements & Prerequisites
 - Python: >= 3.10
+- Dependencies: numpy, acr_agi3
 - External packages: numpy
 
 ## Bundled Resources

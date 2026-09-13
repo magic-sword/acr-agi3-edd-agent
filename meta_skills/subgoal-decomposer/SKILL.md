@@ -55,6 +55,7 @@ metadata:
 
 ## Requirements & Prerequisites
 - Python: >= 3.10
+- Dependencies: numpy, acr_agi3
 
 ## Bundled Resources
 ### `scripts/` (Executable Tools - Zero-dependency)
