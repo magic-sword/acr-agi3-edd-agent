@@ -1,176 +1,237 @@
-"""ACR-AGI-3 動的ゲーム環境向けアフォーダンス同定エンジン (Meta-Observer).
+"""ACR-AGI-3 動的ゲーム環境向け汎用アフォーダンス同定エンジン (Meta-Observer).
 
-ゲーム観測フレームから、背景色、自機位置、静的障害物、ゴール、危険物などの
-アフォーダンス (Affordances) と状態遷移因果 (Transition Dynamics) を自律抽出します。
+ゲーム観測フレームから、背景色、自機位置、静的障害物、ゴール、インタラクタブルなどの
+アフォーダンス (Affordances) と状態遷移因果 (Transition Dynamics) を完全自律抽出します。
+特定ゲーム環境の固定色 (player=2, goal=3 等) に依存せず、動的差分相関とゲシュタルト特徴量で同定します。
 """
 
-from dataclasses import dataclass, field
+from __future__ import annotations
+
+import collections
+import dataclasses
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
-from scipy.ndimage import label
-
-from acr_agi3.game.env import Action
 
 
-@dataclass
-class AffordanceObject:
+@dataclasses.dataclass
+class VisualObject:
     """同定されたオブジェクトの属性情報."""
 
+    obj_id: int
     color: int
+    pixels: List[Tuple[int, int]]  # (r, c)
     size: int
     bounding_box: Tuple[int, int, int, int]  # (min_r, min_c, max_r, max_c)
+    center_r: float
+    center_c: float
     is_static: bool = True
-    role: str = "obstacle"  # 'agent', 'interactable', 'obstacle', 'target', 'hazard'
+    role: str = "unknown"  # 'agent', 'target', 'obstacle', 'button', 'hazard'
+    target_score: float = 0.0
 
 
-@dataclass
-class GameAffordanceReport:
-    """動的ゲーム環境におけるフレーム観測レポート."""
+@dataclasses.dataclass
+class DynamicAffordanceReport:
+    """動的ゲーム環境におけるリアルタイムアフォーダンス観測レポート."""
 
     grid_shape: Tuple[int, int]
     background_color: int
-    player_pos: Optional[Tuple[int, int]] = None
-    goal_pos: Optional[Tuple[int, int]] = None
-    obstacles: Set[Tuple[int, int]] = field(default_factory=set)
-    hazards: Set[Tuple[int, int]] = field(default_factory=set)
-    interactables: Dict[str, Tuple[int, int]] = field(default_factory=dict)
-    color_map: Dict[str, int] = field(default_factory=dict)
-    all_objects: List[AffordanceObject] = field(default_factory=list)
+    agent_object: Optional[VisualObject] = None
+    agent_pos: Optional[Tuple[int, int]] = None  # (r, c)
+    target_candidates: List[VisualObject] = dataclasses.field(default_factory=list)
+    obstacles: Set[Tuple[int, int]] = dataclasses.field(default_factory=set)
+    all_objects: List[VisualObject] = dataclasses.field(default_factory=list)
+    controllable_verified: bool = False
 
 
 class MetaObserver:
-    """ゲーム環境の不変量とアフォーダンスを自動抽出するメタ認知エンジン."""
+    """未知のゲーム環境から不変量とアフォーダンスを自律抽出するメタ認知エンジン."""
 
     def __init__(self) -> None:
-        pass
+        self.background_color: int = 0
+        self.known_obstacles: Set[Tuple[int, int]] = set()
+        self.identified_agent_color: Optional[int] = None
+        self.identified_agent_id: Optional[int] = None
+        self.prev_grid: Optional[np.ndarray] = None
+        self.prev_action: Optional[int] = None
 
     def analyze_frame(
         self,
         grid: np.ndarray,
-        known_roles: Optional[Dict[str, int]] = None,
-    ) -> GameAffordanceReport:
-        """単一フレームのグリッドからゲームアフォーダンスを同定.
-
-        known_roles: 例 {'player': 2, 'goal': 3, 'wall': 1, 'hazard': 6, 'key': 4}
-        """
+        recent_action: Optional[int] = None,
+        displaced_pixels: Optional[List[Tuple[int, int]]] = None,
+    ) -> DynamicAffordanceReport:
+        """単一フレームまたは遷移情報からアフォーダンスを自律同定."""
         arr = np.array(grid, dtype=int)
+        if arr.ndim == 3:
+            arr = arr[-1]  # アニメーションシーケンスの場合は最新フレーム
         h, w = arr.shape
+
+        # 1. 最頻色を背景色と同定
         counts = np.bincount(arr.flatten(), minlength=10)
         bg_color = int(np.argmax(counts))
+        self.background_color = bg_color
 
-        roles = known_roles or {}
-        p_color = roles.get("player", 2)
-        g_color = roles.get("goal", 3)
-        w_color = roles.get("wall", 1)
-        h_color = roles.get("hazard", 6)
+        # 2. 4近傍連結成分 (Connected Components) によるオブジェクト分割
+        raw_objects = self._extract_components(arr, bg_color)
 
-        player_pos: Optional[Tuple[int, int]] = None
-        goal_pos: Optional[Tuple[int, int]] = None
-        obstacles: Set[Tuple[int, int]] = set()
-        hazards: Set[Tuple[int, int]] = set()
-        interactables: Dict[str, Tuple[int, int]] = {}
+        # 3. 自機 (Agent) の動的同定
+        # 行動後のピクセル差分または過去の同定情報から自機を決定
+        agent_obj: Optional[VisualObject] = None
+        controllable_verified = False
 
-        # プレイヤー座標
-        p_coords = np.argwhere(arr == p_color)
-        if len(p_coords) > 0:
-            player_pos = (int(p_coords[0][0]), int(p_coords[0][1]))
+        if recent_action is not None and self.prev_grid is not None:
+            # アクションに伴う差分ピクセル
+            diff = np.argwhere(arr != self.prev_grid)
+            if len(diff) > 0 and recent_action in (1, 2, 3, 4):  # UP, DOWN, LEFT, RIGHT
+                expected_dr, expected_dc = {
+                    1: (-1, 0),  # UP
+                    2: (1, 0),   # DOWN
+                    3: (0, -1),  # LEFT
+                    4: (0, 1),   # RIGHT
+                }[recent_action]
 
-        # ゴール座標
-        g_coords = np.argwhere(arr == g_color)
-        if len(g_coords) > 0:
-            goal_pos = (int(g_coords[0][0]), int(g_coords[0][1]))
+                # 各オブジェクトの重心移動を評価
+                for obj in raw_objects:
+                    for prev_obj in self._extract_components(self.prev_grid, bg_color):
+                        if prev_obj.color == obj.color and abs(prev_obj.size - obj.size) <= 2:
+                            dr = obj.center_r - prev_obj.center_r
+                            dc = obj.center_c - prev_obj.center_c
+                            # 期待される移動方向と一致しているか
+                            if (np.sign(dr) == expected_dr and expected_dr != 0) or \
+                               (np.sign(dc) == expected_dc and expected_dc != 0):
+                                agent_obj = obj
+                                agent_obj.role = "agent"
+                                self.identified_agent_color = obj.color
+                                controllable_verified = True
+                                break
+                    if controllable_verified:
+                        break
 
-        # 壁・障害物座標
-        for r, c in np.argwhere(arr == w_color):
-            obstacles.add((int(r), int(c)))
+        # 差分から未特定の場合、過去に特定した自機色を照合
+        if agent_obj is None and self.identified_agent_color is not None:
+            for obj in raw_objects:
+                if obj.color == self.identified_agent_color:
+                    agent_obj = obj
+                    agent_obj.role = "agent"
+                    controllable_verified = True
+                    break
 
-        # 危険物座標
-        for r, c in np.argwhere(arr == h_color):
-            hazards.add((int(r), int(c)))
+        # 自機がまだ未特定の場合、ヒューリスティクス（小さく独立したスプライト）で仮説生成
+        if agent_obj is None and raw_objects:
+            small_objs = [o for o in raw_objects if o.size < (h * w * 0.05)]
+            if small_objs:
+                agent_obj = min(small_objs, key=lambda o: o.size)
+                agent_obj.role = "agent_candidate"
 
-        # その他の色（鍵やスイッチ等のインタラクティブ要素）
-        for c in np.unique(arr):
-            ci = int(c)
-            if ci in (bg_color, p_color, g_color, w_color, h_color):
+        # 4. 障害物 (Obstacles) の同定
+        obstacles: Set[Tuple[int, int]] = set(self.known_obstacles)
+        for obj in raw_objects:
+            if agent_obj and obj.obj_id == agent_obj.obj_id:
                 continue
-            coords = np.argwhere(arr == ci)
-            if len(coords) > 0:
-                interactables[f"item_color_{ci}"] = (int(coords[0][0]), int(coords[0][1]))
+            is_large = obj.size > (h * w * 0.08)
+            aspect_ratio = max(
+                (obj.bounding_box[2] - obj.bounding_box[0] + 1) / max(1, (obj.bounding_box[3] - obj.bounding_box[1] + 1)),
+                (obj.bounding_box[3] - obj.bounding_box[1] + 1) / max(1, (obj.bounding_box[2] - obj.bounding_box[0] + 1)),
+            )
+            is_line = aspect_ratio > 4.0 and obj.size > 8
+            if is_large or is_line:
+                obj.role = "obstacle"
+                for r, c in obj.pixels:
+                    obstacles.add((r, c))
 
-        all_objs = self.extract_objects(arr, bg_color)
+        # 5. ターゲット/ゴール候補 (Target Candidates) のゲシュタルトスコアリング
+        target_candidates: List[VisualObject] = []
+        for obj in raw_objects:
+            if agent_obj and obj.obj_id == agent_obj.obj_id:
+                continue
+            if obj.role == "obstacle":
+                continue
 
-        return GameAffordanceReport(
+            # スコア算出
+            color_rarity = 1.0 - (counts[obj.color] / (h * w))
+            size_compactness = 1.0 / (1.0 + np.log1p(obj.size))
+            dist_score = 1.0
+            if agent_obj:
+                d = abs(obj.center_r - agent_obj.center_r) + abs(obj.center_c - agent_obj.center_c)
+                dist_score = 1.0 / (1.0 + d * 0.05)
+
+            obj.target_score = (color_rarity * 2.0) + (size_compactness * 1.5) + dist_score
+            obj.role = "target_candidate"
+            target_candidates.append(obj)
+
+        target_candidates.sort(key=lambda o: o.target_score, reverse=True)
+        self.prev_grid = arr.copy()
+
+        agent_pos = None
+        if agent_obj:
+            agent_pos = (int(round(agent_obj.center_r)), int(round(agent_obj.center_c)))
+
+        return DynamicAffordanceReport(
             grid_shape=(h, w),
             background_color=bg_color,
-            player_pos=player_pos,
-            goal_pos=goal_pos,
+            agent_object=agent_obj,
+            agent_pos=agent_pos,
+            target_candidates=target_candidates,
             obstacles=obstacles,
-            hazards=hazards,
-            interactables=interactables,
-            color_map=roles,
-            all_objects=all_objs,
+            all_objects=raw_objects,
+            controllable_verified=controllable_verified,
         )
 
-    def analyze_transition(
-        self,
-        obs_before: np.ndarray,
-        action: Action,
-        obs_after: np.ndarray,
-        reward: float,
-        done: bool,
-    ) -> Dict[str, Any]:
-        """行動前後の観測遷移から因果規則（移動の成否、壁の衝突、効果）を抽出."""
-        rep_before = self.analyze_frame(obs_before)
-        rep_after = self.analyze_frame(obs_after)
+    def register_collision(self, r: int, c: int) -> None:
+        """移動に失敗したセルを障害物として動的学習."""
+        self.known_obstacles.add((r, c))
 
-        p_before = rep_before.player_pos
-        p_after = rep_after.player_pos
+    def _extract_components(self, grid: np.ndarray, bg_color: int) -> List[VisualObject]:
+        """グリッドから 4 近傍連結成分オブジェクトを高速抽出."""
+        h, w = grid.shape
+        visited = np.zeros((h, w), dtype=bool)
+        objects: List[VisualObject] = []
+        obj_id = 0
 
-        moved = (p_before != p_after) if (p_before and p_after) else False
-        displacement = (
-            (p_after[0] - p_before[0], p_after[1] - p_before[1])
-            if (p_before and p_after)
-            else (0, 0)
-        )
-
-        hit_obstacle = False
-        if not moved and action in (Action.UP, Action.DOWN, Action.LEFT, Action.RIGHT):
-            hit_obstacle = True
-
-        return {
-            "action": action.name if hasattr(action, "name") else str(action),
-            "moved": moved,
-            "displacement": displacement,
-            "hit_obstacle": hit_obstacle,
-            "reward": reward,
-            "done": done,
-            "player_pos_before": p_before,
-            "player_pos_after": p_after,
-        }
-
-    def extract_objects(self, grid: np.ndarray, background_color: int) -> List[AffordanceObject]:
-        """グリッドから背景色以外の連結成分オブジェクトを抽出."""
-        objects: List[AffordanceObject] = []
-        unique_colors = [c for c in np.unique(grid) if c != background_color]
-
-        for color in unique_colors:
-            mask = grid == color
-            labeled, num_features = label(mask)
-            for feat_id in range(1, num_features + 1):
-                feat_mask = labeled == feat_id
-                indices = np.argwhere(feat_mask)
-                if len(indices) == 0:
+        for r in range(h):
+            for c in range(w):
+                color = int(grid[r, c])
+                if color == bg_color or visited[r, c]:
                     continue
-                min_r, min_c = indices.min(axis=0)
-                max_r, max_c = indices.max(axis=0)
+
+                comp_pixels: List[Tuple[int, int]] = []
+                q = collections.deque([(r, c)])
+                visited[r, c] = True
+
+                min_r, max_r = r, r
+                min_c, max_c = c, c
+
+                while q:
+                    cr, cc = q.popleft()
+                    comp_pixels.append((cr, cc))
+                    min_r = min(min_r, cr)
+                    max_r = max(max_r, cr)
+                    min_c = min(min_c, cc)
+                    max_c = max(max_c, cc)
+
+                    for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                        nr, nc = cr + dr, cc + dc
+                        if 0 <= nr < h and 0 <= nc < w and not visited[nr, nc]:
+                            if grid[nr, nc] == color:
+                                visited[nr, nc] = True
+                                q.append((nr, nc))
+
+                size = len(comp_pixels)
+                center_r = sum(p[0] for p in comp_pixels) / size
+                center_c = sum(p[1] for p in comp_pixels) / size
+
                 objects.append(
-                    AffordanceObject(
-                        color=int(color),
-                        size=int(len(indices)),
-                        bounding_box=(int(min_r), int(min_c), int(max_r), int(max_c)),
-                        is_static=True,
-                        role="interactable",
+                    VisualObject(
+                        obj_id=obj_id,
+                        color=color,
+                        pixels=comp_pixels,
+                        size=size,
+                        bounding_box=(min_r, min_c, max_r, max_c),
+                        center_r=center_r,
+                        center_c=center_c,
                     )
                 )
+                obj_id += 1
+
         return objects

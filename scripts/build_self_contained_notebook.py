@@ -112,336 +112,436 @@ except ImportError:
 
 @dataclasses.dataclass
 class VisualObject:
+    obj_id: int
     color: int
     pixels: List[Tuple[int, int]]
-    bbox: Tuple[int, int, int, int]
-    center_x: int
-    center_y: int
+    size: int
+    bounding_box: Tuple[int, int, int, int]
+    center_r: float
+    center_c: float
+    is_static: bool = True
     role: str = "unknown"
+    target_score: float = 0.0
 
 
-class GestaltPerceiver:
+@dataclasses.dataclass
+class DynamicAffordanceReport:
+    grid_shape: Tuple[int, int]
+    background_color: int
+    agent_object: Optional[VisualObject] = None
+    agent_pos: Optional[Tuple[int, int]] = None
+    target_candidates: List[VisualObject] = dataclasses.field(default_factory=list)
+    obstacles: Set[Tuple[int, int]] = dataclasses.field(default_factory=set)
+    all_objects: List[VisualObject] = dataclasses.field(default_factory=list)
+    controllable_verified: bool = False
+
+
+class MetaObserver:
     def __init__(self) -> None:
-        self.prev_grid: Optional[List[List[int]]] = None
-        self.player_pos: Optional[Tuple[int, int]] = None
         self.background_color: int = 0
+        self.known_obstacles: Set[Tuple[int, int]] = set()
+        self.identified_agent_color: Optional[int] = None
+        self.prev_grid: Optional[List[List[int]]] = None
 
-    def parse(self, grid: Any) -> Dict[str, Any]:
-        if not grid:
-            return {"background_color": 0, "objects": [], "player": None, "targets": [], "walls": set()}
+    def analyze_frame(
+        self,
+        grid: List[List[int]],
+        recent_action: Optional[int] = None,
+    ) -> DynamicAffordanceReport:
+        h = len(grid)
+        w = len(grid[0]) if h > 0 else 0
 
-        # 3次元 (N, H, W) やアニメーションシーケンスの安全な正規化（最新フレームを採用）
+        # 最頻色を背景色と同定
+        color_counts = collections.defaultdict(int)
+        for r in range(h):
+            for c in range(w):
+                color_counts[grid[r][c]] += 1
+        bg_color = max(color_counts, key=color_counts.get) if color_counts else 0
+        self.background_color = bg_color
+
+        raw_objects = self._extract_components(grid, bg_color)
+
+        agent_obj: Optional[VisualObject] = None
+        controllable_verified = False
+
+        if recent_action in (1, 2, 3, 4) and self.prev_grid is not None:
+            expected_dr, expected_dc = {
+                1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)
+            }[recent_action]
+            for obj in raw_objects:
+                for prev_obj in self._extract_components(self.prev_grid, bg_color):
+                    if prev_obj.color == obj.color and abs(prev_obj.size - obj.size) <= 2:
+                        dr = obj.center_r - prev_obj.center_r
+                        dc = obj.center_c - prev_obj.center_c
+                        if (dr * expected_dr > 0) or (dc * expected_dc > 0):
+                            agent_obj = obj
+                            agent_obj.role = "agent"
+                            self.identified_agent_color = obj.color
+                            controllable_verified = True
+                            break
+                if controllable_verified:
+                    break
+
+        if agent_obj is None and self.identified_agent_color is not None:
+            for obj in raw_objects:
+                if obj.color == self.identified_agent_color:
+                    agent_obj = obj
+                    agent_obj.role = "agent"
+                    controllable_verified = True
+                    break
+
+        if agent_obj is None and raw_objects:
+            small_objs = [o for o in raw_objects if o.size < (h * w * 0.05)]
+            if small_objs:
+                agent_obj = min(small_objs, key=lambda o: o.size)
+                agent_obj.role = "agent_candidate"
+
+        obstacles: Set[Tuple[int, int]] = set(self.known_obstacles)
+        for obj in raw_objects:
+            if agent_obj and obj.obj_id == agent_obj.obj_id:
+                continue
+            is_large = obj.size > (h * w * 0.08)
+            h_span = obj.bounding_box[2] - obj.bounding_box[0] + 1
+            w_span = obj.bounding_box[3] - obj.bounding_box[1] + 1
+            aspect = max(h_span / max(1, w_span), w_span / max(1, h_span))
+            if is_large or (aspect > 4.0 and obj.size > 8):
+                obj.role = "obstacle"
+                for r, c in obj.pixels:
+                    obstacles.add((r, c))
+
+        target_candidates: List[VisualObject] = []
+        for obj in raw_objects:
+            if agent_obj and obj.obj_id == agent_obj.obj_id:
+                continue
+            if obj.role == "obstacle":
+                continue
+
+            color_rarity = 1.0 - (color_counts[obj.color] / max(1, h * w))
+            size_compactness = 1.0 / (1.0 + math.log1p(obj.size))
+            dist_score = 1.0
+            if agent_obj:
+                d = abs(obj.center_r - agent_obj.center_r) + abs(obj.center_c - agent_obj.center_c)
+                dist_score = 1.0 / (1.0 + d * 0.05)
+
+            obj.target_score = (color_rarity * 2.0) + (size_compactness * 1.5) + dist_score
+            obj.role = "target_candidate"
+            target_candidates.append(obj)
+
+        target_candidates.sort(key=lambda o: o.target_score, reverse=True)
+        self.prev_grid = [row[:] for row in grid]
+
+        agent_pos = None
+        if agent_obj:
+            agent_pos = (int(round(agent_obj.center_r)), int(round(agent_obj.center_c)))
+
+        return DynamicAffordanceReport(
+            grid_shape=(h, w),
+            background_color=bg_color,
+            agent_object=agent_obj,
+            agent_pos=agent_pos,
+            target_candidates=target_candidates,
+            obstacles=obstacles,
+            all_objects=raw_objects,
+            controllable_verified=controllable_verified,
+        )
+
+    def register_collision(self, r: int, c: int) -> None:
+        self.known_obstacles.add((r, c))
+
+    def _extract_components(self, grid: List[List[int]], bg_color: int) -> List[VisualObject]:
+        h = len(grid)
+        w = len(grid[0]) if h > 0 else 0
+        visited = [[False] * w for _ in range(h)]
+        objects: List[VisualObject] = []
+        obj_id = 0
+
+        for r in range(h):
+            for c in range(w):
+                color = grid[r][c]
+                if color == bg_color or visited[r][c]:
+                    continue
+
+                comp_pixels: List[Tuple[int, int]] = []
+                q = collections.deque([(r, c)])
+                visited[r][c] = True
+                min_r, max_r = r, r
+                min_c, max_c = c, c
+
+                while q:
+                    cr, cc = q.popleft()
+                    comp_pixels.append((cr, cc))
+                    min_r = min(min_r, cr)
+                    max_r = max(max_r, cr)
+                    min_c = min(min_c, cc)
+                    max_c = max(max_c, cc)
+
+                    for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                        nr, nc = cr + dr, cc + dc
+                        if 0 <= nr < h and 0 <= nc < w and not visited[nr][nc]:
+                            if grid[nr][nc] == color:
+                                visited[nr][nc] = True
+                                q.append((nr, nc))
+
+                size = len(comp_pixels)
+                center_r = sum(p[0] for p in comp_pixels) / size
+                center_c = sum(p[1] for p in comp_pixels) / size
+
+                objects.append(
+                    VisualObject(
+                        obj_id=obj_id,
+                        color=color,
+                        pixels=comp_pixels,
+                        size=size,
+                        bounding_box=(min_r, min_c, max_r, max_c),
+                        center_r=center_r,
+                        center_c=center_c,
+                    )
+                )
+                obj_id += 1
+        return objects
+
+
+class AffordanceNavigationSkill:
+    def __init__(self, target: VisualObject) -> None:
+        self.target = target
+        self.target_r = int(round(target.center_r))
+        self.target_c = int(round(target.center_c))
+
+    def choose_action(self, report: DynamicAffordanceReport, available_actions: List[int]) -> Optional[int]:
+        if not report.agent_pos:
+            return None
+        start_r, start_c = report.agent_pos
+        h, w = report.grid_shape
+        if (start_r, start_c) == (self.target_r, self.target_c):
+            return None
+
+        q = collections.deque([(start_r, start_c, [])])
+        visited: Set[Tuple[int, int]] = {(start_r, start_c)}
+        moves = [
+            (1, -1, 0),
+            (2, 1, 0),
+            (3, 0, -1),
+            (4, 0, 1),
+        ]
+        valid_moves = [(act, dr, dc) for act, dr, dc in moves if act in available_actions]
+
+        while q:
+            cr, cc, path = q.popleft()
+            if (cr, cc) == (self.target_r, self.target_c) or (cr, cc) in self.target.pixels:
+                if path:
+                    return path[0]
+
+            for act_id, (dr, dc) in valid_moves:
+                nr, nc = cr + dr, cc + dc
+                if 0 <= nr < h and 0 <= nc < w and (nr, nc) not in visited:
+                    if (nr, nc) in report.obstacles and (nr, nc) not in self.target.pixels:
+                        continue
+                    visited.add((nr, nc))
+                    q.append((nr, nc, path + [act_id]))
+                    if len(path) >= 30:
+                        return path[0]
+        return None
+
+
+class InteractiveClickSkill:
+    def __init__(self, target_pixels: List[Tuple[int, int]]) -> None:
+        self.target_pixels = target_pixels
+        self.idx = 0
+
+    def choose_action(self, report: DynamicAffordanceReport, available_actions: List[int]) -> Optional[Tuple[int, Dict[str, int]]]:
+        if 6 not in available_actions or self.idx >= len(self.target_pixels):
+            return None
+        r, c = self.target_pixels[self.idx]
+        self.idx += 1
+        return 6, {"x": int(c), "y": int(r)}
+
+
+class FrontierExplorationSkill:
+    def __init__(self) -> None:
+        self.actions = [1, 2, 3, 4]
+        self.idx = 0
+
+    def choose_action(self, report: DynamicAffordanceReport, available_actions: List[int]) -> int:
+        valid = [a for a in self.actions if a in available_actions]
+        if not valid:
+            return available_actions[0] if available_actions else 1
+        act = valid[self.idx % len(valid)]
+        self.idx += 1
+        return act
+
+
+class MetaSkillSynthesizer:
+    def __init__(self) -> None:
+        self.blacklisted_target_ids: Set[int] = set()
+        self.current_skill: Optional[Any] = None
+        self.current_target_id: Optional[int] = None
+
+    def blacklist_current_target(self) -> None:
+        if self.current_target_id is not None:
+            self.blacklisted_target_ids.add(self.current_target_id)
+        self.current_skill = None
+        self.current_target_id = None
+
+    def synthesize_navigation(self, report: DynamicAffordanceReport) -> Optional[AffordanceNavigationSkill]:
+        valid = [o for o in report.target_candidates if o.obj_id not in self.blacklisted_target_ids]
+        if report.agent_pos and valid:
+            best = valid[0]
+            if self.current_target_id != best.obj_id or self.current_skill is None:
+                self.current_target_id = best.obj_id
+                self.current_skill = AffordanceNavigationSkill(best)
+            return self.current_skill
+        return None
+
+
+class MetaSkillHarnessPlanner:
+    def __init__(self, game_id: str = "") -> None:
+        self.game_id = game_id
+        self.observer = MetaObserver()
+        self.synthesizer = MetaSkillSynthesizer()
+        self.explorer = FrontierExplorationSkill()
+
+        self.step_index: int = 0
+        self.last_action_id: Optional[int] = None
+        self.last_action_data: Dict[str, Any] = {}
+        self.last_grid: Optional[List[List[int]]] = None
+        self.consecutive_ineffective: int = 0
+        self.clicked_coords: Set[Tuple[int, int]] = set()
+
+        self.confirmed_interactive_group: Optional[Tuple[int, int]] = None
+        self.last_clicked_group_key: Optional[Tuple[int, int]] = None
+        self.last_hit_pos: Optional[Tuple[int, int]] = None
+
+    def decide_action(
+        self,
+        grid: Any,
+        available_action_ids: List[int],
+    ) -> Tuple[int, Dict[str, Any], str]:
+        self.step_index += 1
+
         if isinstance(grid, (list, tuple)) and len(grid) > 0:
             if isinstance(grid[0], (list, tuple)) and len(grid[0]) > 0 and isinstance(grid[0][0], (list, tuple)):
                 grid = grid[-1]
             elif len(grid) == 1 and isinstance(grid[0], (list, tuple)):
                 grid = grid[0]
 
-        h = len(grid)
-        w = len(grid[0]) if h > 0 and isinstance(grid[0], (list, tuple)) else 0
-        if h == 0 or w == 0:
-            return {"background_color": 0, "objects": [], "player": None, "targets": [], "walls": set()}
-
-        norm_grid: List[List[int]] = []
+        h = len(grid) if grid else 64
+        w = len(grid[0]) if grid and grid[0] else 64
+        norm_grid = []
         for r in range(h):
             row = []
             for c in range(w):
                 val = grid[r][c]
-                pixel_val = val[0] if isinstance(val, (list, tuple)) else val
+                px = val[0] if isinstance(val, (list, tuple)) else val
                 try:
-                    row.append(int(pixel_val))
+                    row.append(int(px))
                 except Exception:
                     row.append(0)
             norm_grid.append(row)
         grid = norm_grid
 
-        color_counts: Dict[int, int] = collections.defaultdict(int)
-        for r in range(h):
-            for c in range(w):
-                color_counts[grid[r][c]] += 1
-        self.background_color = max(color_counts, key=color_counts.get)
+        report = self.observer.analyze_frame(grid, recent_action=self.last_action_id)
 
-        diff_pixels: List[Tuple[int, int]] = []
-        if self.prev_grid and len(self.prev_grid) == h and len(self.prev_grid[0]) == w:
-            for r in range(h):
-                for c in range(w):
-                    if grid[r][c] != self.prev_grid[r][c]:
-                        diff_pixels.append((r, c))
-
-        # 3. 連結成分（4-Connected Components）によるスプライト/オブジェクト同定
-        visited: Set[Tuple[int, int]] = set()
-        raw_components: List[Tuple[int, List[Tuple[int, int]]]] = []
-
-        for r in range(h):
-            for c in range(w):
-                val = grid[r][c]
-                if val == self.background_color or (r, c) in visited:
-                    continue
-
-                comp: List[Tuple[int, int]] = []
-                q = collections.deque([(r, c)])
-                visited.add((r, c))
-                while q:
-                    cr, cc = q.popleft()
-                    comp.append((cr, cc))
-                    for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                        nr, nc = cr + dr, cc + dc
-                        if 0 <= nr < h and 0 <= nc < w:
-                            if (nr, nc) not in visited and grid[nr][nc] == val:
-                                visited.add((nr, nc))
-                                q.append((nr, nc))
-                raw_components.append((val, comp))
-
-        objects: List[VisualObject] = []
-        walls: Set[Tuple[int, int]] = set()
-        targets: List[VisualObject] = []
-        identified_player: Optional[Tuple[int, int]] = None
-
-        if diff_pixels:
-            non_bg_diff = [p for p in diff_pixels if grid[p[0]][p[1]] != self.background_color]
-            if non_bg_diff:
-                identified_player = non_bg_diff[0]
-
-        for color, pixs in raw_components:
-            if len(pixs) > (h * w * 0.25):
-                for p in pixs:
-                    walls.add(p)
-                continue
-
-            min_r = min(p[0] for p in pixs)
-            max_r = max(p[0] for p in pixs)
-            min_c = min(p[1] for p in pixs)
-            max_c = max(p[1] for p in pixs)
-            center_r = (min_r + max_r) // 2
-            center_c = (min_c + max_c) // 2
-
-            obj = VisualObject(
-                color=color,
-                pixels=pixs,
-                bbox=(min_r, min_c, max_r, max_c),
-                center_x=center_c,
-                center_y=center_r,
-            )
-
-            if identified_player and (min_r <= identified_player[0] <= max_r) and (min_c <= identified_player[1] <= max_c):
-                obj.role = "player"
-                self.player_pos = (center_r, center_c)
-            else:
-                obj.role = "target"
-                targets.append(obj)
-
-            objects.append(obj)
-
-        if not self.player_pos and objects:
-            self.player_pos = (objects[0].center_y, objects[0].center_x)
-
-        self.prev_grid = [row[:] for row in grid]
-        return {
-            "background_color": self.background_color,
-            "objects": objects,
-            "player": self.player_pos,
-            "targets": targets,
-            "walls": walls,
-        }
-
-
-class GestaltVCGTPlanner:
-    def __init__(self, game_id: str = "") -> None:
-        self.game_id = game_id
-        self.perceiver = GestaltPerceiver()
-        self.plan_queue: collections.deque[int] = collections.deque()
-        self.clicked_coords: Set[Tuple[int, int]] = set()
-        self.known_obstacles: Set[Tuple[int, int]] = set()
-        self.last_action_id: Optional[int] = None
-        self.step_index: int = 0
-        self.confirmed_interactive_group: Optional[Tuple[int, int]] = None
-        self.last_clicked_group_key: Optional[Tuple[int, int]] = None
-        self.last_clicked_pos: Optional[Tuple[int, int]] = None
-        self.last_hit_pos: Optional[Tuple[int, int]] = None
-
-    def decide_action(
-        self,
-        grid: List[List[int]],
-        available_action_ids: List[int],
-    ) -> Tuple[int, Dict[str, Any], str]:
-        self.step_index += 1
-        # 3次元テンソルを最新フレームの 2D グリッドへ完全正規化
-        if isinstance(grid, (list, tuple)) and len(grid) > 0:
-            if isinstance(grid[0], (list, tuple)) and len(grid[0]) > 0 and isinstance(grid[0][0], (list, tuple)):
-                grid = grid[-1]
-            elif len(grid) == 1 and isinstance(grid[0], (list, tuple)):
-                grid = grid[0]
-
-        parsed = self.perceiver.parse(grid)
-        player = parsed.get("player")
-        targets: List[VisualObject] = parsed.get("targets", [])
-        walls: Set[Tuple[int, int]] = parsed.get("walls", set())
-        all_obstacles = walls | self.known_obstacles
-
-        h = len(grid) if grid else 64
-        w = len(grid[0]) if grid and grid[0] else 64
-
-        # 1. クリック系タスク (ACTION6)
+        # 1. クリックアクション (ACTION6)
         if 6 in available_action_ids:
-            target_candidates: List[Tuple[Tuple[int, int], Optional[Tuple[int, int]]]] = []
+            act_id, act_data, r_str = self._handle_click(report, grid)
+            self.last_action_id = act_id
+            self.last_action_data = act_data
+            self.last_grid = [row[:] for row in grid]
+            return act_id, act_data, r_str
 
-            # ゲシュタルト同定 (A): 同一色・同一サイズの反復スプライト群（キーパッド/タイル盤）を最優先
-            size_color_groups = collections.defaultdict(list)
-            for obj in targets:
-                if 4 <= len(obj.pixels) < (h * w * 0.2):
-                    size_color_groups[(obj.color, len(obj.pixels))].append(obj)
-
-            # 過去にヒットが確認された正解グループを絶対最優先！
-            if self.confirmed_interactive_group and self.confirmed_interactive_group in size_color_groups:
-                hit_group = size_color_groups[self.confirmed_interactive_group]
-                if self.last_hit_pos:
-                    lx, ly = self.last_hit_pos
-                    hit_group = sorted(
-                        hit_group,
-                        key=lambda o: abs(o.bbox[1] - lx) + abs(o.bbox[0] - ly),
-                    )
-                for obj in hit_group:
-                    for pt in [(obj.bbox[1], obj.bbox[0]), (obj.center_x, obj.center_y)]:
-                        if pt not in self.clicked_coords and not any(pt == c[0] for c in target_candidates):
-                            target_candidates.append((pt, self.confirmed_interactive_group))
-
-            if not target_candidates:
-                repeated_groups = [(k, g) for k, g in size_color_groups.items() if len(g) >= 3]
-                repeated_groups.sort(key=lambda item: (-len(item[1]), -len(item[1][0].pixels)))
-
-                for grp_key, group in repeated_groups:
-                    for obj in group:
-                        for pt in [(obj.bbox[1], obj.bbox[0]), (obj.center_x, obj.center_y)]:
-                            if pt not in self.clicked_coords and not any(pt == c[0] for c in target_candidates):
-                                target_candidates.append((pt, grp_key))
-
-            # ゲシュタルト同定 (B): その他のターゲットオブジェクト
-            if not target_candidates:
-                sorted_targets = sorted(targets, key=lambda o: len(o.pixels))
-                for obj in sorted_targets:
-                    grp_key = (obj.color, len(obj.pixels))
-                    for pt in [(obj.bbox[1], obj.bbox[0]), (obj.center_x, obj.center_y)]:
-                        if pt not in self.clicked_coords and not any(pt == c[0] for c in target_candidates):
-                            target_candidates.append((pt, grp_key))
-
-            # ゲシュタルト同定 (C): 各オブジェクトの構成ピクセル
-            if not target_candidates:
-                for obj in targets:
-                    grp_key = (obj.color, len(obj.pixels))
-                    for r, c in obj.pixels:
-                        if (c, r) not in self.clicked_coords and not any((c, r) == cand[0] for cand in target_candidates):
-                            target_candidates.append(((c, r), grp_key))
-                            break
-
-            if target_candidates:
-                (target_x, target_y), grp_key = target_candidates[0]
-                self.clicked_coords.add((target_x, target_y))
-                self.last_action_id = 6
-                self.last_clicked_group_key = grp_key
-                self.last_clicked_pos = (target_x, target_y)
-                return 6, {"x": int(target_x), "y": int(target_y)}, f"VCGT Click: Target at ({target_x}, {target_y})"
-
-            bg = parsed.get("background_color", 0)
-            for r in range(h):
-                for c in range(w):
-                    if grid[r][c] != bg and (c, r) not in self.clicked_coords:
-                        self.clicked_coords.add((c, r))
-                        self.last_action_id = 6
-                        self.last_clicked_group_key = None
-                        return 6, {"x": int(c), "y": int(r)}, f"VCGT Click: Pixel at ({c}, {r})"
-
-            cx, cy = w // 2, h // 2
-            return 6, {"x": int(cx), "y": int(cy)}, f"VCGT Click: Center ({cx}, {cy})"
-
-        # 2. 移動系タスク (ACTION1〜5): サブゴール経路計画
-        if self.plan_queue:
-            act = self.plan_queue.popleft()
-            if act in available_action_ids:
+        # 2. ナビゲーションスキル合成 (A* / BFS 最短経路)
+        nav_skill = self.synthesizer.synthesize_navigation(report)
+        if nav_skill:
+            act = nav_skill.choose_action(report, available_action_ids)
+            if act is not None:
                 self.last_action_id = act
-                return act, {}, f"VCGT Macro: Step {self.step_index} pursuing path"
+                self.last_action_data = {}
+                self.last_grid = [row[:] for row in grid]
+                return act, {}, f"MetaSkill[Navigation]: target {nav_skill.target.obj_id} via action {act}"
 
-        if player and targets:
-            nearest_target = min(
-                targets,
-                key=lambda obj: abs(obj.center_y - player[0]) + abs(obj.center_x - player[1]),
-            )
-            goal_r, goal_c = nearest_target.center_y, nearest_target.center_x
-
-            actions_plan = self._find_path_bfs(
-                start=player,
-                goal=(goal_r, goal_c),
-                obstacles=all_obstacles,
-                grid_shape=(h, w),
-                available_actions=available_action_ids,
-            )
-
-            if actions_plan:
-                for a in actions_plan:
-                    self.plan_queue.append(a)
-                act = self.plan_queue.popleft()
-                self.last_action_id = act
-                return act, {}, f"VCGT Plan: Heading to ({goal_c}, {goal_r})"
-
-        move_actions = [a for a in available_action_ids if a in [1, 2, 3, 4]]
-        if move_actions:
-            act = self.last_action_id if self.last_action_id in move_actions else move_actions[0]
-            self.last_action_id = act
-            return act, {}, f"VCGT Momentum: {act}"
-
-        fallback_act = available_action_ids[0] if available_action_ids else 1
-        return fallback_act, {}, "VCGT Fallback"
+        # 3. 経路なし/ターゲット未同定の場合：Failure Diagnoser 自己修復 & フロンティア探索
+        self.synthesizer.blacklist_current_target()
+        act = self.explorer.choose_action(report, available_action_ids)
+        self.last_action_id = act
+        self.last_action_data = {}
+        self.last_grid = [row[:] for row in grid]
+        return act, {}, f"MetaSkill[FrontierExploration]: {act}"
 
     def on_feedback(self, is_effective: bool, pixels_changed: int) -> None:
-        if is_effective and self.last_action_id == 6 and self.last_clicked_group_key:
-            self.confirmed_interactive_group = self.last_clicked_group_key
-            if self.last_clicked_pos:
-                self.last_hit_pos = self.last_clicked_pos
-        if not is_effective and self.last_action_id in [1, 2, 3, 4]:
-            self.plan_queue.clear()
-            self.last_action_id = None
+        if is_effective:
+            self.consecutive_ineffective = 0
+            if self.last_action_id == 6 and self.last_clicked_group_key:
+                self.confirmed_interactive_group = self.last_clicked_group_key
+                if "x" in self.last_action_data and "y" in self.last_action_data:
+                    self.last_hit_pos = (self.last_action_data["x"], self.last_action_data["y"])
+        else:
+            self.consecutive_ineffective += 1
+            if self.last_action_id in (1, 2, 3, 4) and self.last_grid is not None:
+                rep = self.observer.analyze_frame(self.last_grid)
+                if rep.agent_pos:
+                    dr, dc = {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}[self.last_action_id]
+                    br, bc = rep.agent_pos[0] + dr, rep.agent_pos[1] + dc
+                    self.observer.register_collision(br, bc)
 
-    def _find_path_bfs(
-        self,
-        start: Tuple[int, int],
-        goal: Tuple[int, int],
-        obstacles: Set[Tuple[int, int]],
-        grid_shape: Tuple[int, int],
-        available_actions: List[int],
-    ) -> List[int]:
-        h, w = grid_shape
-        moves: List[Tuple[int, int, int]] = []
-        if 1 in available_actions:
-            moves.append((1, -1, 0))  # UP
-        if 2 in available_actions:
-            moves.append((2, 1, 0))   # DOWN
-        if 3 in available_actions:
-            moves.append((3, 0, -1))  # LEFT
-        if 4 in available_actions:
-            moves.append((4, 0, 1))   # RIGHT
+            if self.consecutive_ineffective >= 2:
+                self.synthesizer.blacklist_current_target()
 
-        if not moves:
-            return []
+    def _handle_click(self, report: DynamicAffordanceReport, grid: List[List[int]]) -> Tuple[int, Dict[str, Any], str]:
+        h, w = report.grid_shape
+        target_cands: List[Tuple[Tuple[int, int], Optional[Tuple[int, int]]]] = []
 
-        queue = collections.deque([(start, [])])
-        visited = {start}
+        size_color_groups = collections.defaultdict(list)
+        for obj in report.target_candidates:
+            if 4 <= obj.size < (h * w * 0.2):
+                size_color_groups[(obj.color, obj.size)].append(obj)
 
-        while queue:
-            (curr_r, curr_c), path = queue.popleft()
-            if (curr_r, curr_c) == goal:
-                return path
+        if self.confirmed_interactive_group and self.confirmed_interactive_group in size_color_groups:
+            hit_group = size_color_groups[self.confirmed_interactive_group]
+            if self.last_hit_pos:
+                lx, ly = self.last_hit_pos
+                hit_group = sorted(hit_group, key=lambda o: abs(o.bounding_box[1] - lx) + abs(o.bounding_box[0] - ly))
+            for obj in hit_group:
+                for pt in [(obj.bounding_box[1], obj.bounding_box[0]), (int(round(obj.center_c)), int(round(obj.center_r)))]:
+                    if pt not in self.clicked_coords and not any(pt == c[0] for c in target_cands):
+                        target_cands.append((pt, self.confirmed_interactive_group))
 
-            for act_id, dr, dc in moves:
-                nr, nc = curr_r + dr, curr_c + dc
-                if 0 <= nr < h and 0 <= nc < w and (nr, nc) not in visited and (nr, nc) not in obstacles:
-                    visited.add((nr, nc))
-                    queue.append(((nr, nc), path + [act_id]))
-                    if len(path) >= 25:
-                        return path + [act_id]
-        return []
+        if not target_cands:
+            repeated = [(k, g) for k, g in size_color_groups.items() if len(g) >= 3]
+            repeated.sort(key=lambda item: (-len(item[1]), -item[1][0].size))
+            for grp_key, group in repeated:
+                for obj in group:
+                    for pt in [(obj.bounding_box[1], obj.bounding_box[0]), (int(round(obj.center_c)), int(round(obj.center_r)))]:
+                        if pt not in self.clicked_coords and not any(pt == c[0] for c in target_cands):
+                            target_cands.append((pt, grp_key))
+
+        if not target_cands:
+            for obj in report.target_candidates:
+                grp_key = (obj.color, obj.size)
+                for pt in [(obj.bounding_box[1], obj.bounding_box[0]), (int(round(obj.center_c)), int(round(obj.center_r)))]:
+                    if pt not in self.clicked_coords and not any(pt == c[0] for c in target_cands):
+                        target_cands.append((pt, grp_key))
+
+        if target_cands:
+            (tx, ty), grp_key = target_cands[0]
+            self.clicked_coords.add((tx, ty))
+            self.last_clicked_group_key = grp_key
+            return 6, {"x": int(tx), "y": int(ty)}, f"MetaSkill[Click]: ({tx}, {ty})"
+
+        for r in range(h):
+            for c in range(w):
+                if grid[r][c] != report.background_color and (c, r) not in self.clicked_coords:
+                    self.clicked_coords.add((c, r))
+                    return 6, {"x": int(c), "y": int(r)}, f"MetaSkill[ClickFallback]: ({c}, {r})"
+
+        cx, cy = w // 2, h // 2
+        return 6, {"x": int(cx), "y": int(cy)}, f"MetaSkill[ClickCenter]: ({cx}, {cy})"
+
+
+GestaltVCGTPlanner = MetaSkillHarnessPlanner
 
 
 class MyAgent(Agent):
-    """ACR-AGI-3 VCGT 準拠 思考型メタエージェント (Gestalt-VCGT Agent)."""
+    """ACR-AGI-3 自律適応型メタスキルエージェント (Meta-Skill Harness Agent)."""
 
     MAX_ACTIONS = 80
 
@@ -546,7 +646,6 @@ class MyAgent(Agent):
             return chosen_action
 
         except Exception as e:
-            print(f"[DEBUG MyAgent Error] {type(e).__name__}: {e}")
             avail = getattr(latest_frame, "available_actions", None)
             if avail:
                 act_id = [x for x in avail if x != 0][0] if any(x != 0 for x in avail) else 0
