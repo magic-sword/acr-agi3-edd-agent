@@ -35,12 +35,6 @@ class MetaSkillHarnessPlanner:
         self.last_action_data: Dict[str, Any] = {}
         self.last_grid: Optional[np.ndarray] = None
         self.consecutive_ineffective: int = 0
-        self.clicked_coords: Set[Tuple[int, int]] = set()
-
-        # クリック相互作用の仮説検証メモリ
-        self.confirmed_interactive_group: Optional[Tuple[int, int]] = None
-        self.last_clicked_group_key: Optional[Tuple[int, int]] = None
-        self.last_hit_pos: Optional[Tuple[int, int]] = None
 
     def decide_action(
         self,
@@ -67,29 +61,25 @@ class MetaSkillHarnessPlanner:
             recent_action=self.last_action_id,
         )
 
-        # 3. クリック系アクション (ACTION6) が利用可能な場合の特殊合成
-        if 6 in available_action_ids:
-            act_id, act_data, reasoning = self._handle_interactive_click(report, arr)
-            self.last_action_id = act_id
-            self.last_action_data = act_data
-            self.last_grid = arr.copy()
-            return act_id, act_data, reasoning
+        # 3. Meta-Skill Synthesizer による行動スキルの動的合成 (クリック系含む)
+        active_skill = self.synthesizer.synthesize(report, available_action_ids=available_action_ids)
 
-        # 4. Meta-Skill Synthesizer による行動スキルの動的合成
-        active_skill = self.synthesizer.synthesize(report)
-
-        # 5. スキルポリシーによる行動選択
-        chosen_action = active_skill.choose_action(report)
+        # 4. スキルポリシーによる行動選択 (付随データ x, y を含む)
+        chosen_action, act_data, reasoning = active_skill.choose_action_full(
+            report=report,
+            grid=arr,
+            available_actions=available_action_ids,
+        )
 
         # スキルの行動が利用可能アクションに含まれているか検証
         if chosen_action is not None and chosen_action in available_action_ids:
             self.last_action_id = chosen_action
-            self.last_action_data = {}
+            self.last_action_data = act_data
             self.last_grid = arr.copy()
             skill_name = type(active_skill).__name__
-            return chosen_action, {}, f"MetaSkill[{skill_name}]: Step {self.step_index}"
+            return chosen_action, act_data, f"MetaSkill[{skill_name}]: {reasoning}"
 
-        # 6. スキルが失敗・行き止まりの場合：Failure Diagnoser による自己修復
+        # 5. スキルが失敗・行き止まりの場合：Failure Diagnoser による自己修復
         self.synthesizer.blacklist_current_target()
         fallback_skill = self.syn_mod.FrontierExplorationSkill()
         fallback_act = fallback_skill.choose_action(report)
@@ -106,10 +96,12 @@ class MetaSkillHarnessPlanner:
         if is_effective:
             self.consecutive_ineffective = 0
             # クリックがヒットした場合、そのグループを記憶
-            if self.last_action_id == 6 and self.last_clicked_group_key:
-                self.confirmed_interactive_group = self.last_clicked_group_key
+            if self.last_action_id == 6 and hasattr(self.synthesizer, "click_skill") and self.synthesizer.click_skill:
                 if "x" in self.last_action_data and "y" in self.last_action_data:
-                    self.last_hit_pos = (self.last_action_data["x"], self.last_action_data["y"])
+                    self.synthesizer.click_skill.last_hit_pos = (
+                        self.last_action_data["x"],
+                        self.last_action_data["y"],
+                    )
         else:
             self.consecutive_ineffective += 1
             # 移動系アクションが無効（壁衝突）だった場合、衝突地点を学習してターゲット仮説を破棄
@@ -125,70 +117,6 @@ class MetaSkillHarnessPlanner:
             # 2回連続で行動が無効なら現在のターゲット仮説をブラックリストに入れて再合成
             if self.consecutive_ineffective >= 2:
                 self.synthesizer.blacklist_current_target()
-
-    def _handle_interactive_click(
-        self,
-        report: DynamicAffordanceReport,
-        grid: np.ndarray,
-    ) -> Tuple[int, Dict[str, Any], str]:
-        """クリック系パズルに対する仮説検証型クリック合成."""
-        h, w = report.grid_shape
-        target_candidates: List[Tuple[Tuple[int, int], Optional[Tuple[int, int]]]] = []
-
-        # ゲシュタルト同定: 反復スプライト群（タイル盤/キーパッド）
-        size_color_groups = collections.defaultdict(list)
-        for obj in report.target_candidates:
-            if 4 <= obj.size < (h * w * 0.2):
-                size_color_groups[(obj.color, obj.size)].append(obj)
-
-        # 過去にヒットが確認された正解グループを最優先
-        if self.confirmed_interactive_group and self.confirmed_interactive_group in size_color_groups:
-            hit_group = size_color_groups[self.confirmed_interactive_group]
-            if self.last_hit_pos:
-                lx, ly = self.last_hit_pos
-                hit_group = sorted(
-                    hit_group,
-                    key=lambda o: abs(o.bounding_box[1] - lx) + abs(o.bounding_box[0] - ly),
-                )
-            for obj in hit_group:
-                for pt in [(obj.bounding_box[1], obj.bounding_box[0]), (int(round(obj.center_c)), int(round(obj.center_r)))]:
-                    if pt not in self.clicked_coords and not any(pt == c[0] for c in target_candidates):
-                        target_candidates.append((pt, self.confirmed_interactive_group))
-
-        # 反復グループの探索
-        if not target_candidates:
-            repeated = [(k, g) for k, g in size_color_groups.items() if len(g) >= 3]
-            repeated.sort(key=lambda item: (-len(item[1]), -item[1][0].size))
-            for grp_key, group in repeated:
-                for obj in group:
-                    for pt in [(obj.bounding_box[1], obj.bounding_box[0]), (int(round(obj.center_c)), int(round(obj.center_r)))]:
-                        if pt not in self.clicked_coords and not any(pt == c[0] for c in target_candidates):
-                            target_candidates.append((pt, grp_key))
-
-        # その他のターゲット候補
-        if not target_candidates:
-            for obj in report.target_candidates:
-                grp_key = (obj.color, obj.size)
-                for pt in [(obj.bounding_box[1], obj.bounding_box[0]), (int(round(obj.center_c)), int(round(obj.center_r)))]:
-                    if pt not in self.clicked_coords and not any(pt == c[0] for c in target_candidates):
-                        target_candidates.append((pt, grp_key))
-
-        # ターゲット決定
-        if target_candidates:
-            (tx, ty), grp_key = target_candidates[0]
-            self.clicked_coords.add((tx, ty))
-            self.last_clicked_group_key = grp_key
-            return 6, {"x": int(tx), "y": int(ty)}, f"MetaSkill[ClickInteraction]: ({tx}, {ty})"
-
-        # フォールバック
-        for r in range(h):
-            for c in range(w):
-                if grid[r, c] != report.background_color and (c, r) not in self.clicked_coords:
-                    self.clicked_coords.add((c, r))
-                    return 6, {"x": int(c), "y": int(r)}, f"MetaSkill[ClickFallback]: ({c}, {r})"
-
-        cx, cy = w // 2, h // 2
-        return 6, {"x": int(cx), "y": int(cy)}, f"MetaSkill[ClickCenter]: ({cx}, {cy})"
 
 
 # 下位互換エイリアス

@@ -2,7 +2,7 @@
 """Skill Synthesizer - Core CLI & Script Tool (ACR-AGI-3).
 
 抽出された動的アフォーダンスおよびサブゴール仕様に基づき、
-実行可能な行動ポリシー (AffordanceNavigationSkill, InteractiveClickSkill 等) を
+実行可能な行動ポリシー (AffordanceNavigationSkill, InteractiveClickSkill, FrontierExplorationSkill 等) を
 動的にインスタンス化し、また EDD 防壁ゲート用の契約テストを自動合成します。
 """
 
@@ -24,6 +24,20 @@ class BaseSkillPolicy:
 
     def choose_action(self, report: Any) -> Optional[int]:
         raise NotImplementedError
+
+    def get_action_data(self) -> Dict[str, Any]:
+        """アクションに付随する追加引数 (例: ACTION6 の x, y)."""
+        return {}
+
+    def choose_action_full(
+        self,
+        report: Any,
+        grid: Optional[np.ndarray] = None,
+        available_actions: Optional[List[int]] = None,
+    ) -> Tuple[Optional[int], Dict[str, Any], str]:
+        """アクションID、付随データ、および論理的理由 (reasoning) を包括返却."""
+        act = self.choose_action(report)
+        return act, self.get_action_data(), f"{type(self).__name__}"
 
 
 class AffordanceNavigationSkill(BaseSkillPolicy):
@@ -78,16 +92,87 @@ class AffordanceNavigationSkill(BaseSkillPolicy):
 class InteractiveClickSkill(BaseSkillPolicy):
     """クリック可能なオブジェクトや特異スプライトに対する仮説検証クリック相互作用スキル."""
 
-    def __init__(self, target_pixels: List[Tuple[int, int]]) -> None:
-        self.target_pixels = target_pixels
-        self.click_index = 0
+    def __init__(self, target_pixels: Optional[List[Tuple[int, int]]] = None) -> None:
+        self.target_pixels = target_pixels or []
+        self.last_action_data: Dict[str, Any] = {}
+        self.clicked_coords: Set[Tuple[int, int]] = set()
+        self.confirmed_group: Optional[Tuple[int, int]] = None
+        self.last_hit_pos: Optional[Tuple[int, int]] = None
+
+    def get_action_data(self) -> Dict[str, Any]:
+        return self.last_action_data
 
     def choose_action(self, report: Any) -> Optional[int]:
-        if not self.target_pixels or self.click_index >= len(self.target_pixels):
-            return None
-        r, c = self.target_pixels[self.click_index]
-        self.click_index += 1
-        return 6  # ACTION6 (CLICK)
+        act, _, _ = self.choose_action_full(report)
+        return act
+
+    def choose_action_full(
+        self,
+        report: Any,
+        grid: Optional[np.ndarray] = None,
+        available_actions: Optional[List[int]] = None,
+    ) -> Tuple[Optional[int], Dict[str, Any], str]:
+        """ゲシュタルト同定 (反復スプライト・キーパッド・アイテム) に基づくクリック決定."""
+        h, w = report.grid_shape
+        target_candidates: List[Tuple[Tuple[int, int], Optional[Tuple[int, int]]]] = []
+
+        # 1. ゲシュタルト同定: 反復スプライト群 (タイル盤 / キーパッド)
+        size_color_groups = collections.defaultdict(list)
+        for obj in report.target_candidates:
+            if 4 <= obj.size < (h * w * 0.2):
+                size_color_groups[(obj.color, obj.size)].append(obj)
+
+        # 2. 過去にヒットが確認された正解グループを最優先
+        if self.confirmed_group and self.confirmed_group in size_color_groups:
+            hit_group = size_color_groups[self.confirmed_group]
+            if self.last_hit_pos:
+                lx, ly = self.last_hit_pos
+                hit_group = sorted(
+                    hit_group,
+                    key=lambda o: abs(o.bounding_box[1] - lx) + abs(o.bounding_box[0] - ly),
+                )
+            for obj in hit_group:
+                for pt in [(obj.bounding_box[1], obj.bounding_box[0]), (int(round(obj.center_c)), int(round(obj.center_r)))]:
+                    if pt not in self.clicked_coords and not any(pt == c[0] for c in target_candidates):
+                        target_candidates.append((pt, self.confirmed_group))
+
+        # 3. 反復グループの探索 (3個以上同じサイズ・色のスプライト)
+        if not target_candidates:
+            repeated = [(k, g) for k, g in size_color_groups.items() if len(g) >= 3]
+            repeated.sort(key=lambda item: (-len(item[1]), -item[1][0].size))
+            for grp_key, group in repeated:
+                for obj in group:
+                    for pt in [(obj.bounding_box[1], obj.bounding_box[0]), (int(round(obj.center_c)), int(round(obj.center_r)))]:
+                        if pt not in self.clicked_coords and not any(pt == c[0] for c in target_candidates):
+                            target_candidates.append((pt, grp_key))
+
+        # 4. その他のターゲット候補
+        if not target_candidates:
+            for obj in report.target_candidates:
+                grp_key = (obj.color, obj.size)
+                for pt in [(obj.bounding_box[1], obj.bounding_box[0]), (int(round(obj.center_c)), int(round(obj.center_r)))]:
+                    if pt not in self.clicked_coords and not any(pt == c[0] for c in target_candidates):
+                        target_candidates.append((pt, grp_key))
+
+        # ターゲット決定
+        if target_candidates:
+            (tx, ty), grp_key = target_candidates[0]
+            self.clicked_coords.add((tx, ty))
+            self.last_action_data = {"x": int(tx), "y": int(ty)}
+            return 6, self.last_action_data, f"InteractiveClick[Target]: ({tx}, {ty})"
+
+        # フォールバック: 背景以外の未クリック点
+        if grid is not None:
+            for r in range(h):
+                for c in range(w):
+                    if grid[r, c] != report.background_color and (c, r) not in self.clicked_coords:
+                        self.clicked_coords.add((c, r))
+                        self.last_action_data = {"x": int(c), "y": int(r)}
+                        return 6, self.last_action_data, f"InteractiveClick[NonBgFallback]: ({c}, {r})"
+
+        cx, cy = w // 2, h // 2
+        self.last_action_data = {"x": int(cx), "y": int(cy)}
+        return 6, self.last_action_data, f"InteractiveClick[CenterFallback]: ({cx}, {cy})"
 
 
 class FrontierExplorationSkill(BaseSkillPolicy):
@@ -110,6 +195,7 @@ class MetaSkillSynthesizer:
         self.blacklisted_target_ids: Set[int] = set()
         self.current_skill: Optional[BaseSkillPolicy] = None
         self.current_target_id: Optional[int] = None
+        self.click_skill: Optional[InteractiveClickSkill] = None
 
     def blacklist_current_target(self) -> None:
         """失敗診断により現在のターゲットをブラックリストに追加."""
@@ -123,14 +209,27 @@ class MetaSkillSynthesizer:
         self.blacklisted_target_ids.clear()
         self.current_skill = None
         self.current_target_id = None
+        self.click_skill = None
 
-    def synthesize(self, report: Any) -> BaseSkillPolicy:
-        """アフォーダンスレポートから実行可能スキルを即座に動的合成."""
+    def synthesize(
+        self,
+        report: Any,
+        available_action_ids: Optional[List[int]] = None,
+    ) -> BaseSkillPolicy:
+        """アフォーダンスレポートとアクション空間から実行可能スキルを即座に動的合成."""
+        # 1. クリック系アクション (ACTION6) が利用可能な環境なら InteractiveClickSkill を優先合成
+        if available_action_ids and 6 in available_action_ids:
+            if self.click_skill is None:
+                self.click_skill = InteractiveClickSkill()
+            self.current_skill = self.click_skill
+            return self.current_skill
+
         valid_candidates = [
             obj for obj in report.target_candidates
             if obj.obj_id not in self.blacklisted_target_ids
         ]
 
+        # 2. 自機が同定されておりターゲット候補が存在する場合はナビゲーションスキル
         if report.agent_pos and valid_candidates:
             best_target = valid_candidates[0]
             if self.current_target_id != best_target.obj_id or self.current_skill is None:
@@ -138,13 +237,15 @@ class MetaSkillSynthesizer:
                 self.current_skill = AffordanceNavigationSkill(best_target)
             return self.current_skill
 
+        # 3. 自機が未確定だがターゲットが存在する場合
         if not report.controllable_verified and valid_candidates:
             best_target = valid_candidates[0]
             if self.current_target_id != best_target.obj_id or self.current_skill is None:
                 self.current_target_id = best_target.obj_id
-                self.current_skill = InteractiveClickSkill(best_target.pixels)
+                self.current_skill = AffordanceNavigationSkill(best_target)
             return self.current_skill
 
+        # 4. デフォルト: フロンティア探索
         self.current_skill = FrontierExplorationSkill()
         return self.current_skill
 

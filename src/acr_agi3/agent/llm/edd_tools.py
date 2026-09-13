@@ -89,7 +89,7 @@ def edd_write_skill_code(name: str, code: str) -> str:
 
     Args:
         name: スキル識別名
-        code: Python コード (def transform(grid: np.ndarray) -> np.ndarray: を含む)
+        code: Python コード (def choose_action(obs: np.ndarray, info: dict | None = None) -> Action: を含む)
 
     Returns:
         保存完了メッセージ
@@ -183,71 +183,26 @@ def edd_register_verified_skill(
 
 
 def edd_list_skills(verified_only: bool = False) -> list[dict[str, Any]]:
-    """獲得・生成されたスキルライブラリの一覧を取得.
+    """獲得・生成されたスキルライブラリの一覧を取得 (SkillHarness 統合).
 
     Args:
         verified_only: 防壁ゲート合格済みスキルのみに限定するかどうか
 
     Returns:
-        スキル情報辞書のリスト (name, description, is_verified, script_path)
+        スキル情報辞書のリスト (name, description, is_verified)
     """
-    import json
+    from acr_agi3.meta.skill_harness import SkillHarness
 
-    if not GENERATED_SKILLS_DIR.exists():
-        return []
-
-    skills: list[dict[str, Any]] = []
-    for skill_path in sorted(GENERATED_SKILLS_DIR.iterdir()):
-        if not skill_path.is_dir():
-            continue
-
-        skill_name = skill_path.name
-        registry_file = skill_path / "registry.json"
-        skill_md_file = skill_path / "SKILL.md"
-
-        desc = ""
-        is_verified = False
-        tags: list[str] = []
-
-        if registry_file.exists():
-            try:
-                with registry_file.open("r", encoding="utf-8") as f:
-                    reg = json.load(f)
-                    desc = reg.get("description", "")
-                    is_verified = reg.get("is_verified", False)
-                    tags = reg.get("tags", [])
-            except Exception:
-                pass
-
-        if not desc and skill_md_file.exists():
-            # SKILL.md から description を抽出
-            for line in skill_md_file.read_text(encoding="utf-8").splitlines():
-                if line.startswith("description:"):
-                    desc = line.split("description:", 1)[1].strip()
-                    break
-
-        if verified_only and not is_verified:
-            continue
-
-        # スクリプトの存在確認
-        scripts_dir = skill_path / "scripts"
-        script_file = None
-        if scripts_dir.exists():
-            py_files = list(scripts_dir.glob("*.py"))
-            if py_files:
-                script_file = str(py_files[0])
-
-        skills.append(
-            {
-                "name": skill_name,
-                "description": desc or "No description provided.",
-                "is_verified": is_verified,
-                "tags": tags,
-                "script_file": script_file,
-            }
-        )
-
-    return skills
+    harness = SkillHarness()
+    skills_info = []
+    for s in harness.skills:
+        skills_info.append({
+            "name": s.name,
+            "description": s.description.strip(),
+            "is_verified": True,
+            "allowed_tools": s.frontmatter.allowed_tools or "",
+        })
+    return skills_info
 
 
 def edd_execute_game_skill(
@@ -255,7 +210,7 @@ def edd_execute_game_skill(
     obs: list[list[int]],
     info: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """検証済みのゲーム行動ポリシーを実行し、次のアクション (Action) を取得.
+    """検証済みのゲーム行動ポリシーを実行し、次のアクション (Action) を取得 (SkillHarness 統合).
 
     Args:
         name: スキル識別名
@@ -265,35 +220,20 @@ def edd_execute_game_skill(
     Returns:
         実行結果辞書 (success: bool, action: str, error: str)
     """
-    from acr_agi3.game.env import Action
+    from acr_agi3.meta.skill_harness import SkillHarness
 
-    norm_name = name.strip().replace(" ", "-").replace("_", "-").lower()
-    script_base = name.strip().replace(" ", "_").replace("-", "_").lower()
-    target_dir = GENERATED_SKILLS_DIR / norm_name
-    if not target_dir.exists():
-        norm_name_under = name.strip().replace(" ", "_").lower()
-        target_dir = GENERATED_SKILLS_DIR / norm_name_under
-
-    script_file = target_dir / "scripts" / f"{script_base}.py"
-    if not script_file.exists():
-        # scripts ディレクトリ下の任意の py ファイルを探す
-        scripts = list((target_dir / "scripts").glob("*.py")) if target_dir.exists() else []
-        if scripts:
-            script_file = scripts[0]
-        else:
-            return {"success": False, "error": f"Skill script not found in {target_dir}"}
-
+    harness = SkillHarness()
     try:
-        code = script_file.read_text(encoding="utf-8")
-        local_scope: dict[str, Any] = {"np": np, "Action": Action}
-        exec(code, {"np": np, "Action": Action, "__builtins__": __builtins__}, local_scope)
+        mod = harness.get_skill_module(name)
+        if not hasattr(mod, "choose_action") and not hasattr(mod, "act"):
+            return {"success": False, "error": f"Module for skill '{name}' does not expose 'choose_action' or 'act'."}
 
-        if "choose_action" not in local_scope:
-            return {"success": False, "error": "Function 'choose_action' not defined in skill"}
-
+        fn = getattr(mod, "choose_action", None) or getattr(mod, "act", None)
         obs_arr = np.array(obs, dtype=int)
-        action_res = local_scope["choose_action"](obs_arr, info)
+        action_res = fn(obs_arr, info)
         action_name = action_res.name if hasattr(action_res, "name") else str(action_res)
         return {"success": True, "action": action_name}
     except Exception as e:
+        logger.error(f"Failed to execute skill '{name}': {e}", exc_info=True)
         return {"success": False, "error": str(e)}
+
