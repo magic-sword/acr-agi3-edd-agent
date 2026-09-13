@@ -38,20 +38,59 @@ ACR-AGI-3 は **「未知の動的ゲーム環境において、状態観測か�
 6. **マルチモーダル認識の優先活用**
    * ARC-AGI のタスクを解く際は、数値テキスト（`[[0, 1], ...]`）だけでなく、`src/acr_agi3/dsl/renderer.py` を用いて公式 10 色カラー画像にレンダリングし、視覚的ゲシュタルト（空間的対称性、閉領域、境界）を活用すること。
 
+7. **Google ADK 2.0 準拠「3段階 Progressive Disclosure（段階的開示）」の徹底**
+   * 単なる Python スクリプトの直接呼び出しや、プロンプトへの全量指示一括注入を行わないこと。
+   * **Level 1 (Metadata)**: `SKILL.md` の YAML Frontmatter カタログのみをコンテキストに常駐させ、極小トークンでスキルを俯瞰すること。
+   * **Level 2 (Instructions)**: エージェントが必要に応じてトリガーした時のみ、該当スキルの `SKILL.md` 本文（ワークフロー・思考プロトコル）をオンデマンド展開すること。
+   * **Level 3 (Execution)**: スキル配下の `scripts/` または許可されたツール（`allowed-tools`）をオンデマンド実行すること。
+   * スキルの管理・ロード・実行は必ず [`src/acr_agi3/meta/skill_harness.py`](file:///home/prog/work/kaggle/acr-agi3-edd-agent/src/acr_agi3/meta/skill_harness.py) の `SkillHarness` を経由すること。
+
+8. **EDD MCP ツール（`edd-agent`）によるスキル作成・静的検証の必須化**
+   * 新規スキルを作成・初期化する際は、必ず MCP ツール **`edd_init_skill`**（または `SkillScaffolder`）を用いて標準ディレクトリ構造（`SKILL.md`, `scripts/`, `tests/`）を生成すること。
+   * スキルを作成・編集した後は、必ず MCP ツール **`edd_validate_skill`** を実行し、Markdown-First / Progressive Disclosure 規約に対する **エラー 0 件・警告 0 件** を確認してからコミットすること。
+
+---
+
+## 🧩 Google ADK 準拠 3段階 Progressive Disclosure 設計思想
+
+```
+[Level 1: Metadata Catalog] (常駐: 低コンテキスト消費)
+  │  - name, description, inputs, outputs, allowed-tools を把握
+  ▼ 自律判定により必要なスキルをトリガー (Trigger)
+[Level 2: Instructions] (オンデマンド展開: SKILL.md 本文)
+  │  - ワークフロー、思考プロトコル、制約事項、入出力例の理解
+  ▼ ワークフローの各ステップを実行 (Execution)
+[Level 3: Tools & Scripts] (オンデマンド実行: scripts/ & Tools)
+     - env_observer.py, game_style_intuitor.py, contract_tester.py 等
+```
+
+### スキル作成・検証クイックリファレンス (MCP Tools)
+
+```bash
+# 1. 新規スキルの雛形作成 (MCP: edd_init_skill)
+call_mcp_tool(ServerName="edd-agent", ToolName="edd_init_skill", Arguments={"name": "new-skill-name", "path": "generated_skills"})
+
+# 2. スキルの規約静的検証 (MCP: edd_validate_skill)
+call_mcp_tool(ServerName="edd-agent", ToolName="edd_validate_skill", Arguments={"skill_dir": "meta_skills/env-observer"})
+```
+
 ---
 
 ## 📂 ディレクトリの役割と書き込み権限
 
 * **`meta_skills/` [編集対象・永続]**:
   * `env-observer/`: 環境不変量・対称性・因果関係の抽出メタスキル
+  * `game-style-intuitor/`: ゲームスタイル分類・探索方針策定メタスキル
+  * `subgoal-decomposer/`: サブゴール階層分解メタスキル
   * `skill-synthesizer/`: `SKILL.md` ＋ 契約テスト自動生成メタスキル
-  * `contract-tester/`: EDD 評価防壁ゲートメタスキル
+  * `contract-tester/`: EDD 評価防壁ゲート（正例3+負例3）メタスキル
   * `failure-diagnoser/`: テスト失敗診断・自己修復メタスキル
+  * `constraint-learner/`: 環境制約・禁忌状態学習メタスキル
 * **`generated_skills/` [実行時生成・Git除外]**:
   * メタスキルがタスク解決のために一時生成する具象スキル置き場
 * **`src/acr_agi3/` [コアエンジン]**:
-  * `meta/`: メタ認知オーケストレーター
-  * `agent/`: ローカル推論エージェント & VLM アダプター
+  * `meta/`: メタ認知オーケストレーター & `skill_harness.py`
+  * `agent/`: ローカル推論エージェント & VLM アダプター (`meta_agent.py`)
   * `dsl/`: 幾何プリミティブ & レンダラー
   * `submission/`: Kaggle 提出用バンドラー
 * **`data/human_vcgt/` [学習源]**:
