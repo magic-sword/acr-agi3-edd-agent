@@ -156,45 +156,41 @@ class MetaSkillDrivenAgent:
         logger.info(f"Task {task_id}: Loaded Level 1 Catalog with {len(self.harness.list_skills())} skills.")
 
         # ---------------------------------------------------------------------
-        # 2. Level 2 & 3: env-observer のオンデマンド実行
+        # 2. Level 2 & 3: visual-inspector のオンデマンド実行
         # ---------------------------------------------------------------------
         obs_res = self.harness.execute_skill_script(
-            skill_name="env-observer",
-            script_name="env_observer",
-            input_data={"grid": initial_obs.tolist() if isinstance(initial_obs, np.ndarray) else initial_obs},
+            skill_name="visual-inspector",
+            script_name="visual_inspector",
+            input_data={"grid": initial_obs.tolist() if isinstance(initial_obs, np.ndarray) else initial_obs, "step": 0},
         )
         aff_report = obs_res.get("result", {})
-
-        # ---------------------------------------------------------------------
-        # 3. Level 2 & 3: game-style-intuitor のオンデマンド実行
-        # ---------------------------------------------------------------------
-        style_res = self.harness.execute_skill_script(
-            skill_name="game-style-intuitor",
-            script_name="game_style_intuitor",
-            input_data={"grid": initial_obs.tolist() if isinstance(initial_obs, np.ndarray) else initial_obs},
-        )
-        style_report = style_res.get("result", {})
-        if isinstance(style_report, str):
+        if isinstance(aff_report, str):
             try:
-                style_report = json.loads(style_report)
+                aff_report = json.loads(aff_report)
             except Exception:
-                style_report = {}
+                aff_report = {}
 
         # ---------------------------------------------------------------------
-        # 4. Level 2 & 3: subgoal-decomposer のオンデマンド実行
+        # 3. Level 2 & 3: backward-planner のオンデマンド実行
         # ---------------------------------------------------------------------
         decomp_res = self.harness.execute_skill_script(
-            skill_name="subgoal-decomposer",
-            script_name="subgoal_decomposer",
-            input_data={"grid": initial_obs.tolist() if isinstance(initial_obs, np.ndarray) else initial_obs},
+            skill_name="backward-planner",
+            script_name="backward_planner",
+            input_data={"current": aff_report.get("current_sequence", [1]), "target": aff_report.get("target_sequence", [1])},
         )
         plan_dict = decomp_res.get("result", {})
+        if isinstance(plan_dict, str):
+            try:
+                plan_dict = json.loads(plan_dict)
+            except Exception:
+                plan_dict = {}
 
         logger.info(
-            f"Affordances: agent={aff_report.get('agent_pos')}, "
-            f"targets={len(aff_report.get('target_candidates', []))}, "
-            f"style={style_report.get('style', 'GENERAL')}"
+            f"Affordances: style={aff_report.get('style', 'CLOSED_MAZE')}, "
+            f"diff_type={aff_report.get('diff_type', 'UNKNOWN')}, "
+            f"subgoals={plan_dict.get('total_subgoals', len(plan_dict.get('subgoals', [])))}"
         )
+
 
         # 5. 検証済み具象スキルライブラリの取得
         verified_skills = edd_list_skills(verified_only=True)
@@ -208,7 +204,7 @@ class MetaSkillDrivenAgent:
         # 6. LLM プロンプト構築 (Level 1 カタログ + 構造化観測のみの低コンテキスト構成)
         base_prompt = (
             f"Solve ARC-AGI-3 dynamic game: {plan_dict.get('task_hint', 'task')}\n"
-            f"Game Style: {style_report.get('style', 'GENERAL')} - {style_report.get('recommended_approach', '')}\n"
+            f"Game Style: {aff_report.get('style', 'GENERAL')}\n"
             f"Grid Shape: {aff_report.get('grid_shape', [10, 10])}, Background: {aff_report.get('background_color', 0)}\n"
             f"Agent Pos: {aff_report.get('agent_pos')}\n"
             f"{catalog_summary}\n"

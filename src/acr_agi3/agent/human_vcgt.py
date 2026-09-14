@@ -10,7 +10,7 @@ from typing import Any
 from acr_agi3.meta.skill_harness import SkillHarness
 
 _harness = SkillHarness()
-_dec_mod = _harness.get_skill_module("subgoal-decomposer")
+_dec_mod = _harness.get_skill_module("backward-planner")
 DecompositionPlan = _dec_mod.DecompositionPlan
 Subgoal = _dec_mod.Subgoal
 

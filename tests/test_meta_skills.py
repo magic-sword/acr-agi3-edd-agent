@@ -8,22 +8,22 @@ from acr_agi3.agent.human_vcgt import VCGTDataset
 from acr_agi3.meta.skill_harness import SkillHarness
 
 _harness = SkillHarness()
-MetaObserver = _harness.get_skill_module("env-observer").MetaObserver
-SubgoalDecomposer = _harness.get_skill_module("subgoal-decomposer").SubgoalDecomposer
+MetaObserver = _harness.get_skill_module("visual-inspector").MetaObserver
+SubgoalDecomposer = _harness.get_skill_module("backward-planner").SubgoalDecomposer
 
 
 def test_meta_skills_spec_files_exist():
-    """meta_skills/ 配下の全メタスキル仕様書の存在確認."""
+    """meta_skills/ 配下の全メタスキル仕様書の存在確認 (6スキル直交体系)."""
     repo_root = Path(__file__).resolve().parent.parent
     meta_skills_dir = repo_root / "meta_skills"
 
     expected_meta_skills = [
-        "env-observer",
-        "skill-synthesizer",
+        "visual-inspector",
+        "epistemic-prober",
+        "backward-planner",
+        "taboo-reset-guard",
+        "macro-skill-compiler",
         "contract-tester",
-        "failure-diagnoser",
-        "subgoal-decomposer",
-        "constraint-learner",
     ]
 
     for ms_name in expected_meta_skills:
@@ -32,6 +32,51 @@ def test_meta_skills_spec_files_exist():
         content = skill_md.read_text(encoding="utf-8")
         assert content.startswith("---"), f"YAML frontmatter missing in {ms_name}"
         assert f"name: {ms_name}" in content
+
+
+def test_human_cognitive_meta_skills_via_harness():
+    """新設された5大人間問題解決メタスキルがSkillHarness経由で正しく動的解決できること."""
+    harness = SkillHarness()
+
+    # 1. visual-inspector
+    vi_mod = harness.get_skill_module("visual-inspector")
+    assert hasattr(vi_mod, "VisualInspector")
+    vi = vi_mod.VisualInspector()
+    res_vi = vi.inspect_board([[0, 1], [2, 0]], [1, 2], step_index=0)
+    assert res_vi["success"] is True
+    assert res_vi["pause_required"] is True
+
+    # 2. epistemic-prober
+    ep_mod = harness.get_skill_module("epistemic-prober")
+    assert hasattr(ep_mod, "EpistemicProber")
+    ep = ep_mod.EpistemicProber()
+    res_ep = ep.evaluate_and_propose_probe(step_index=1, available_actions=[1, 2], unexplored_affordances={"has_actuator_rail": True})
+    assert res_ep["success"] is True
+    assert res_ep["is_epistemic"] is True
+
+    # 3. backward-planner
+    bp_mod = harness.get_skill_module("backward-planner")
+    assert hasattr(bp_mod, "BackwardPlanner")
+    bp = bp_mod.BackwardPlanner()
+    res_bp = bp.plan_backward_subgoals([3, 2, 1], [1, 2, 3])
+    assert res_bp["success"] is True
+    assert res_bp["backward_chaining_applied"] is True
+
+    # 4. taboo-reset-guard
+    tr_mod = harness.get_skill_module("taboo-reset-guard")
+    assert hasattr(tr_mod, "TabooResetGuard")
+    tr = tr_mod.TabooResetGuard()
+    res_tr = tr.evaluate_state_and_failure([], consecutive_ineffective_actions=5)
+    assert res_tr["success"] is True
+    assert res_tr["is_reset_recommended"] is True
+
+    # 5. macro-skill-compiler
+    mc_mod = harness.get_skill_module("macro-skill-compiler")
+    assert hasattr(mc_mod, "MacroSkillCompiler")
+    mc = mc_mod.MacroSkillCompiler()
+    res_mc = mc.compile_macro_skill({"phase": "ISOLATE_AND_STAGE"})
+    assert res_mc["success"] is True
+
 
 
 def test_human_vcgt_loader_and_plan_conversion():

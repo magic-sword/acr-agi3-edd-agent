@@ -86,13 +86,12 @@ call_mcp_tool(ServerName="edd-agent", ToolName="edd_validate_skill", Arguments={
 ## 📂 ディレクトリの役割と書き込み権限
 
 * **`meta_skills/` [編集対象・永続]**:
-  * `env-observer/`: 環境不変量・対称性・因果関係の抽出メタスキル
-  * `game-style-intuitor/`: ゲームスタイル分類・探索方針策定メタスキル
-  * `subgoal-decomposer/`: サブゴール階層分解メタスキル
-  * `skill-synthesizer/`: `SKILL.md` ＋ 契約テスト自動生成メタスキル
-  * `contract-tester/`: EDD 評価防壁ゲート（正例3+負例3）メタスキル
-  * `failure-diagnoser/`: テスト失敗診断・自己修復メタスキル
-  * `constraint-learner/`: 環境制約・禁忌状態学習メタスキル
+  * `visual-inspector/`: [人間ノウハウ1] 統合視覚認識・目視点検 (Visual Inspection Pause) & ゲシュタルト差分・スタイル解析メタスキル（旧 env-observer, game-style-intuitor 統合）
+  * `epistemic-prober/`: [人間ノウハウ2] 仮説検証型アクティブ探索 & 認識論的プローブ行動メタスキル
+  * `backward-planner/`: [人間ノウハウ3] 逆算プランニング (Backward Chaining) & 待避バッファ階層分解メタスキル（旧 subgoal-decomposer 統合）
+  * `taboo-reset-guard/`: [人間ノウハウ4] 統合失敗診断・禁忌 (No-Go) 制約学習 & 能動的リセット判定メタスキル（旧 failure-diagnoser, constraint-learner 統合）
+  * `macro-skill-compiler/`: [人間ノウハウ5] 定石マクロスキル化 (Isolate-and-Stage 等) & 抽象転移合成メタスキル（旧 skill-synthesizer 統合）
+  * `contract-tester/`: EDD 評価防壁ゲート（正例3+負例3 契約テスト実行・合否判定）メタスキル
 * **`generated_skills/` [実行時生成・Git除外]**:
   * メタスキルがタスク解決のために一時生成する具象スキル置き場
 * **`src/acr_agi3/` [コアエンジン]**:

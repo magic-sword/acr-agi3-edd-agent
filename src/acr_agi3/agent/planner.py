@@ -24,11 +24,11 @@ class MetaSkillHarnessPlanner:
     def __init__(self, game_id: str = "") -> None:
         self.game_id = game_id
         self.harness = SkillHarness()
-        obs_mod = self.harness.get_skill_module("env-observer")
-        syn_mod = self.harness.get_skill_module("skill-synthesizer")
+        obs_mod = self.harness.get_skill_module("visual-inspector")
+        syn_mod = self.harness.get_skill_module("macro-skill-compiler")
         self.syn_mod = syn_mod
-        self.observer = obs_mod.MetaObserver()
-        self.synthesizer = syn_mod.MetaSkillSynthesizer()
+        self.observer = obs_mod.VisualInspector()
+        self.synthesizer = syn_mod.MacroSkillCompiler()
 
         self.step_index: int = 0
         self.last_action_id: Optional[int] = None
