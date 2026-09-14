@@ -141,5 +141,9 @@ class MyAgent(Agent):
         else:
             action.action_data = ActionDataWrapper({})
 
-        action.reasoning = {"strategy": decision.reasoning, "step": self.step_count}
+        action.reasoning = {
+            "strategy": decision.reasoning,
+            "step": self.step_count,
+            "loaded_skill": decision.loaded_skill,
+        }
         return action

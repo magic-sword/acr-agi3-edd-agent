@@ -20,6 +20,7 @@ class ActionDecision:
     action_id: int  # 0〜7
     coordinates: Optional[Dict[str, int]] = None  # {"x": c, "y": r}
     reasoning: str = ""
+    loaded_skill: Optional[str] = None
 
 
 class GameActionTools:

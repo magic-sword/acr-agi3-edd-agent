@@ -1,19 +1,18 @@
-"""Google ADK 2.0 準拠・ローカルLLM/VLM思考駆動型自律ゲームプレイエージェント (ADKGamePlayer).
+"""Google ADK 2.0 準拠・自律ワークフロー駆動型ゲームプレイエージェント (ADKGamePlayer).
 
-決定論的なプログラム実行ではなく、
-1. 視覚認識ハーネス (VisionObservationHarness) による公式10色カラー画像変換
-2. Google ADK 2.0 ネイティブ Agent / Runner による推論
-3. SkillToolset (Progressive Disclosure) によるメタスキル SKILL.md のオンデマンド読み込み
-4. GameActionTools (Function Calling) による自律的アクション・クリック決定
-を統合した本質的ゲームプレイエージェント。
+プロンプトへの禁則事項の肥大化を廃止し、Google ADK 2.0 の構造的ワークフロー
+（思考・計画: Planner -> 検証・審査: Reviewer -> 実行: GameController）
+によって質の高い自律的行動決定と自己改善ループを実現するエージェント。
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -22,9 +21,8 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai.types import Content, Part
 
-from pathlib import Path
-
 from acr_agi3.agent.llm.local_vlm import LocalQwenVL
+from acr_agi3.agent.workflow_schemas import PlanProposal, ReviewFeedback
 from acr_agi3.harness.game_action_tools import ActionDecision, GameActionTools
 from acr_agi3.harness.vision_observation import VisionObservationHarness, normalize_grid
 from acr_agi3.meta.skill_harness import SkillHarness
@@ -62,7 +60,7 @@ except ImportError:
 
 
 class ADKGamePlayer:
-    """Google ADK 2.0 ネイティブ・マルチモーダル自律ゲームプレイエージェント."""
+    """Google ADK 2.0 準拠・Plan-Review-Act ワークフロー自律ゲームプレイエージェント."""
 
     def __init__(
         self,
@@ -75,58 +73,78 @@ class ADKGamePlayer:
         self.app_name = app_name
         self.model = model or LocalQwenVL(model_name_or_path="auto")
 
-        # 1. 視覚認識ハーネス & ゲーム操作ツール
+        # 1. 視覚認識ハーネス & 操作ツール
         self.vision_harness = VisionObservationHarness(cell_size=cell_size)
         self.action_tools = GameActionTools()
 
-        # 2. ADK 2.0 公式 SkillToolset (meta_skills/ の Progressive Disclosure)
+        # 2. ADK 2.0 公式 SkillToolset (Progressive Disclosure)
         self.skill_harness = SkillHarness()
         self.skill_toolset = self.skill_harness.get_toolset()
 
-        # 3. エピソード記憶マネージャー (Transcript からの因果蒸留 & Working Memory 保持)
+        # 3. エピソード記憶マネージャー (Transcript からの因果蒸留 & Working Memory)
         self.memory = EpisodicMemoryManager(capacity=100) if EpisodicMemoryManager else None
 
-        # 4. エージェントのツール群 (操作ツール + メタスキルツールセット)
-        self.tools = [
-            *self.action_tools.get_tools(),
-            self.skill_toolset,
-        ]
-
-        # 5. ADK 2.0 Agent 指示書 (5-Step 自律ワークフロー規約)
-        instruction = (
-            "You are an elite autonomous agent playing ARC-AGI-3 dynamic games.\n"
-            "Your goal is to inspect the visual board, reason about rules and affordances, and choose the optimal action.\n\n"
-            "=== 5-STEP AUTONOMOUS WORKFLOW ===\n"
-            "1. [OBSERVE]: Inspect the latest color grid image and identify key entities (player, goal, obstacles).\n"
-            "2. [RECALL]: Review Working Memory (provided in user prompt) to check past action outcomes and avoid repeated mistakes.\n"
-            "3. [PLAN]: Formulate an immediate subgoal. If complex, load an expert meta-skill (e.g. `visual-inspector`, `backward-planner`).\n"
-            "4. [ACT]: Execute your chosen action following the `game-controller` JSON protocol.\n"
-            "5. [REFLECT]: The environment will measure pixel diffs to update your episodic memory automatically.\n\n"
-            "=== GAME OPERATION (game-controller protocol) ===\n"
-            "You operate the game by outputting a single valid JSON block:\n"
-            "  1. Movement (UP, DOWN, LEFT, RIGHT, ACTION1-7):\n"
-            '     ```json\n     {"action": "UP", "reasoning": "Move toward active target"}\n     ```\n'
-            "  2. Coordinate Click (for clicking on grid):\n"
-            '     ```json\n     {"action": "click_at", "x": 10, "y": 5, "reasoning": "Click interactive object"}\n     ```\n'
-            "  3. Reset (if deadlocked or trapped):\n"
-            '     ```json\n     {"action": "RESET", "reasoning": "No valid paths remaining"}\n     ```\n\n'
-            "=== CONSULTING META-SKILLS ON DEMAND ===\n"
-            "If you need strategic analysis, you can load a meta-skill first:\n"
-            '     ```json\n     {"action": "load_skill", "skill_name": "visual-inspector"}\n     ```\n'
-            "Available meta-skills: `visual-inspector`, `episodic-memory`, `epistemic-prober`, `backward-planner`, `taboo-reset-guard`, `macro-skill-compiler`.\n"
+        # 4. Google ADK 2.0 Planner Agent (思考・計画立案者)
+        planner_instruction = (
+            "You are the Chief Strategist and Planning Agent playing ARC-AGI-3 dynamic games.\n"
+            "Your goal is to inspect the current visual observation and Working Memory, formulate a hypothesis about game mechanics, and propose a concrete action plan.\n\n"
+            "=== 2-STEP COGNITIVE PLANNING PROTOCOL ===\n"
+            "1. Analyze visual entities (player, targets, obstacles, colors) and past step outcomes.\n"
+            "2. Output your plan as a structured JSON object:\n"
+            "```json\n"
+            "{\n"
+            '  "hypothesis": "What the board state means (e.g. red square is player, gold star is goal)",\n'
+            '  "goal": "Immediate objective (e.g. move toward gold star, click the blue tile)",\n'
+            '  "action": "UP" | "DOWN" | "LEFT" | "RIGHT" | "click_at" | "RESET" | "ACTION1"..."ACTION7",\n'
+            '  "coordinates": {"x": 5, "y": 8}, // REQUIRED if action is click_at or ACTION6! (x=col, y=row)\n'
+            '  "reasoning": "Logical reason why this action advances your goal"\n'
+            "}\n"
+            "```\n"
+            "If you need strategic guidance from an expert skill, include `\"load_skill\": \"visual-inspector\"` or `\"backward-planner\"`.\n"
+        )
+        self.planner_agent = Agent(
+            name=f"{self.name}_planner",
+            model=self.model,
+            tools=[self.skill_toolset],
+            instruction=planner_instruction,
         )
 
-        self.adk_agent = Agent(
-            name=self.name,
+        # 5. Google ADK 2.0 Reviewer Agent (計画レビュー・審査者)
+        reviewer_instruction = (
+            "You are the Senior Game Reviewer and Quality Gatekeeper for ARC-AGI-3 gameplay.\n"
+            "Your role is to rigorously review the Planner's proposed action plan before execution.\n\n"
+            "=== 3-POINT OBJECTIVE QUALITY AUDIT ===\n"
+            "1. SPECIFICITY: If action is `click_at` or `ACTION6`, are valid numeric coordinates {\"x\": col, \"y\": row} provided? If missing, mark REVISE or provide refined coordinates.\n"
+            "2. REFLECTIVE: Does this action repeat an action that was just marked as INEFFECTIVE or barrier hit in Working Memory without justification?\n"
+            "3. INTENTIONALITY: Does the reasoning clearly explain how this action advances the hypothesis or goal, avoiding mechanical repetitive cycling?\n\n"
+            "Output your audit result as a structured JSON object:\n"
+            "```json\n"
+            "{\n"
+            '  "status": "APPROVED" | "REVISE",\n'
+            '  "critique": "Brief explanation of whether the plan is sound or flawed",\n'
+            '  "suggested_fix": "If REVISE, explicit instructions on what to change (e.g. specify click coordinates, try a different direction)",\n'
+            '  "refined_action": "Optional fallback action name if easily corrected",\n'
+            '  "refined_coordinates": {"x": col, "y": row} // Optional fallback coordinates\n'
+            "}\n"
+            "```\n"
+        )
+        self.reviewer_agent = Agent(
+            name=f"{self.name}_reviewer",
             model=self.model,
-            tools=self.tools,
-            instruction=instruction,
+            tools=[],
+            instruction=reviewer_instruction,
         )
 
         self.session_service = InMemorySessionService()
-        self.runner = Runner(
-            agent=self.adk_agent,
-            app_name=self.app_name,
+        self.planner_runner = Runner(
+            agent=self.planner_agent,
+            app_name=f"{self.app_name}_planner",
+            session_service=self.session_service,
+            auto_create_session=True,
+        )
+        self.reviewer_runner = Runner(
+            agent=self.reviewer_agent,
+            app_name=f"{self.app_name}_reviewer",
             session_service=self.session_service,
             auto_create_session=True,
         )
@@ -134,7 +152,8 @@ class ADKGamePlayer:
         self.step_index = 0
         self.last_grid: Optional[np.ndarray] = None
         self.last_action_info: Optional[Dict[str, Any]] = None
-        self.session_id: Optional[str] = None
+        self.planner_session_id: Optional[str] = None
+        self.reviewer_session_id: Optional[str] = None
 
     def reset(self) -> None:
         """エージェントの状態とセッションを初期化."""
@@ -145,7 +164,8 @@ class ADKGamePlayer:
         self.action_tools.history.clear()
         if self.memory:
             self.memory.clear()
-        self.session_id = None
+        self.planner_session_id = None
+        self.reviewer_session_id = None
 
     def decide_next_action(
         self,
@@ -153,7 +173,7 @@ class ADKGamePlayer:
         available_actions: Optional[List[int]] = None,
         state_str: str = "NOT_FINISHED",
     ) -> ActionDecision:
-        """現在の観測フレームから、LLM の思考・ツール呼び出しを経て次のアクションを決定."""
+        """ADK 2.0 Plan-Review-Act ワークフローを経て次のアクションを決定."""
         self.step_index += 1
         arr = normalize_grid(grid)
 
@@ -165,7 +185,7 @@ class ADKGamePlayer:
             pixels_changed = int(np.sum(diff_mask))
             is_effective = (pixels_changed > 0)
 
-        # Phase 5: 直前ステップの結果をエピソード記憶に登録（自己反省・因果更新）
+        # 直前ステップの結果をエピソード記憶に登録（自己反省・因果更新）
         if self.last_action_info is not None and self.memory is not None:
             self.memory.record_step(
                 step_index=self.step_index - 1,
@@ -191,7 +211,7 @@ class ADKGamePlayer:
             last_action_info=self.last_action_info,
         )
 
-        # Phase 2: Working Memory 要約の注入 (Phase 2: RECALL)
+        memory_summary = ""
         if self.memory is not None:
             memory_summary = self.memory.get_working_memory_summary(max_recent=4)
             parts.append(Part.from_text(text=f"\n=== [RECALL: Working Memory Context] ===\n{memory_summary}\n"))
@@ -204,11 +224,18 @@ class ADKGamePlayer:
             asyncio.set_event_loop(loop)
 
         if loop.is_running():
-            # 既存のイベントループ内での安全な実行
             import nest_asyncio
             nest_asyncio.apply()
 
-        decision = loop.run_until_complete(self._run_adk_cycle(parts, avail_ids))
+        decision = loop.run_until_complete(
+            self._run_plan_review_act_workflow(
+                obs_parts=parts,
+                available_action_ids=avail_ids,
+                avail_names=avail_names,
+                memory_summary=memory_summary,
+                grid_shape=arr.shape[:2],
+            )
+        )
         self.last_grid = arr.copy()
         self.last_action_info = {
             "action": decision.action_name,
@@ -218,51 +245,159 @@ class ADKGamePlayer:
         }
         return decision
 
-    async def _run_adk_cycle(self, parts: List[Part], available_action_ids: List[int]) -> ActionDecision:
-        """ADK Runner を呼び出し、LLM による推論と Function Calling を実行."""
-        user_id = "arc_player_user"
-        if not self.session_id:
-            session = await self.session_service.create_session(
-                app_name=self.app_name,
-                user_id=user_id,
-            )
-            self.session_id = session.id
-        else:
-            # 過去イベントから画像バイナリをアーカイブし、VRAM の累積肥大化 (OOM) を防止
-            # テキスト履歴（推論ログ・アクション）はすべて保持
-            session = await self.session_service.get_session(
-                app_name=self.app_name,
-                user_id=user_id,
-                session_id=self.session_id,
-            )
-            if session and getattr(session, "events", None):
-                for ev in session.events:
-                    if hasattr(ev, "content") and ev.content:
-                        for p in getattr(ev.content, "parts", []):
-                            if hasattr(p, "inline_data") and p.inline_data:
-                                p.inline_data = None
-                                p.text = "[Previous Visual Frame archived]"
+    async def _run_plan_review_act_workflow(
+        self,
+        obs_parts: List[Part],
+        available_action_ids: List[int],
+        avail_names: List[str],
+        memory_summary: str,
+        grid_shape: Tuple[int, int],
+    ) -> ActionDecision:
+        """Planner -> Reviewer -> Act の 3 フェーズ自律協調ワークフロー."""
+        user_id = "arc_workflow_user"
 
-        content = Content(role="user", parts=parts)
-        events = self.runner.run_async(
-            session_id=self.session_id,
+        # 1. セッション初期化および画像アーカイブ（VRAM OOM 防止）
+        if not self.planner_session_id:
+            s_plan = await self.session_service.create_session(
+                app_name=f"{self.app_name}_planner", user_id=user_id
+            )
+            self.planner_session_id = s_plan.id
+        else:
+            await self._archive_session_images(f"{self.app_name}_planner", self.planner_session_id, user_id)
+
+        if not self.reviewer_session_id:
+            s_rev = await self.session_service.create_session(
+                app_name=f"{self.app_name}_reviewer", user_id=user_id
+            )
+            self.reviewer_session_id = s_rev.id
+        else:
+            await self._archive_session_images(f"{self.app_name}_reviewer", self.reviewer_session_id, user_id)
+
+        # -------------------------------------------------------------
+        # Phase 1: Planning (思考・仮説・行動計画の立案)
+        # -------------------------------------------------------------
+        plan_content = Content(role="user", parts=obs_parts)
+        planner_events = self.planner_runner.run_async(
+            session_id=self.planner_session_id,
             user_id=user_id,
-            new_message=content,
+            new_message=plan_content,
         )
 
-        response_text = ""
-        async for event in events:
-            if hasattr(event, "content") and event.content:
-                for p in getattr(event.content, "parts", []):
+        plan_raw_text = ""
+        async for ev in planner_events:
+            if hasattr(ev, "content") and ev.content:
+                for p in getattr(ev.content, "parts", []):
                     if hasattr(p, "text") and p.text:
-                        response_text += p.text
-                    if hasattr(p, "function_call") and p.function_call:
-                        logger.info(f"Detected function_call part: {p.function_call.name}({p.function_call.args})")
+                        plan_raw_text += p.text
 
-        logger.info(f"Step {self.step_index} accumulated response_text: {response_text!r}")
-        logger.info(f"Step {self.step_index} pending_decision: {self.action_tools.pending_decision}")
+        logger.info(f"Step {self.step_index} [Phase 1: Planner] raw text: {plan_raw_text!r}")
+        proposal = PlanProposal.from_text(plan_raw_text)
 
-        # 推論終了後の VRAM クリーンアップ
+        # Progressive Disclosure: メタスキルが要求された場合の展開
+        triggered_skill = proposal.load_skill
+        if triggered_skill:
+            logger.info(f"Step {self.step_index} [Phase 1: Progressive Disclosure] Expanding skill: {triggered_skill}")
+            try:
+                skill_content = self.skill_harness.read_skill_content(triggered_skill)
+                skill_prompt = (
+                    f"Expert meta-skill `{triggered_skill}` instructions loaded:\n"
+                    f"```markdown\n{skill_content[:1500]}\n```\n\n"
+                    f"Now provide your finalized plan JSON according to the planning protocol:"
+                )
+                skill_events = self.planner_runner.run_async(
+                    session_id=self.planner_session_id,
+                    user_id=user_id,
+                    new_message=Content(role="user", parts=[Part.from_text(text=skill_prompt)]),
+                )
+                plan_raw_text = ""
+                async for ev in skill_events:
+                    if hasattr(ev, "content") and ev.content:
+                        for p in getattr(ev.content, "parts", []):
+                            if hasattr(p, "text") and p.text:
+                                plan_raw_text += p.text
+                proposal = PlanProposal.from_text(plan_raw_text)
+                proposal.load_skill = triggered_skill
+            except Exception as e:
+                logger.warning(f"Failed to expand skill {triggered_skill}: {e}")
+
+        # -------------------------------------------------------------
+        # Phase 2: Review (計画の客観的検証・レビュー)
+        # -------------------------------------------------------------
+        review_prompt = (
+            f"=== [PLAN REVIEW REQUEST for Step {self.step_index}] ===\n"
+            f"Available Actions: {avail_names} ({available_action_ids})\n"
+            f"Grid Shape: {grid_shape[0]} rows x {grid_shape[1]} cols\n"
+            f"Working Memory:\n{memory_summary or 'No previous actions.'}\n\n"
+            f"Planner's Proposed Plan:\n"
+            f"```json\n{json.dumps(proposal.to_dict(), indent=2)}\n```\n\n"
+            f"Perform the 3-point audit. If action is click/ACTION6 without valid coordinates, "
+            f"or repeats a proven ineffective action, mark REVISE and provide specific fixes."
+        )
+        review_content = Content(role="user", parts=[Part.from_text(text=review_prompt)])
+        reviewer_events = self.reviewer_runner.run_async(
+            session_id=self.reviewer_session_id,
+            user_id=user_id,
+            new_message=review_content,
+        )
+
+        review_raw_text = ""
+        async for ev in reviewer_events:
+            if hasattr(ev, "content") and ev.content:
+                for p in getattr(ev.content, "parts", []):
+                    if hasattr(p, "text") and p.text:
+                        review_raw_text += p.text
+
+        logger.info(f"Step {self.step_index} [Phase 2: Reviewer] raw text: {review_raw_text!r}")
+        review = ReviewFeedback.from_text(review_raw_text)
+
+        # -------------------------------------------------------------
+        # Phase 3: Revision Loop (不合格時の修正)
+        # -------------------------------------------------------------
+        if not review.is_approved:
+            logger.info(f"Step {self.step_index} [Phase 3: Revision Required] Critique: {review.critique}")
+            revise_prompt = (
+                f"Your proposed plan was REVISED by the Quality Reviewer:\n"
+                f"Critique: {review.critique}\n"
+                f"Suggested Fix: {review.suggested_fix or 'Provide valid coordinates or select an alternative productive action.'}\n\n"
+                f"Please produce an updated, corrected plan JSON now:"
+            )
+            revise_events = self.planner_runner.run_async(
+                session_id=self.planner_session_id,
+                user_id=user_id,
+                new_message=Content(role="user", parts=[Part.from_text(text=revise_prompt)]),
+            )
+            revised_text = ""
+            async for ev in revise_events:
+                if hasattr(ev, "content") and ev.content:
+                    for p in getattr(ev.content, "parts", []):
+                        if hasattr(p, "text") and p.text:
+                            revised_text += p.text
+
+            logger.info(f"Step {self.step_index} [Phase 3: Revised Plan] text: {revised_text!r}")
+            proposal = PlanProposal.from_text(revised_text)
+
+        # Reviewer からの直接オーバーライド補正（座標やアクション）があれば適用
+        chosen_action = review.refined_action or proposal.action
+        chosen_coords = review.refined_coordinates or proposal.coordinates
+
+        # -------------------------------------------------------------
+        # Phase 4: Act (GameController による確定行動の検証と実行)
+        # -------------------------------------------------------------
+        logger.info(
+            f"Step {self.step_index} [Phase 4: Act] Final Action: {chosen_action}, "
+            f"Coords: {chosen_coords}, Hypothesis: {proposal.hypothesis!r}"
+        )
+
+        decision = self._convert_to_decision(
+            action_str=chosen_action,
+            coordinates=chosen_coords,
+            reasoning=f"[{proposal.goal}] {proposal.reasoning or proposal.hypothesis}",
+            available_action_ids=available_action_ids,
+            grid_shape=grid_shape,
+            loaded_skill=proposal.load_skill,
+        )
+
+        # VRAM キャッシュ解放
         try:
             import torch
             if torch.cuda.is_available():
@@ -270,101 +405,94 @@ class ADKGamePlayer:
         except Exception:
             pass
 
-        # 1. ツール呼び出し（Function Call）によって pending_decision がセットされた場合
-        if self.action_tools.pending_decision is not None:
-            decision = self.action_tools.pending_decision
-            self.action_tools.pending_decision = None
-            return decision
+        return decision
 
-        # 2. モデルが load_skill を要求した場合、Progressive Disclosure (Level 2 Instructions 展開)
-        import json
-        skill_to_load = None
-        json_match = re.search(r"\{[^{}]*\}", response_text)
-        if json_match:
-            try:
-                data = json.loads(json_match.group(0))
-                if data.get("action") == "load_skill" and "skill_name" in data:
-                    skill_to_load = data["skill_name"]
-            except Exception:
-                pass
-
-        if skill_to_load:
-            logger.info(f"[Progressive Disclosure] Agent requested meta-skill: {skill_to_load}")
-            try:
-                skill_content = self.skill_harness.read_skill_content(skill_to_load)
-                # スキルの Level 2 Instructions を提供し、ゲーム操作の決定を即座に促す
-                followup_prompt = (
-                    f"Successfully loaded expert meta-skill `{skill_to_load}` instructions:\n"
-                    f"```markdown\n{skill_content[:1500]}\n```\n\n"
-                    f"Now, based on the above skill and available actions {available_action_ids}, "
-                    f"execute your immediate game action following game-controller protocol:\n"
-                    f'```json\n{{"action": "UP" (or DOWN, LEFT, RIGHT, click_at, RESET), "reasoning": "..."}}\n```'
-                )
-                followup_content = Content(role="user", parts=[Part.from_text(text=followup_prompt)])
-                followup_events = self.runner.run_async(
-                    session_id=self.session_id,
-                    user_id=user_id,
-                    new_message=followup_content,
-                )
-                response_text = ""
-                async for event in followup_events:
-                    if hasattr(event, "content") and event.content:
-                        for p in getattr(event.content, "parts", []):
-                            if hasattr(p, "text") and p.text:
-                                response_text += p.text
-
-                logger.info(f"Step {self.step_index} post-skill response_text: {response_text!r}")
-            except Exception as e:
-                logger.warning(f"Failed to expand skill {skill_to_load}: {e}")
-
-        # 3. ツールが直接呼ばれなかった場合：LLM の応答テキストからアクションを安全にパース
-        return self._fallback_parse_decision(response_text, available_action_ids)
-
-    def _fallback_parse_decision(self, text: str, available_action_ids: List[int]) -> ActionDecision:
-        logger.info(f"[_fallback_parse_decision] text length: {len(text)}, repr: {text!r}")
+    def _convert_to_decision(
+        self,
+        action_str: str,
+        coordinates: Optional[Dict[str, int]],
+        reasoning: str,
+        available_action_ids: List[int],
+        grid_shape: Tuple[int, int],
+        loaded_skill: Optional[str] = None,
+    ) -> ActionDecision:
+        """計画内容を GameController を用いて安全に ActionDecision へ変換."""
+        h, w = grid_shape
         if GameController is not None:
             controller = GameController(available_actions=available_action_ids)
-            h, w = (self.last_grid.shape[0], self.last_grid.shape[1]) if self.last_grid is not None else (30, 30)
-            res = controller.parse_and_validate(text, available_actions=available_action_ids, grid_shape=(h, w))
-            logger.info(f"[_fallback_parse_decision] GameController result: {res}")
-            if res["success"]:
+            # JSON 形式の文字列に変換して GameController の厳格バリデーションへ渡す
+            payload: Dict[str, Any] = {"action": action_str, "reasoning": reasoning}
+            if coordinates and "x" in coordinates and "y" in coordinates:
+                payload["x"] = coordinates["x"]
+                payload["y"] = coordinates["y"]
+
+            validation = controller.parse_and_validate(
+                json.dumps(payload),
+                available_actions=available_action_ids,
+                grid_shape=(h, w),
+            )
+            if validation["success"]:
                 return ActionDecision(
-                    action_type=res["action_type"],
-                    action_name=res["action_name"],
-                    action_id=res["action_id"],
-                    coordinates=res["coordinates"],
-                    reasoning=res["reasoning"],
+                    action_type=validation["action_type"],
+                    action_name=validation["action_name"],
+                    action_id=validation["action_id"],
+                    coordinates=validation["coordinates"],
+                    reasoning=validation["reasoning"],
+                    loaded_skill=loaded_skill,
                 )
-        else:
-            logger.warning("[_fallback_parse_decision] GameController is None!")
 
-        # GameController 未初期化または解析失敗時のセーフティフォールバック
-        text_upper = text.upper()
-        action_candidates = [
-            ("RESET", 0),
-            ("ACTION1", 1), ("UP", 1),
-            ("ACTION2", 2), ("DOWN", 2),
-            ("ACTION3", 3), ("LEFT", 3),
-            ("ACTION4", 4), ("RIGHT", 4),
-            ("ACTION5", 5),
-            ("ACTION6", 6),
-            ("ACTION7", 7),
-        ]
-        for name, aid in action_candidates:
-            if re.search(rf"\b{name}\b", text_upper):
-                if aid in available_action_ids or aid == 0:
+        # フォールバック安全処理
+        act_upper = action_str.upper()
+        name_map = {
+            "RESET": 0,
+            "ACTION1": 1, "UP": 1,
+            "ACTION2": 2, "DOWN": 2,
+            "ACTION3": 3, "LEFT": 3,
+            "ACTION4": 4, "RIGHT": 4,
+            "ACTION5": 5,
+            "ACTION6": 6, "CLICK": 6, "CLICK_AT": 6,
+            "ACTION7": 7,
+        }
+        for k, aid in name_map.items():
+            if k in act_upper:
+                if aid == 6:
+                    coords = coordinates or {"x": w // 2, "y": h // 2}
                     return ActionDecision(
-                        action_type="STEP" if aid != 0 else "RESET",
-                        action_name=name,
-                        action_id=aid,
-                        reasoning=f"Extracted from LLM text: {name}",
+                        action_type="CLICK",
+                        action_name="ACTION6",
+                        action_id=6,
+                        coordinates=coords,
+                        reasoning=reasoning,
+                        loaded_skill=loaded_skill,
                     )
+                return ActionDecision(
+                    action_type="STEP" if aid != 0 else "RESET",
+                    action_name=f"ACTION{aid}" if aid != 0 else "RESET",
+                    action_id=aid,
+                    coordinates=None,
+                    reasoning=reasoning,
+                    loaded_skill=loaded_skill,
+                )
 
-        # 最終デフォルト
         default_id = available_action_ids[0] if available_action_ids else 1
         return ActionDecision(
             action_type="STEP",
             action_name=f"ACTION{default_id}",
             action_id=default_id,
-            reasoning="Default action when unparseable",
+            coordinates=None,
+            reasoning=f"Fallback default action: {reasoning}",
+            loaded_skill=loaded_skill,
         )
+
+    async def _archive_session_images(self, app_name: str, session_id: str, user_id: str) -> None:
+        """セッション内の過去フレーム画像をテキストマーカーに置き換え VRAM 累積を防止."""
+        session = await self.session_service.get_session(
+            app_name=app_name, user_id=user_id, session_id=session_id
+        )
+        if session and getattr(session, "events", None):
+            for ev in session.events:
+                if hasattr(ev, "content") and ev.content:
+                    for p in getattr(ev.content, "parts", []):
+                        if hasattr(p, "inline_data") and p.inline_data:
+                            p.inline_data = None
+                            p.text = "[Previous Visual Frame archived]"
