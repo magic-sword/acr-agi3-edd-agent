@@ -16,11 +16,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+from google.adk import Context
 from google.adk.agents import Agent
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai.types import Content, Part
+from unittest.mock import MagicMock
 
+from acr_agi3.agent.cognitive_workflow import CognitiveState, assess_cognitive_state
 from acr_agi3.agent.llm.local_vlm import LocalQwenVL
 from acr_agi3.agent.workflow_schemas import PlanProposal, ReviewFeedback
 from acr_agi3.harness.game_action_tools import ActionDecision, GameActionTools
@@ -152,6 +155,7 @@ class ADKGamePlayer:
         )
 
         self.step_index = 0
+        self.stagnation_count = 0
         self.last_grid: Optional[np.ndarray] = None
         self.last_action_info: Optional[Dict[str, Any]] = None
         self.planner_session_id: Optional[str] = None
@@ -160,6 +164,7 @@ class ADKGamePlayer:
     def reset(self) -> None:
         """エージェントの状態とセッションを初期化."""
         self.step_index = 0
+        self.stagnation_count = 0
         self.last_grid = None
         self.last_action_info = None
         self.action_tools.pending_decision = None
@@ -186,6 +191,15 @@ class ADKGamePlayer:
             diff_mask = (self.last_grid != arr)
             pixels_changed = int(np.sum(diff_mask))
             is_effective = (pixels_changed > 0)
+
+        # 停滞カウントの更新 (無変化が連続した場合にインクリメント)
+        if self.last_action_info is not None:
+            if pixels_changed == 0:
+                self.stagnation_count += 1
+            else:
+                self.stagnation_count = 0
+        else:
+            self.stagnation_count = 0
 
         # 直前ステップの結果をエピソード記憶に登録（自己反省・因果更新）
         if self.last_action_info is not None and self.memory is not None:
@@ -218,6 +232,30 @@ class ADKGamePlayer:
             memory_summary = self.memory.get_working_memory_summary(max_recent=4)
             parts.append(Part.from_text(text=f"\n=== [RECALL: Working Memory Context] ===\n{memory_summary}\n"))
 
+        # ADK 2.0 認知グラフワークフローによる状況評価とメタスキルルーティング
+        cog_state = CognitiveState(
+            step=self.step_index,
+            observation=arr,
+            working_memory=memory_summary,
+            stagnation_count=self.stagnation_count,
+        )
+        dummy_ctx = MagicMock(spec=Context)
+        assess_cognitive_state(dummy_ctx, cog_state)
+        active_skill = cog_state.selected_skill or "visual-inspector"
+
+        skill_obj = self.skill_harness.get_skill(active_skill)
+        skill_desc = getattr(skill_obj, "description", "") if skill_obj else ""
+        parts.append(
+            Part.from_text(
+                text=(
+                    f"\n=== [ADK 2.0 COGNITIVE GRAPH: ACTIVE META-SKILL '{active_skill}'] ===\n"
+                    f"Cognitive Mode: {cog_state.cognitive_mode.upper()}\n"
+                    f"Description: {skill_desc}\n"
+                    f"Directive: Align your hypothesis, goal, and action plan with the '{active_skill}' protocol.\n"
+                )
+            )
+        )
+
         # 非同期 Runner を同期実行
         try:
             loop = asyncio.get_event_loop_policy().get_event_loop()
@@ -236,6 +274,7 @@ class ADKGamePlayer:
                 avail_names=avail_names,
                 memory_summary=memory_summary,
                 grid_shape=arr.shape[:2],
+                active_skill=active_skill,
             )
         )
         self.last_grid = arr.copy()
@@ -254,6 +293,7 @@ class ADKGamePlayer:
         avail_names: List[str],
         memory_summary: str,
         grid_shape: Tuple[int, int],
+        active_skill: Optional[str] = None,
     ) -> ActionDecision:
         """Planner -> Reviewer -> Act の 3 フェーズ自律協調ワークフロー."""
         user_id = "arc_workflow_user"
@@ -395,13 +435,19 @@ class ADKGamePlayer:
             f"Coords: {chosen_coords}, Hypothesis: {proposal.hypothesis!r}"
         )
 
+        # 認知ワークフローで選定されたメタスキルを反映 (明示指定された場合はそれを尊重)
+        if proposal.load_skill_explicit:
+            final_skill = proposal.load_skill
+        else:
+            final_skill = proposal.load_skill or active_skill
+
         decision = self._convert_to_decision(
             action_str=chosen_action,
             coordinates=chosen_coords,
             reasoning=f"[{proposal.goal}] {proposal.reasoning or proposal.hypothesis}",
             available_action_ids=available_action_ids,
             grid_shape=grid_shape,
-            loaded_skill=proposal.load_skill,
+            loaded_skill=final_skill,
         )
 
         # VRAM キャッシュ解放

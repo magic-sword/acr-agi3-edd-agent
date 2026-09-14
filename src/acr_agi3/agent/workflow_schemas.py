@@ -22,6 +22,7 @@ class PlanProposal:
     coordinates: Optional[Dict[str, int]] = None
     reasoning: str = ""
     load_skill: Optional[str] = None
+    load_skill_explicit: bool = False
     raw_text: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
@@ -60,13 +61,19 @@ class PlanProposal:
                         elif "x" in data and "y" in data:
                             coords = {"x": int(data["x"]), "y": int(data["y"])}
 
+                        has_skill_key = ("load_skill" in data) or ("skill_name" in data)
+                        skill_val = data.get("load_skill") or data.get("skill_name")
+                        if isinstance(skill_val, str) and skill_val.lower() in ("none", "null", ""):
+                            skill_val = None
+
                         return cls(
                             hypothesis=str(data.get("hypothesis", "")),
                             goal=str(data.get("goal", "")),
                             action=str(data.get("action", "")).strip(),
                             coordinates=coords,
                             reasoning=str(data.get("reasoning", "")),
-                            load_skill=data.get("load_skill") or data.get("skill_name"),
+                            load_skill=skill_val,
+                            load_skill_explicit=has_skill_key,
                             raw_text=clean_text,
                         )
                 except Exception:
