@@ -241,7 +241,8 @@ def evaluate_single_environment(
             print(
                 f"    [Step {steps:02d}] {act_label:<7}{coords:<15} | Eff: {eff_sym} | "
                 f"ΔPixels: {diff_count:3d} | Level: {res.levels_completed}/{res.win_levels} | "
-                f"State: {str(res.state).replace('GameState.', '')} ({time_taken_ms:.1f}ms){strat_str}"
+                f"State: {str(res.state).replace('GameState.', '')} ({time_taken_ms:.1f}ms){strat_str}",
+                flush=True
             )
 
         steps += 1
@@ -292,6 +293,11 @@ def main():
     parser.add_argument("-g", "--game-id", type=str, default=None, help="特定のゲーム ID (例: tu93, ft09)")
     parser.add_argument("-v", "--verbose", action="store_true", help="ステップごとの詳細ログを表示")
     args = parser.parse_args()
+    import logging
+    if args.verbose:
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    else:
+        logging.basicConfig(level=logging.WARNING)
 
     envs_dir = resolve_environments_dir()
     arcade = Arcade(environments_dir=envs_dir)

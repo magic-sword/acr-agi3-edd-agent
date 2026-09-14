@@ -41,7 +41,7 @@ class VisionObservationHarness:
         9: "Maroon (9)",
     }
 
-    def __init__(self, cell_size: int = 24) -> None:
+    def __init__(self, cell_size: int = 12) -> None:
         self.cell_size = cell_size
 
     def create_observation_parts(

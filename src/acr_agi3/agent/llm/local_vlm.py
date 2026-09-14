@@ -7,6 +7,7 @@ ARC のグリッド画像とテキスト (SKILL.md やプロンプト) を統合
 
 import inspect
 import logging
+from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Tuple
 
 from google.adk.models import BaseLlm, LlmRequest, LlmResponse
@@ -15,6 +16,36 @@ from PIL import Image
 from pydantic import PrivateAttr
 
 logger = logging.getLogger(__name__)
+
+# リアルタイム監視用ログファイル (logs/agent_live_execution.log)
+LIVE_LOG_PATH = Path(__file__).resolve().parent.parent.parent.parent / "logs" / "agent_live_execution.log"
+LIVE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+_file_handler = logging.FileHandler(LIVE_LOG_PATH, mode="a", encoding="utf-8")
+_file_handler.setLevel(logging.INFO)
+_file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+logger.addHandler(_file_handler)
+logger.setLevel(logging.INFO)
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
+
+
+def resolve_model_path(custom_path: Optional[str] = None) -> Optional[Path]:
+    """Qwen2.5-VL モデル重みディレクトリを自動解決."""
+    if custom_path and custom_path not in ("auto", "default", "mock"):
+        p = Path(custom_path)
+        if p.exists() and (p / "config.json").exists():
+            return p
+
+    candidates = [
+        Path("/kaggle/input/qwen2-5-vl-3b-instruct"),
+        Path("/kaggle/input/qwen2.5-vl-3b-instruct"),
+        Path("/workspace/models/Qwen2.5-VL-3B-Instruct"),
+        REPO_ROOT / "models" / "Qwen2.5-VL-3B-Instruct",
+    ]
+    for c in candidates:
+        if c.exists() and (c / "config.json").exists():
+            return c
+    return None
 
 
 class LocalQwenVL(BaseLlm):
@@ -25,9 +56,14 @@ class LocalQwenVL(BaseLlm):
     _processor: Any = PrivateAttr(default=None)
     _generate_fn: Optional[Callable[..., str]] = PrivateAttr(default=None)
 
+    # プロセス内シングルトンキャッシュ (再ロードによる VRAM 浪費・時間遅延を防止)
+    _shared_model: Any = None
+    _shared_processor: Any = None
+    _shared_model_path: Optional[str] = None
+
     def __init__(
         self,
-        model_name_or_path: str = "Qwen/Qwen2.5-VL-3B-Instruct",
+        model_name_or_path: Optional[str] = None,
         generate_fn: Optional[Callable[..., str]] = None,
         device: str = "cuda",
         torch_dtype: Any = None,
@@ -38,24 +74,28 @@ class LocalQwenVL(BaseLlm):
         """初期化.
 
         Args:
-            model_name_or_path: モデル名またはローカルの重みディレクトリパス
+            model_name_or_path: モデル名またはローカル重みパス (省略時は自動検出)
             generate_fn: テスト・モック用の生成関数 (fn(prompt, images=None) -> output_text)
             device: 実行デバイス ('cuda', 'cpu')
             torch_dtype: データ型 (torch.bfloat16, torch.float16等)
             load_in_8bit: 8bit量子化
             load_in_4bit: 4bit量子化
         """
-        super().__init__(model=model_name_or_path, **kwargs)
+        resolved = resolve_model_path(model_name_or_path)
+        actual_path = str(resolved) if resolved else (model_name_or_path or "mock")
+        super().__init__(model=actual_path, **kwargs)
         self._generate_fn = generate_fn
 
-        if generate_fn is None and model_name_or_path != "mock":
+        if generate_fn is None and actual_path != "mock" and resolved is not None:
             self._init_vlm(
-                model_name_or_path=model_name_or_path,
+                model_name_or_path=str(resolved),
                 device=device,
                 torch_dtype=torch_dtype,
                 load_in_8bit=load_in_8bit,
                 load_in_4bit=load_in_4bit,
             )
+        elif generate_fn is None and actual_path != "mock":
+            logger.info("LocalQwenVL: Model weights not found, operating in safe mock mode.")
 
     def _init_vlm(
         self,
@@ -65,7 +105,16 @@ class LocalQwenVL(BaseLlm):
         load_in_8bit: bool,
         load_in_4bit: bool,
     ) -> None:
-        """Qwen2.5-VL モデルとプロセッサをオフライン初期化."""
+        """Qwen2.5-VL モデルとプロセッサをオフライン初期化 (キャッシュ再利用)."""
+        if (
+            LocalQwenVL._shared_model is not None
+            and LocalQwenVL._shared_processor is not None
+            and LocalQwenVL._shared_model_path == model_name_or_path
+        ):
+            self._model = LocalQwenVL._shared_model
+            self._processor = LocalQwenVL._shared_processor
+            return
+
         try:
             import torch
             from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
@@ -95,6 +144,9 @@ class LocalQwenVL(BaseLlm):
                 trust_remote_code=True,
                 **model_kwargs,
             )
+            LocalQwenVL._shared_model = self._model
+            LocalQwenVL._shared_processor = self._processor
+            LocalQwenVL._shared_model_path = model_name_or_path
             logger.info(f"Loaded Qwen2.5-VL model from {model_name_or_path} successfully.")
         except Exception as e:
             logger.warning(
@@ -150,8 +202,10 @@ class LocalQwenVL(BaseLlm):
             from qwen_vl_utils import process_vision_info
 
             content_items: List[Dict[str, Any]] = []
-            for img in images:
-                content_items.append({"type": "image", "image": img})
+            # 最新フレーム画像 1 枚のみを視覚入力として渡す (過去画像の累積による OOM を物理的に完全根絶)
+            # 過去の試行錯誤やアクション結果はテキスト (prompt) に保持される
+            if images:
+                content_items.append({"type": "image", "image": images[-1]})
             content_items.append({"type": "text", "text": prompt})
 
             messages = [{"role": "user", "content": content_items}]
@@ -169,7 +223,11 @@ class LocalQwenVL(BaseLlm):
             ).to(self._model.device)
 
             with torch.no_grad():
-                generated_ids = self._model.generate(**inputs, max_new_tokens=1024)
+                generated_ids = self._model.generate(
+                    **inputs,
+                    max_new_tokens=256,
+                    do_sample=False,
+                )
                 generated_ids_trimmed = [
                     out_ids[len(in_ids) :]
                     for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
@@ -179,8 +237,22 @@ class LocalQwenVL(BaseLlm):
                     skip_special_tokens=True,
                     clean_up_tokenization_spaces=False,
                 )[0]
+                logger.info(f"[LocalQwenVL] raw generated_text: {generated_text!r}")
         else:
-            generated_text = "```python\ndef transform(grid):\n    return grid.copy()\n```"
+            # ARC-AGI-3 動的ゲーム環境向けモックアクション生成
+            import re
+
+            avail_match = re.search(r"Available Actions:\s*([^\n]+)", prompt)
+            avail_actions = (
+                [a.strip() for a in avail_match.group(1).split(",")]
+                if avail_match
+                else ["ACTION1"]
+            )
+            first_act = avail_actions[0] if avail_actions else "ACTION1"
+            generated_text = (
+                f"Visual Inspection Analysis: I observe the colored grid board and identified affordances. "
+                f"I decide to call step_action(action='{first_act}', reasoning='Navigating toward active objective')."
+            )
 
         response_content = Content(
             role="model",
