@@ -68,9 +68,11 @@ class ADKGamePlayer:
         name: str = "adk_game_player",
         app_name: str = "acr_agi3_adk_player",
         cell_size: int = 12,
+        session_refresh_interval: int = 1,
     ) -> None:
         self.name = name
         self.app_name = app_name
+        self.session_refresh_interval = session_refresh_interval
         self.model = model or LocalQwenVL(model_name_or_path="auto")
 
         # 1. 視覚認識ハーネス & 操作ツール
@@ -256,21 +258,26 @@ class ADKGamePlayer:
         """Planner -> Reviewer -> Act の 3 フェーズ自律協調ワークフロー."""
         user_id = "arc_workflow_user"
 
-        # 1. セッション初期化および画像アーカイブ（VRAM OOM 防止）
-        if not self.planner_session_id:
+        # 1. セッションの定期的新設 (会話履歴の肥大化・自己模倣ループ・CUDA OOM を完全防止)
+        need_new_session = (
+            self.planner_session_id is None
+            or self.reviewer_session_id is None
+            or self.session_refresh_interval <= 1
+            or (self.step_index % self.session_refresh_interval == 1)
+        )
+
+        if need_new_session:
             s_plan = await self.session_service.create_session(
                 app_name=f"{self.app_name}_planner", user_id=user_id
             )
             self.planner_session_id = s_plan.id
-        else:
-            await self._archive_session_images(f"{self.app_name}_planner", self.planner_session_id, user_id)
 
-        if not self.reviewer_session_id:
             s_rev = await self.session_service.create_session(
                 app_name=f"{self.app_name}_reviewer", user_id=user_id
             )
             self.reviewer_session_id = s_rev.id
         else:
+            await self._archive_session_images(f"{self.app_name}_planner", self.planner_session_id, user_id)
             await self._archive_session_images(f"{self.app_name}_reviewer", self.reviewer_session_id, user_id)
 
         # -------------------------------------------------------------
