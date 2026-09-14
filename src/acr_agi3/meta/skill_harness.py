@@ -70,29 +70,19 @@ class SkillHarness:
             except Exception as e:
                 logger.warning(f"Failed to load skills from {base_path}: {e}")
 
-    SKILL_CANONICAL_MAP = {
-        "env-observer": "visual-inspector",
-        "game-style-intuitor": "visual-inspector",
-        "subgoal-decomposer": "backward-planner",
-        "failure-diagnoser": "taboo-reset-guard",
-        "constraint-learner": "taboo-reset-guard",
-        "skill-synthesizer": "macro-skill-compiler",
-    }
-
     @property
     def skills(self) -> List[Skill]:
         """ロードされた ADK Skill オブジェクト一覧."""
         return list(self._skills_map.values())
 
     def get_skill(self, name: str) -> Optional[Skill]:
-        """スキル名から ADK Skill オブジェクトを取得 (エイリアス・正規化対応)."""
-        target = self.SKILL_CANONICAL_MAP.get(name, name)
-        if target in self._skills_map:
-            return self._skills_map[target]
-        alt = target.replace("_", "-")
+        """スキル名から ADK Skill オブジェクトを取得."""
+        if name in self._skills_map:
+            return self._skills_map[name]
+        alt = name.replace("_", "-")
         if alt in self._skills_map:
             return self._skills_map[alt]
-        alt = target.replace("-", "_")
+        alt = name.replace("-", "_")
         return self._skills_map.get(alt)
 
     def get_toolset(self, tool_name_prefix: Optional[str] = None) -> SkillToolset:
@@ -102,9 +92,6 @@ class SkillHarness:
             tool_name_prefix=tool_name_prefix,
         )
 
-    # =========================================================================
-    # 後方互換性 / デバッグ用ヘルパー
-    # =========================================================================
     def list_skills(self) -> List[Skill]:
         return self.skills
 
@@ -126,8 +113,7 @@ class SkillHarness:
 
     def read_skill_content(self, skill_name: str) -> str:
         """Level 2: スキル本文（SKILL.md の Instructions）をオンデマンド展開."""
-        canonical_name = self.SKILL_CANONICAL_MAP.get(skill_name, skill_name)
-        skill = self.get_skill(canonical_name)
+        skill = self.get_skill(skill_name)
         if not skill:
             raise KeyError(f"Skill '{skill_name}' not found.")
         header = (
@@ -138,20 +124,15 @@ class SkillHarness:
         )
         return header + skill.instructions.strip()
 
-    def load_skill_instructions(self, skill_name: str) -> str:
-        """Level 2 SKILL.md 本文の取得 (後方互換用)."""
-        return self.read_skill_content(skill_name)
-
     def get_skill_module(self, skill_name: str, script_name: Optional[str] = None) -> Any:
-        """スキルディレクトリ配下の Python モジュールを直接インポートして返却 (後方互換性対応)."""
-        canonical_name = self.SKILL_CANONICAL_MAP.get(skill_name, skill_name)
-        cache_key = f"{canonical_name}:{script_name or 'default'}"
+        """スキルディレクトリ配下の Python モジュールを直接インポートして返却."""
+        cache_key = f"{skill_name}:{script_name or 'default'}"
         if cache_key in self._module_cache:
             return self._module_cache[cache_key]
 
-        skill = self.get_skill(canonical_name)
+        skill = self.get_skill(skill_name)
         if not skill:
-            raise KeyError(f"Skill '{skill_name}' (canonical: '{canonical_name}') not found.")
+            raise KeyError(f"Skill '{skill_name}' not found.")
 
         skill_path = _uri_to_path(skill._uri) if skill._uri else None
         if not skill_path or not skill_path.exists():

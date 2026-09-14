@@ -8,8 +8,8 @@ from acr_agi3.agent.human_vcgt import VCGTDataset
 from acr_agi3.meta.skill_harness import SkillHarness
 
 _harness = SkillHarness()
-MetaObserver = _harness.get_skill_module("visual-inspector").MetaObserver
-SubgoalDecomposer = _harness.get_skill_module("backward-planner").SubgoalDecomposer
+VisualInspector = _harness.get_skill_module("visual-inspector").VisualInspector
+BackwardPlanner = _harness.get_skill_module("backward-planner").BackwardPlanner
 
 
 def test_meta_skills_spec_files_exist():
@@ -132,11 +132,11 @@ def test_meta_skill_driven_agent_solve_game():
     assert res["steps_taken"] > 0
 
 
-def test_meta_observer_game_frame_and_transition():
+def test_visual_inspector_game_frame_and_transition():
     """ACR-AGI-3 ゲーム環境におけるフレーム観測と状態遷移の因果抽出テスト."""
     from acr_agi3.game.env import Action
 
-    observer = MetaObserver()
+    inspector = VisualInspector()
 
     # 5x5 ゲーム環境グリッド (0: 背景, 1: 壁, 2: プレイヤー, 3: ゴール, 4: 鍵)
     grid = np.zeros((5, 5), dtype=int)
@@ -145,7 +145,7 @@ def test_meta_observer_game_frame_and_transition():
     grid[4, 4] = 3  # ゴール (4, 4)
     grid[1, 3] = 4  # 鍵 (1, 3)
 
-    report = observer.analyze_frame(grid, known_roles={"agent": 2, "goal": 3})
+    report = inspector.analyze_frame(grid, known_roles={"agent": 2, "goal": 3})
     assert report.grid_shape == (5, 5)
     assert report.background_color == 0
     assert report.player_pos == (1, 1)
@@ -159,7 +159,7 @@ def test_meta_observer_game_frame_and_transition():
     next_grid[1, 1] = 0
     next_grid[1, 2] = 2
 
-    trans_success = observer.analyze_transition(
+    trans_success = inspector.analyze_transition(
         obs_before=grid,
         action=Action.RIGHT,
         obs_after=next_grid,
@@ -171,7 +171,7 @@ def test_meta_observer_game_frame_and_transition():
     assert trans_success["hit_obstacle"] is False
 
     # 状態遷移: UP に移動して壁に衝突した場合 (位置不変)
-    trans_hit = observer.analyze_transition(
+    trans_hit = inspector.analyze_transition(
         obs_before=grid,
         action=Action.UP,
         obs_after=grid,
@@ -182,9 +182,9 @@ def test_meta_observer_game_frame_and_transition():
     assert trans_hit["hit_obstacle"] is True
 
 
-def test_subgoal_decomposer_game_milestones():
-    """ゲーム環境に対する SubgoalDecomposer の自律中間マイルストーン策定テスト."""
-    decomposer = SubgoalDecomposer()
+def test_backward_planner_game_milestones():
+    """ゲーム環境に対する BackwardPlanner の自律中間マイルストーン策定テスト."""
+    planner = BackwardPlanner()
 
     # 障害物壁と鍵が存在するマップ
     grid = np.zeros((10, 10), dtype=int)
@@ -193,7 +193,7 @@ def test_subgoal_decomposer_game_milestones():
     grid[1, 7] = 4  # 鍵
     grid[3:7, 4] = 1  # 中央の縦壁
 
-    plan = decomposer.decompose_game(grid, known_roles={"agent": 2, "goal": 3})
+    plan = planner.decompose_game(grid, known_roles={"agent": 2, "goal": 3})
 
     assert plan.total_steps >= 3
     step_names = [s.name for s in plan.subgoals]

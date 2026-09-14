@@ -236,10 +236,12 @@ def evaluate_single_environment(
             eff_sym = "✅" if is_eff else "❌"
             act_label = getattr(action, "name", str(action))
             coords = f" pos=({data.get('x', 0)}, {data.get('y', 0)})" if "x" in data else ""
+            strat = reasoning.get("strategy", "")
+            strat_str = f" | {strat[:50]}..." if strat else ""
             print(
                 f"    [Step {steps:02d}] {act_label:<7}{coords:<15} | Eff: {eff_sym} | "
                 f"ΔPixels: {diff_count:3d} | Level: {res.levels_completed}/{res.win_levels} | "
-                f"State: {str(res.state).replace('GameState.', '')} ({time_taken_ms:.1f}ms)"
+                f"State: {str(res.state).replace('GameState.', '')} ({time_taken_ms:.1f}ms){strat_str}"
             )
 
         steps += 1
@@ -277,6 +279,7 @@ def evaluate_single_environment(
         "steps": steps,
         "errors": errors,
         "diagnostics": diagnostic_report,
+        "telemetry": session_telemetry,
     }
 
 
@@ -430,7 +433,22 @@ def main():
     with open(history_file, "w", encoding="utf-8") as f:
         json.dump(history, f, indent=2)
 
+    # 詳細ステップテレメトリおよび EDD 診断レポートの保存
+    import dataclasses
+    step_telemetry_file = REPO_ROOT / "logs" / "step_telemetry_detailed.json"
+    diag_file = REPO_ROOT / "logs" / "edd_diagnostics.json"
+
+    detailed_telemetries = [dataclasses.asdict(r["telemetry"]) for r in results if "telemetry" in r]
+    with open(step_telemetry_file, "w", encoding="utf-8") as f:
+        json.dump(detailed_telemetries, f, indent=2)
+
+    detailed_diags = [dataclasses.asdict(r["diagnostics"]) for r in results if "diagnostics" in r]
+    with open(diag_file, "w", encoding="utf-8") as f:
+        json.dump(detailed_diags, f, indent=2)
+
     print(f"\n📈 Saved benchmark result to: {history_file}")
+    print(f"📊 Saved detailed step telemetry to: {step_telemetry_file}")
+    print(f"🔬 Saved EDD diagnostic reports to: {diag_file}")
     if len(history) > 1:
         prev = history[-2]
         delta_score = official_score - prev.get("score", 0.0)
