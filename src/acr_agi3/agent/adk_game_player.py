@@ -27,7 +27,11 @@ from acr_agi3.agent.cognitive_workflow import CognitiveState, assess_cognitive_s
 from acr_agi3.agent.llm.local_vlm import LocalQwenVL
 from acr_agi3.agent.workflow_schemas import PlanProposal, ReviewFeedback
 from acr_agi3.harness.game_action_tools import ActionDecision, GameActionTools
-from acr_agi3.harness.vision_observation import VisionObservationHarness, normalize_grid
+from acr_agi3.harness.vision_observation import (
+    VisionObservationHarness,
+    detect_interactable_objects,
+    normalize_grid,
+)
 from acr_agi3.meta.skill_harness import SkillHarness
 
 logger = logging.getLogger(__name__)
@@ -275,6 +279,7 @@ class ADKGamePlayer:
                 memory_summary=memory_summary,
                 grid_shape=arr.shape[:2],
                 active_skill=active_skill,
+                grid=arr,
             )
         )
         self.last_grid = arr.copy()
@@ -294,6 +299,7 @@ class ADKGamePlayer:
         memory_summary: str,
         grid_shape: Tuple[int, int],
         active_skill: Optional[str] = None,
+        grid: Optional[np.ndarray] = None,
     ) -> ActionDecision:
         """Planner -> Reviewer -> Act の 3 フェーズ自律協調ワークフロー."""
         user_id = "arc_workflow_user"
@@ -370,15 +376,29 @@ class ADKGamePlayer:
         # -------------------------------------------------------------
         # Phase 2: Review (計画の客観的検証・レビュー)
         # -------------------------------------------------------------
+        affordance_desc = ""
+        if grid is not None:
+            detected_objs = detect_interactable_objects(grid)
+            if detected_objs:
+                affordance_desc = "\nDetected Click Target Centers:\n" + "\n".join(
+                    f"- Target #{i+1}: Color {o['color']} at Center (x={o['center']['x']}, y={o['center']['y']})"
+                    for i, o in enumerate(detected_objs[:6])
+                ) + "\n"
+
         review_prompt = (
             f"=== [PLAN REVIEW REQUEST for Step {self.step_index}] ===\n"
             f"Available Actions: {avail_names} ({available_action_ids})\n"
             f"Grid Shape: {grid_shape[0]} rows x {grid_shape[1]} cols\n"
+            f"{affordance_desc}"
             f"Working Memory:\n{memory_summary or 'No previous actions.'}\n\n"
             f"Planner's Proposed Plan:\n"
             f"```json\n{json.dumps(proposal.to_dict(), indent=2)}\n```\n\n"
-            f"Perform the 3-point audit. If action is click/ACTION6 without valid coordinates, "
-            f"or repeats a proven ineffective action, mark REVISE and provide specific fixes."
+            f"Perform the 3-point audit:\n"
+            f"1. SPECIFICITY: If action is click/ACTION6, verify that coordinates match a valid target center. "
+            f"If missing or pointing to empty space, supply refined_coordinates with the best target center.\n"
+            f"2. REFLECTIVE: Does this action repeat an action that was just marked as INEFFECTIVE in Working Memory?\n"
+            f"3. TABOO: Does it avoid known traps or barriers?\n"
+            f"If unapproved, mark REVISE and provide specific fixes."
         )
         review_content = Content(role="user", parts=[Part.from_text(text=review_prompt)])
         reviewer_events = self.reviewer_runner.run_async(
@@ -448,6 +468,7 @@ class ADKGamePlayer:
             available_action_ids=available_action_ids,
             grid_shape=grid_shape,
             loaded_skill=final_skill,
+            grid=grid,
         )
 
         # VRAM キャッシュ解放
@@ -468,6 +489,7 @@ class ADKGamePlayer:
         available_action_ids: List[int],
         grid_shape: Tuple[int, int],
         loaded_skill: Optional[str] = None,
+        grid: Optional[Any] = None,
     ) -> ActionDecision:
         """計画内容を GameController を用いて安全に ActionDecision へ変換."""
         h, w = grid_shape
@@ -483,6 +505,7 @@ class ADKGamePlayer:
                 json.dumps(payload),
                 available_actions=available_action_ids,
                 grid_shape=(h, w),
+                grid=grid,
             )
             if validation["success"]:
                 return ActionDecision(
@@ -510,6 +533,12 @@ class ADKGamePlayer:
             if k in act_upper:
                 if aid == 6:
                     coords = coordinates or {"x": w // 2, "y": h // 2}
+                    if GameController is not None and grid is not None:
+                        sx, sy, snap_note = GameController.snap_coordinates_to_affordance(
+                            coords.get("x", 0), coords.get("y", 0), h, w, grid=grid
+                        )
+                        coords = {"x": sx, "y": sy}
+                        reasoning += snap_note
                     return ActionDecision(
                         action_type="CLICK",
                         action_name="ACTION6",

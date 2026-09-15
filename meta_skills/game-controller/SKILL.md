@@ -80,7 +80,7 @@ metadata:
 
 ## Requirements & Prerequisites
 - Python: >= 3.10
-- Dependencies: standard library only (json, re, argparse)
+- Dependencies: standard library (json, re, argparse), numpy
 
 ## Bundled Resources
 ### `scripts/` (Executable Tools)

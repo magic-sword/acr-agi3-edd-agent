@@ -117,5 +117,6 @@ def test_my_agent_integration_with_adk_player():
     assert action == GameAction.ACTION6
     assert hasattr(action, "action_data")
     data = action.action_data.model_dump()
-    assert data.get("x") == 5
-    assert data.get("y") == 8
+    # grid[5, 8] は row=5, col=8 のため、正しい画面クリック座標は x=8, y=5 (自動反転・スナップ補正)
+    assert data.get("x") == 8
+    assert data.get("y") == 5
