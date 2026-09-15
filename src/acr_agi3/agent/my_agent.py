@@ -141,9 +141,12 @@ class MyAgent(Agent):
         else:
             action.action_data = ActionDataWrapper({})
 
-        action.reasoning = {
+        action_reasoning = {
             "strategy": decision.reasoning,
             "step": self.step_count,
             "loaded_skill": decision.loaded_skill,
         }
+        if hasattr(decision, "metadata") and isinstance(decision.metadata, dict):
+            action_reasoning.update(decision.metadata)
+        action.reasoning = action_reasoning
         return action

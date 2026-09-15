@@ -32,6 +32,7 @@ class CognitiveState:
     plan_proposal: Optional[PlanProposal] = None
     review_feedback: Optional[ReviewFeedback] = None
     final_decision: Optional[ActionDecision] = None
+    routing_reason: str = ""
     telemetry: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -51,33 +52,40 @@ def assess_cognitive_state(ctx: Context, state: CognitiveState) -> CognitiveStat
         route = "route_visual_inspection"
         skill = "visual-inspector"
         mode = "visual_inspection"
+        reason = f"Initial step (step={step}) or visual inspection requested"
     elif stagnation >= 2 or "stagnant" in wm or "barrier hit" in wm or "trap" in wm:
         # 停滞・壁衝突・トラップ: Taboo Reset Guard (禁忌学習 & リセット判定)
         route = "route_taboo_reset"
         skill = "taboo-reset-guard"
         mode = "taboo_reset"
+        reason = f"Stagnation detected (stagnation_count={stagnation} >= 2) or obstacle/trap in memory"
     elif "unknown" in wm or "probe" in wm or "unexplored" in wm:
         # 未解明のオブジェクト・アフォーダンスあり: Epistemic Prober (能動探索)
         route = "route_epistemic_probe"
         skill = "epistemic-prober"
         mode = "epistemic_probe"
+        reason = "Unexplored affordance or probe keyword in working memory"
     elif "target far" in wm or "path blocked" in wm or "complex" in wm:
         # 遠隔ゴール・障害物迂回: Backward Planner (逆算プランニング)
         route = "route_backward_plan"
         skill = "backward-planner"
         mode = "backward_plan"
+        reason = "Target far or path blocked, backward chaining needed"
     else:
         # 通常実行: Direct Macro Plan
         route = "route_direct_plan"
         skill = "macro-skill-compiler"
         mode = "direct_plan"
+        reason = "Standard progression without stagnation, macro-skill execution"
 
     state.selected_skill = skill
     state.cognitive_mode = mode
+    state.routing_reason = reason
+    state.telemetry["routing_reason"] = reason
     ctx.route = route
     logger.info(
-        "🧠 [assess_cognitive_state] Step %d (stagnation=%d) -> mode='%s', route='%s', skill='%s'",
-        step, stagnation, mode, route, skill
+        "🧠 [assess_cognitive_state] Step %d (stagnation=%d) -> mode='%s', route='%s', skill='%s' (Reason: %s)",
+        step, stagnation, mode, route, skill, reason
     )
     return state
 

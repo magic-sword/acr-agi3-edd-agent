@@ -21,6 +21,7 @@ class ActionDecision:
     coordinates: Optional[Dict[str, int]] = None  # {"x": c, "y": r}
     reasoning: str = ""
     loaded_skill: Optional[str] = None
+    metadata: Dict[str, Any] = dataclasses.field(default_factory=dict)
 
 
 class GameActionTools:

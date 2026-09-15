@@ -238,10 +238,16 @@ def evaluate_single_environment(
             coords = f" pos=({data.get('x', 0)}, {data.get('y', 0)})" if "x" in data else ""
             skill = reasoning.get("loaded_skill") if isinstance(reasoning, dict) else None
             skill_str = f" 🔮[{skill}]" if skill else ""
+
+            # 自己改善 (Reviewer 介入) の可視化バッジ
+            was_rev = reasoning.get("was_revised", False) if isinstance(reasoning, dict) else False
+            orig_act = reasoning.get("original_action") if isinstance(reasoning, dict) else None
+            rev_str = f" 🔄[Rev: {orig_act}->{act_label}]" if was_rev and orig_act and orig_act != act_label else (" 🔄[Rev]" if was_rev else "")
+
             strat = reasoning.get("strategy", "") if isinstance(reasoning, dict) else str(reasoning)
-            strat_str = f" | {strat[:50]}..." if strat else ""
+            strat_str = f" | {strat[:45]}..." if strat else ""
             print(
-                f"    [Step {steps:02d}] {act_label:<7}{coords:<15}{skill_str} | Eff: {eff_sym} | "
+                f"    [Step {steps:02d}] {act_label:<7}{coords:<14}{skill_str}{rev_str} | Eff: {eff_sym} | "
                 f"ΔPixels: {diff_count:3d} | Level: {res.levels_completed}/{res.win_levels} | "
                 f"State: {str(res.state).replace('GameState.', '')} ({time_taken_ms:.1f}ms){strat_str}",
                 flush=True

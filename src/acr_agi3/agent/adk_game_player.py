@@ -39,11 +39,16 @@ logger = logging.getLogger(__name__)
 # リアルタイム監視用ログファイル (logs/agent_live_execution.log) のセットアップ
 LIVE_LOG_PATH = Path(__file__).resolve().parent.parent.parent.parent / "logs" / "agent_live_execution.log"
 LIVE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-_file_handler = logging.FileHandler(LIVE_LOG_PATH, mode="a", encoding="utf-8")
-_file_handler.setLevel(logging.INFO)
-_file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-logger.addHandler(_file_handler)
-logger.setLevel(logging.INFO)
+
+# acr_agi3 パッケージ全体のログを統一的に LIVE_LOG_PATH へ集約
+_pkg_logger = logging.getLogger("acr_agi3")
+_pkg_logger.setLevel(logging.INFO)
+_abs_log_path = str(LIVE_LOG_PATH.resolve())
+if not any(isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", "") == _abs_log_path for h in _pkg_logger.handlers):
+    _file_handler = logging.FileHandler(LIVE_LOG_PATH, mode="a", encoding="utf-8")
+    _file_handler.setLevel(logging.INFO)
+    _file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] [%(name)s] %(message)s"))
+    _pkg_logger.addHandler(_file_handler)
 
 # game-controller メタスキルのインポート
 GAME_CONTROLLER_DIR = Path(__file__).resolve().parent.parent.parent.parent / "meta_skills" / "game-controller" / "scripts"
@@ -162,6 +167,8 @@ class ADKGamePlayer:
         self.stagnation_count = 0
         self.last_grid: Optional[np.ndarray] = None
         self.last_action_info: Optional[Dict[str, Any]] = None
+        self.last_was_revised: bool = False
+        self.last_revised_info: Optional[Dict[str, Any]] = None
         self.planner_session_id: Optional[str] = None
         self.reviewer_session_id: Optional[str] = None
 
@@ -171,6 +178,8 @@ class ADKGamePlayer:
         self.stagnation_count = 0
         self.last_grid = None
         self.last_action_info = None
+        self.last_was_revised = False
+        self.last_revised_info = None
         self.action_tools.pending_decision = None
         self.action_tools.history.clear()
         if self.memory:
@@ -195,6 +204,28 @@ class ADKGamePlayer:
             diff_mask = (self.last_grid != arr)
             pixels_changed = int(np.sum(diff_mask))
             is_effective = (pixels_changed > 0)
+
+        # 直前の自己改善（Reviewer 修正）結果の因果検証ログ
+        if self.last_was_revised and self.last_revised_info:
+            orig = self.last_revised_info.get("original_action")
+            rev = self.last_revised_info.get("revised_action")
+            critique = self.last_revised_info.get("critique", "")
+            if is_effective:
+                logger.info(
+                    "🔄 [Self-Correction Outcome] ✅ EFFECTIVE: Reviewer revision (%s -> %s) successfully changed game state! (ΔPixels: %d, Step: %d). Critique was: %s",
+                    orig, rev, pixels_changed, self.last_revised_info.get("step", 0), critique[:100]
+                )
+            else:
+                logger.warning(
+                    "🔄 [Self-Correction Outcome] ❌ INEFFECTIVE: Reviewer revision (%s -> %s) did NOT change game state (ΔPixels: 0, Step: %d). Critique was: %s",
+                    orig, rev, self.last_revised_info.get("step", 0), critique[:100]
+                )
+        elif self.last_action_info is not None:
+            act_n = self.last_action_info.get("action", "UNKNOWN")
+            logger.info(
+                "⚡ [Direct Action Outcome] Action %s produced ΔPixels: %d (Effective: %s, Stagnation: %d)",
+                act_n, pixels_changed, is_effective, self.stagnation_count
+            )
 
         # 停滞カウントの更新 (無変化が連続した場合にインクリメント)
         if self.last_action_info is not None:
@@ -247,6 +278,15 @@ class ADKGamePlayer:
         assess_cognitive_state(dummy_ctx, cog_state)
         active_skill = cog_state.selected_skill or "visual-inspector"
 
+        logger.info(
+            "🧠 [Cognitive Routing] Step %d: Active Skill='%s' (Mode='%s', Stagnation=%d)\n"
+            "   Reason: %s\n"
+            "   Working Memory: %s",
+            self.step_index, active_skill, cog_state.cognitive_mode.upper(), self.stagnation_count,
+            cog_state.routing_reason,
+            memory_summary.replace("\n", " | ") if memory_summary else "(empty)"
+        )
+
         skill_obj = self.skill_harness.get_skill(active_skill)
         skill_desc = getattr(skill_obj, "description", "") if skill_obj else ""
         parts.append(
@@ -280,6 +320,7 @@ class ADKGamePlayer:
                 grid_shape=arr.shape[:2],
                 active_skill=active_skill,
                 grid=arr,
+                cog_state=cog_state,
             )
         )
         self.last_grid = arr.copy()
@@ -300,6 +341,7 @@ class ADKGamePlayer:
         grid_shape: Tuple[int, int],
         active_skill: Optional[str] = None,
         grid: Optional[np.ndarray] = None,
+        cog_state: Optional[CognitiveState] = None,
     ) -> ActionDecision:
         """Planner -> Reviewer -> Act の 3 フェーズ自律協調ワークフロー."""
         user_id = "arc_workflow_user"
@@ -343,13 +385,19 @@ class ADKGamePlayer:
                     if hasattr(p, "text") and p.text:
                         plan_raw_text += p.text
 
-        logger.info(f"Step {self.step_index} [Phase 1: Planner] raw text: {plan_raw_text!r}")
+        logger.info(f"Step {self.step_index} [Phase 1: Planner Raw] {plan_raw_text!r}")
         proposal = PlanProposal.from_text(plan_raw_text)
+        original_proposed_action = proposal.action
+        original_proposed_coords = proposal.coordinates
+        logger.info(
+            "Step %d [Phase 1: Proposed Plan] Hypothesis: %r | Goal: %r | Proposed Action: %s (Coords: %s) | Requested Skill: %s",
+            self.step_index, proposal.hypothesis, proposal.goal, original_proposed_action, original_proposed_coords, proposal.load_skill
+        )
 
         # Progressive Disclosure: メタスキルが要求された場合の展開
         triggered_skill = proposal.load_skill
         if triggered_skill:
-            logger.info(f"Step {self.step_index} [Phase 1: Progressive Disclosure] Expanding skill: {triggered_skill}")
+            logger.info(f"Step {self.step_index} [Phase 1: Progressive Disclosure] Expanding requested skill: {triggered_skill}")
             try:
                 skill_content = self.skill_harness.read_skill_content(triggered_skill)
                 skill_prompt = (
@@ -370,8 +418,15 @@ class ADKGamePlayer:
                                 plan_raw_text += p.text
                 proposal = PlanProposal.from_text(plan_raw_text)
                 proposal.load_skill = triggered_skill
+                original_proposed_action = proposal.action
+                original_proposed_coords = proposal.coordinates
             except Exception as e:
                 logger.warning(f"Failed to expand skill {triggered_skill}: {e}")
+        else:
+            logger.info(
+                "Step %d [Phase 1: Progressive Disclosure] No on-demand skill requested by Planner. Active meta-skill remains '%s'",
+                self.step_index, active_skill
+            )
 
         # -------------------------------------------------------------
         # Phase 2: Review (計画の客観的検証・レビュー)
@@ -414,14 +469,23 @@ class ADKGamePlayer:
                     if hasattr(p, "text") and p.text:
                         review_raw_text += p.text
 
-        logger.info(f"Step {self.step_index} [Phase 2: Reviewer] raw text: {review_raw_text!r}")
+        logger.info(f"Step {self.step_index} [Phase 2: Reviewer Raw] {review_raw_text!r}")
         review = ReviewFeedback.from_text(review_raw_text)
+        logger.info(
+            "Step %d [Phase 2: Reviewer Audit Result] Status: %s | Critique: %s | Suggested Fix: %s | Refined Action: %s (Coords: %s)",
+            self.step_index, review.status, review.critique, review.suggested_fix, review.refined_action, review.refined_coordinates
+        )
 
         # -------------------------------------------------------------
         # Phase 3: Revision Loop (不合格時の修正)
         # -------------------------------------------------------------
+        is_revised_this_step = False
         if not review.is_approved:
-            logger.info(f"Step {self.step_index} [Phase 3: Revision Required] Critique: {review.critique}")
+            is_revised_this_step = True
+            logger.info(
+                "Step %d [Phase 3: Revision Required] Planner proposed '%s', but Reviewer required fix: %s",
+                self.step_index, original_proposed_action, review.critique
+            )
             revise_prompt = (
                 f"Your proposed plan was REVISED by the Quality Reviewer:\n"
                 f"Critique: {review.critique}\n"
@@ -440,26 +504,60 @@ class ADKGamePlayer:
                         if hasattr(p, "text") and p.text:
                             revised_text += p.text
 
-            logger.info(f"Step {self.step_index} [Phase 3: Revised Plan] text: {revised_text!r}")
             proposal = PlanProposal.from_text(revised_text)
+            logger.info(
+                "Step %d [Phase 3: Revised Plan] Original Proposed: '%s' -> Revised Plan: '%s' (Coords: %s)",
+                self.step_index, original_proposed_action, proposal.action, proposal.coordinates
+            )
 
         # Reviewer からの直接オーバーライド補正（座標やアクション）があれば適用
         chosen_action = review.refined_action or proposal.action
         chosen_coords = review.refined_coordinates or proposal.coordinates
 
+        # 自己改善（修正介入）の判定
+        was_revised = (
+            is_revised_this_step
+            or (chosen_action != original_proposed_action)
+            or (chosen_coords != original_proposed_coords)
+        )
+        if was_revised:
+            self.last_was_revised = True
+            self.last_revised_info = {
+                "step": self.step_index,
+                "original_action": original_proposed_action,
+                "revised_action": chosen_action,
+                "critique": review.critique,
+                "suggested_fix": review.suggested_fix,
+            }
+        else:
+            self.last_was_revised = False
+            self.last_revised_info = None
+
         # -------------------------------------------------------------
         # Phase 4: Act (GameController による確定行動の検証と実行)
         # -------------------------------------------------------------
-        logger.info(
-            f"Step {self.step_index} [Phase 4: Act] Final Action: {chosen_action}, "
-            f"Coords: {chosen_coords}, Hypothesis: {proposal.hypothesis!r}"
-        )
-
         # 認知ワークフローで選定されたメタスキルを反映 (明示指定された場合はそれを尊重)
         if proposal.load_skill_explicit:
             final_skill = proposal.load_skill
         else:
             final_skill = proposal.load_skill or active_skill
+
+        meta = {
+            "was_revised": was_revised,
+            "original_action": original_proposed_action,
+            "final_action": chosen_action,
+            "routing_reason": cog_state.routing_reason if cog_state else "",
+            "cognitive_mode": cog_state.cognitive_mode if cog_state else "",
+            "review_status": review.status,
+            "review_critique": review.critique,
+            "suggested_fix": review.suggested_fix,
+            "working_memory_snippet": memory_summary[:100] if memory_summary else "",
+        }
+
+        logger.info(
+            "Step %d [Phase 4: Act Finalized] Action: %s, Coords: %s, Skill: %s, RevisedByReviewer: %s, Hypothesis: %r",
+            self.step_index, chosen_action, chosen_coords, final_skill, was_revised, proposal.hypothesis
+        )
 
         decision = self._convert_to_decision(
             action_str=chosen_action,
@@ -469,6 +567,7 @@ class ADKGamePlayer:
             grid_shape=grid_shape,
             loaded_skill=final_skill,
             grid=grid,
+            metadata=meta,
         )
 
         # VRAM キャッシュ解放
@@ -490,9 +589,11 @@ class ADKGamePlayer:
         grid_shape: Tuple[int, int],
         loaded_skill: Optional[str] = None,
         grid: Optional[Any] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> ActionDecision:
         """計画内容を GameController を用いて安全に ActionDecision へ変換."""
         h, w = grid_shape
+        meta_dict = metadata or {}
         if GameController is not None:
             controller = GameController(available_actions=available_action_ids)
             # JSON 形式の文字列に変換して GameController の厳格バリデーションへ渡す
@@ -515,6 +616,7 @@ class ADKGamePlayer:
                     coordinates=validation["coordinates"],
                     reasoning=validation["reasoning"],
                     loaded_skill=loaded_skill,
+                    metadata=meta_dict,
                 )
 
         # フォールバック安全処理
@@ -546,6 +648,7 @@ class ADKGamePlayer:
                         coordinates=coords,
                         reasoning=reasoning,
                         loaded_skill=loaded_skill,
+                        metadata=meta_dict,
                     )
                 return ActionDecision(
                     action_type="STEP" if aid != 0 else "RESET",
@@ -554,6 +657,7 @@ class ADKGamePlayer:
                     coordinates=None,
                     reasoning=reasoning,
                     loaded_skill=loaded_skill,
+                    metadata=meta_dict,
                 )
 
         default_id = available_action_ids[0] if available_action_ids else 1
@@ -564,6 +668,7 @@ class ADKGamePlayer:
             coordinates=None,
             reasoning=f"Fallback default action: {reasoning}",
             loaded_skill=loaded_skill,
+            metadata=meta_dict,
         )
 
     async def _archive_session_images(self, app_name: str, session_id: str, user_id: str) -> None:
