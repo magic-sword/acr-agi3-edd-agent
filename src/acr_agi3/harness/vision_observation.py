@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 from google.genai.types import Blob, Part
 
-from acr_agi3.dsl.renderer import ARC_COLORS, render_grid_to_image
+from acr_agi3.dsl.renderer import ARC_COLORS, render_console_observation, render_grid_to_image
 
 
 def normalize_grid(grid_data: Any) -> np.ndarray:
@@ -173,8 +173,9 @@ class VisionObservationHarness:
         9: "Maroon (9)",
     }
 
-    def __init__(self, cell_size: int = 12) -> None:
+    def __init__(self, cell_size: int = 12, use_console_ui: bool = True) -> None:
         self.cell_size = cell_size
+        self.use_console_ui = use_console_ui
 
     def create_observation_parts(
         self,
@@ -190,9 +191,22 @@ class VisionObservationHarness:
 
         parts: List[Part] = []
 
-        # 1. カラー画像の生成と Part 化
+        # 1. カラー画像 (盤面単体または統合コンソール画面) の生成と Part 化
         if h > 0 and w > 0:
-            pil_img = render_grid_to_image(arr, cell_size=self.cell_size)
+            if self.use_console_ui:
+                last_act = None
+                if last_action_info:
+                    last_act = last_action_info.get("action") or last_action_info.get("action_id")
+                pil_img = render_console_observation(
+                    grid=arr,
+                    available_actions=available_actions,
+                    last_action=last_act,
+                    step_index=step_index,
+                    cell_size=self.cell_size,
+                )
+            else:
+                pil_img = render_grid_to_image(arr, cell_size=self.cell_size)
+
             buf = io.BytesIO()
             pil_img.save(buf, format="PNG")
             png_bytes = buf.getvalue()
@@ -215,6 +229,13 @@ class VisionObservationHarness:
             f"- Grid Size: {h} rows x {w} cols",
             f"- Active Colors: {', '.join(color_desc)}",
         ]
+
+        if self.use_console_ui:
+            text_lines.append(
+                "- Controller Visual HUD: The lower section of the observation image displays the physical controller. "
+                "The D-Pad (1-4: UP/DOWN/LEFT/RIGHT), Action Buttons (5-7, 6: CLICK/ACTION), and RESET (0) are shown. "
+                "The actively highlighted/glowing button indicates the last executed action, and brightly lit buttons indicate valid available actions."
+            )
 
         if last_action_info:
             action_name = last_action_info.get("action", "NONE")

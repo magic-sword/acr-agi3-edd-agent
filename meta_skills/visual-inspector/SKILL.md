@@ -54,7 +54,8 @@ metadata:
 
 ## Workflow
 1. **Visual Reconnaissance & Inspection**:
-   - Inspect raw grid to identify agent position, target candidates, fixed rails, and obstacle boundaries.
+   - Inspect the main game grid to identify agent position, target candidates, fixed rails, and obstacle boundaries.
+   - Inspect the lower game console HUD (D-Pad, Action Buttons, and RESET). Cross-reference the actively highlighted button (last executed action) with visual displacement on the board to verify action-outcome contingency.
 2. **Gestalt Difference & Genre Classification**:
    - Classify layout difference against target (Reversal, Interleaved, Identity) and detect overall game style.
    ```bash
