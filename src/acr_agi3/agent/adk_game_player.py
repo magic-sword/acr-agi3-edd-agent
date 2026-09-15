@@ -25,6 +25,7 @@ from unittest.mock import MagicMock
 
 from acr_agi3.agent.cognitive_workflow import CognitiveState, assess_cognitive_state
 from acr_agi3.agent.llm.local_vlm import LocalQwenVL
+from acr_agi3.agent.online_skill_developer import OnlineSkillDeveloper
 from acr_agi3.agent.workflow_schemas import PlanProposal, ReviewFeedback
 from acr_agi3.harness.game_action_tools import ActionDecision, GameActionTools
 from acr_agi3.harness.vision_observation import (
@@ -172,6 +173,9 @@ class ADKGamePlayer:
         self.planner_session_id: Optional[str] = None
         self.reviewer_session_id: Optional[str] = None
 
+        # オンライン自己改善・スキル開発エンジン (仮説検証プローブ・ルール同定・EDD契約テスト・動的スキル生成)
+        self.skill_developer = OnlineSkillDeveloper(game_id=self.name)
+
     def reset(self) -> None:
         """エージェントの状態とセッションを初期化."""
         self.step_index = 0
@@ -186,6 +190,8 @@ class ADKGamePlayer:
             self.memory.clear()
         self.planner_session_id = None
         self.reviewer_session_id = None
+        if hasattr(self, "skill_developer"):
+            self.skill_developer.reset()
 
     def decide_next_action(
         self,
@@ -193,7 +199,7 @@ class ADKGamePlayer:
         available_actions: Optional[List[int]] = None,
         state_str: str = "NOT_FINISHED",
     ) -> ActionDecision:
-        """ADK 2.0 Plan-Review-Act ワークフローを経て次のアクションを決定."""
+        """ADK 2.0 Plan-Review-Act ワークフローと自己改善エンジンを経て次のアクションを決定."""
         self.step_index += 1
         arr = normalize_grid(grid)
 
@@ -227,6 +233,15 @@ class ADKGamePlayer:
                 act_n, pixels_changed, is_effective, self.stagnation_count
             )
 
+        # オンライン自己改善エンジンによるプローブ・遷移の因果差分解析
+        if self.last_action_info is not None and self.last_grid is not None:
+            last_act_name = self.last_action_info.get("action", "UNKNOWN")
+            self.skill_developer.analyze_probe_transition(
+                prev_grid=self.last_grid,
+                curr_grid=arr,
+                action_id=last_act_name,
+            )
+
         # 停滞カウントの更新 (無変化が連続した場合にインクリメント)
         if self.last_action_info is not None:
             if pixels_changed == 0:
@@ -254,7 +269,67 @@ class ADKGamePlayer:
         avail_names = [f"ACTION{i}" for i in avail_ids]
         self.action_tools.set_available_actions(avail_ids)
 
-        # 視覚観測 Parts の生成 (Phase 1: OBSERVE)
+        # 1. 停滞検出時のマクロポリシー解除（手詰まり・壁衝突時は即座に解除し LLM / Taboo Reset へ委託）
+        if self.stagnation_count >= 2 and self.skill_developer.active_policy is not None:
+            logger.warning(
+                "🛡️ [OnlineSkillDeveloper] Stagnation detected (%d steps) - Deactivating macro policy '%s'",
+                self.stagnation_count, self.skill_developer.active_skill_name
+            )
+            self.skill_developer.reset_policy()
+
+        # 2. ルール同定完了時: EDD防壁ゲート（正例3+負例3）付き動的スキル生成
+        if (
+            self.skill_developer.is_rule_identified
+            and self.skill_developer.active_policy is None
+            and not getattr(self.skill_developer, "policy_suppressed", False)
+            and self.stagnation_count == 0
+        ):
+            synth_ok = self.skill_developer.develop_and_register_skill(
+                grid=arr,
+                available_actions=avail_ids,
+            )
+            if synth_ok:
+                logger.info(
+                    "🎉 [OnlineSkillDeveloper] Successfully synthesized & EDD-verified skill '%s'!",
+                    self.skill_developer.active_skill_name,
+                )
+
+        # 3. 高速マクロポリシー実行（承認済みスキルが存在し停滞していない場合、LLM推論を完全バイパス）
+        if self.stagnation_count < 2 and self.skill_developer.active_policy is not None:
+            macro_decision = self.skill_developer.execute_active_policy(arr, avail_ids)
+            if macro_decision is not None:
+                self.last_grid = arr.copy()
+                self.last_action_info = {
+                    "action": macro_decision.action_name,
+                    "action_id": macro_decision.action_id,
+                    "reasoning": macro_decision.reasoning,
+                    "state_before": state_str,
+                }
+                logger.info(
+                    "⚡ [Fast Macro Exec] Step %d: %s (skill=%s) -> LLM bypassed (1ms)",
+                    self.step_index, macro_decision.action_name, macro_decision.loaded_skill
+                )
+                return macro_decision
+
+        # 4. 能動的プローブ行動（ルール未確定かつプローブ手順が残っている場合）
+        if self.skill_developer.is_probing:
+            probe_decision = self.skill_developer.get_next_probe_action(avail_ids)
+            if probe_decision is not None:
+                self.last_grid = arr.copy()
+                self.last_action_info = {
+                    "action": probe_decision.action_name,
+                    "action_id": probe_decision.action_id,
+                    "reasoning": probe_decision.reasoning,
+                    "state_before": state_str,
+                }
+                logger.info(
+                    "🧪 [Epistemic Probe Exec] Step %d: %s (skill=%s) -> %s",
+                    self.step_index, probe_decision.action_name, probe_decision.loaded_skill,
+                    probe_decision.reasoning
+                )
+                return probe_decision
+
+        # 5. 通常ワークフロー: 視覚観測 Parts の生成 (Phase 1: OBSERVE)
         parts = self.vision_harness.create_observation_parts(
             grid_data=arr,
             step_index=self.step_index,
@@ -273,6 +348,9 @@ class ADKGamePlayer:
             observation=arr,
             working_memory=memory_summary,
             stagnation_count=self.stagnation_count,
+            is_probing=self.skill_developer.is_probing,
+            active_macro_skill=self.skill_developer.active_skill_name,
+            is_macro_mode=(self.skill_developer.active_policy is not None),
         )
         dummy_ctx = MagicMock(spec=Context)
         assess_cognitive_state(dummy_ctx, cog_state)
