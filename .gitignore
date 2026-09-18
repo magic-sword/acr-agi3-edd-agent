@@ -262,3 +262,5 @@ data/human_vcgt/results.csv
 *.csv
 /my_agent.py
 models/
+meta_skills/.*
+

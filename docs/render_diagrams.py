@@ -74,8 +74,8 @@ draw_box(14, 45, 34, 13, "Planner Agent (LLM / VLM)",
          "1. Situation Analysis (Hypothesis)\n2. Epistemic Inquiry (Need more info?)\n3. Subgoal Formation (Goal)\n4. Action Selection (Optimal Move)\n5. Final Output: PlanProposal JSON",
          bg="#500724", border="#fb7185", title_size=10.5, sub_size=8.5)
 
-draw_box(52, 45, 34, 13, "On-Demand Tool-Use Loop (ReAct)", 
-         "Self-Directed Iterative Tool Calling:\n  ToolCall: inspect_affordances / ROI\n  ADK Runner: Executes & Feeds Result\n  Rethink: Synthesize tool feedback\n* SkillToolset: Progressive Disclosure L1/L2/L3",
+draw_box(52, 45, 34, 13, "On-Demand Tools & Long-Term Memory", 
+         "Self-Directed Iterative Tool Calling:\n  ToolCall: inspect_affordances / ROI\n  MemoryNotebook: TOC (しおり) & Pen/Eraser\n  ADK Runner: Executes & Feeds Result\n  Rethink: Synthesize tool feedback\n* SkillToolset: Progressive Disclosure L1/L2/L3",
          bg="#3b0764", border="#c084fc", title_size=10.5, sub_size=8.5)
 
 # Bi-directional arrow inside ReAct Loop
@@ -116,6 +116,8 @@ ax.annotate("", xy=(8, 86), xytext=(25, 9),
 ax.text(2.5, 48, "Perception-Action Closed Loop (Next Frame)", fontsize=11, color="#38bdf8", fontweight="bold", rotation=90)
 
 plt.tight_layout()
-out_path = "/workspace/docs/architecture_workflow.png"
+from pathlib import Path
+out_path = Path(__file__).resolve().parent / "architecture_workflow.png"
 plt.savefig(out_path, dpi=200, facecolor=fig.get_facecolor(), edgecolor="none")
 print(f"Successfully generated {out_path}")
+

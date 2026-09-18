@@ -26,14 +26,20 @@
 │      └─ 画像キャンバスと客観事実を CognitiveState に読み込み                  │
 │                        │                                                    │
 │                        ▼                                                    │
-│    [ Node 2: plan_node (Planner Agent: ReAct 思考 ＆ ツール反復ループ) ]      │
+│    [ Node 2: plan_node (Planner Agent: 人間適応原理に基づく思考＆ツールループ) ]│
+│      ├─ 4フェーズ認知プロトコル:                                             │
+│      │   Phase 1: [目視休止] 空間ゲシュタルト差分からパズル型分類            │
+│      │   Phase 2: [認識論的実験] 最小介入で物理法則・キーバインド解明       │
+│      │   Phase 3: [逆算プランニング] キーストーン固定と待避バッファの活用    │
+│      │   Phase 4: [失敗帰因・禁忌学習] 手詰まりをNo-Go化し能動リセット      │
+│      ├─ 長期記憶メタスキル (meta_skills/memory-notebook):                   │
+│      │   • しおり (TOC): `toc --format markdown` で既知知識を極小トークン想起│
+│      │   • しおり (Bookmark): `bookmark current_goal` で重要目標をピン留め   │
+│      │   • ペン (Pen): `write` で新ルール (rules.controls, nogo) を記録      │
+│      │   • 消しゴム (Eraser): `delete` / `clear` で棄却された誤仮説を即座に消去 │
 │      ├─ 思考中の自律的ツール呼び出し (ReAct Loop):                           │
-│      │   ① 状況分析 (Hypothesis)                                            │
-│      │   ② 疑問・仮説検証 ➔ 【Tool Call】: inspect_affordances / ROI 等     │
-│      │   ③ 観測結果受領 ➔ 【Tool Response】を思考履歴に反映して再考 (Rethink) │
-│      │   ④ 目標策定 (Goal) ➔ 最小手決定 (Action)                            │
-│      ├─ 将来の拡張性 (Google ADK 2.0 公式 SkillToolset):                     │
-│      │   Level 1 目録 ➔ Level 2 SKILL.md ➔ Level 3 スクリプトをオンデマンド展開│
+│      │   ① 記憶想起 (TOC) ➔ ② 状況分析 ➔ ③ 観測ツール呼出 (ROI / Affordance) │
+│      │   ➔ ④ 観測結果受領 ➔ ⑤ 新事実の記憶 (Pen) ➔ ⑥ 目標・最小手決定      │
 │      └─ 確定出力: PlanProposal { hypothesis, goal, action, reasoning, coords }│
 └──────────────────────────────────────┬──────────────────────────────────────┘
                                        │
@@ -75,12 +81,16 @@ flowchart TD
         CONSOLE & FACTS --> N1["Node 1: perceive_node\n(画像とコンソール状態の読み込み)"]
         N1 --> N2["Node 2: plan_node (Planner Agent)"]
         
-        subgraph REACT["Planner Agent 自律 ReAct ループ"]
+        subgraph REACT["Planner Agent 自律 ReAct ループ (人間適応プロトコル)"]
             THOUGHT["思考 (Hypothesis & Goal 検討)"]
-            THOUGHT -- "盤面やアフォーダンスを再確認したい" --> TC["Tool Call 発行\n(inspect_affordances / ROI)"]
+            THOUGHT -- "既知ルール・目標を想起" --> MEM_TOC["TOC読込 (しおり)\n`run_skill_script('memory-notebook', 'toc')`"]
+            MEM_TOC --> THOUGHT
+            THOUGHT -- "盤面やアフォーダンスを再確認したい" --> TC["観測Tool Call\n(inspect_affordances / ROI)"]
             TC --> TOOLS
             TOOLS -- "観測データ返却" --> TR["Tool Response 統合"]
             TR --> THOUGHT
+            THOUGHT -- "新ルール発見 / 誤仮説の削除" --> MEM_WR["記憶更新 (ペン/消しゴム)\n`write(rules) / delete(hyp)`"]
+            MEM_WR --> THOUGHT
             THOUGHT -- "確信が得られた" --> DECIDE["1手計画の確定\nPlanProposal {action, coords, reasoning}"]
         end
         
@@ -118,7 +128,8 @@ flowchart TD
 | 比較項目 | 以前の設計（多分岐・レビュー・仮説進化） | 一新された新設計（本構成: ReAct + ADK 2.0） |
 | :--- | :--- | :--- |
 | **画面認識** | プログラムが勝手に自機やゴールを決め打ち推測（誤認が多発） | **プログラムによる決めつけを全廃**。公式10色カラー画像＋HUDをそのままLLMに見せて判断 |
-| **思考フロー** | 5分岐ルーティング ＋ Reviewer（堂々巡りのリジェクトループでタイムアウト） | **Google ADK 2.0 ReAct 反復思考ループ**。エージェントが必要に応じて観測ツールを自発的に呼び出し、観測を取り込んで1手を確定 |
+| **思考フロー** | 5分岐ルーティング ＋ Reviewer（堂々巡りのリジェクトループでタイムアウト） | **Google ADK 2.0 ReAct 反復思考ループ**。人間適応原理（4フェーズ思考プロトコル）に基づき自律的に観測・記憶・思考 |
+| **長期記憶** | 過去の会話ログを全部プロンプトに流し込んでコンテキストパンク | **`meta_skills/memory-notebook`（紙・ペン・消しゴム・しおり）**。目次（TOC）で低トークン想起し、必要な知識のみを選択的展開 |
 | **観測ツール** | 一括プロンプト注入（無関係な情報でコンテキストが肥大化） | **オンデマンドな `ObservationTools`**（`inspect_board`, `inspect_affordances`, `inspect_action_effect`, `inspect_roi`）をツール呼出でピンポイント取得 |
 | **スキルの拡張性** | 新スキルが増えるたびにプロンプトがパンク | **Google ADK 2.0 公式 `SkillToolset` 準拠**。Level 1（目録）$\rightarrow$ Level 2（`SKILL.md`）$\rightarrow$ Level 3（スクリプト）の段階的開示でスケーラブル |
 | **操作出力** | キーの対応関係がゲームごとに異なるARCで空振り | `game-controller` が**動的操作力学とクリック座標吸着を解決し、100% 確実に1手を発行** |

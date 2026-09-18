@@ -1,0 +1,280 @@
+{
+  "eval_set_id": "memory-notebook_edd",
+  "name": "memory-notebook_edd",
+  "description": "Google ADK 2.0 Native EvalSet for memory-notebook",
+  "skill_name": "memory-notebook",
+  "eval_cases": [
+    {
+      "eval_id": "memory-notebook_001",
+      "conversation": [
+        {
+          "invocation_id": "inv_memory-notebook_001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Please execute memory notebook workflow with --help parameter"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "usage_help"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "memory-notebook",
+                  "file_path": "scripts/memory_notebook.py",
+                  "args": [
+                    "--help"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_memory-notebook_001_1",
+          "rubric_content": {
+            "text_property": "correctly invokes run_skill_script with memory_notebook.py"
+          },
+          "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_memory-notebook_001_2",
+          "rubric_content": {
+            "text_property": "verifies execution output without cluttering context window"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "memory-notebook_002",
+      "conversation": [
+        {
+          "invocation_id": "inv_memory-notebook_002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Run memory-notebook task for target data"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "execution_confirmation"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "memory-notebook",
+                  "file_path": "scripts/memory_notebook.py",
+                  "positional_args": [
+                    "sample_value"
+                  ],
+                  "args": {}
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_memory-notebook_002_1",
+          "rubric_content": {
+            "text_property": "runs run_skill_script with memory_notebook.py inputs"
+          },
+          "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_memory-notebook_002_2",
+          "rubric_content": {
+            "text_property": "preserves data structure"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "memory-notebook_003",
+      "conversation": [
+        {
+          "invocation_id": "inv_memory-notebook_003",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Process batch operations using memory-notebook"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "batch_summary"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "memory-notebook",
+                  "file_path": "scripts/memory_notebook.py",
+                  "positional_args": [
+                    "batch_item_1"
+                  ],
+                  "args": {}
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_memory-notebook_003_1",
+          "rubric_content": {
+            "text_property": "handles multiple items properly"
+          },
+          "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_memory-notebook_003_2",
+          "rubric_content": {
+            "text_property": "produces clear structured batch output"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "memory-notebook_neg_001",
+      "conversation": [
+        {
+          "invocation_id": "inv_memory-notebook_neg_001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Summarize the architectural benefits of Google ADK 2.0"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "conceptual_summary"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_memory-notebook_neg_001_1",
+          "rubric_content": {
+            "text_property": "does not trigger memory-notebook"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "memory-notebook_neg_002",
+      "conversation": [
+        {
+          "invocation_id": "inv_memory-notebook_neg_002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "What is the capital of France?"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "factual_answer"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_memory-notebook_neg_002_1",
+          "rubric_content": {
+            "text_property": "does not trigger memory-notebook"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "memory-notebook_neg_003",
+      "conversation": [
+        {
+          "invocation_id": "inv_memory-notebook_neg_003",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Explain the internal implementation of memory-notebook without running tools"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "explanation_text"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_memory-notebook_neg_003_1",
+          "rubric_content": {
+            "text_property": "does not trigger memory-notebook"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    }
+  ]
+}
