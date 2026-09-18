@@ -337,8 +337,17 @@ class GameController:
         if act in ("RESET", "RESET_GAME"):
             return self.reset_game(reasoning=reasoning)
 
-        # クリック要求
-        if act in ("CLICK", "CLICK_AT", "ACTION6") or "x" in data or "coordinates" in data:
+        # クリック要求判定:
+        # 明示的に CLICK/ACTION6 が指定されているか、または act が明示的ステップでなく座標情報がある場合
+        is_explicit_click = act in ("CLICK", "CLICK_AT", "ACTION6")
+        has_coords = "x" in data or "coordinates" in data or "y" in data
+        is_explicit_step = False
+        if act:
+            step_id, _, _ = self.resolve_action_id(act)
+            if step_id != -1 and step_id != 6:
+                is_explicit_step = True
+
+        if is_explicit_click or (not is_explicit_step and has_coords):
             coords = data.get("coordinates") if isinstance(data.get("coordinates"), dict) else None
             x = data.get("x", coords.get("x") if coords else None)
             y = data.get("y", coords.get("y") if coords else None)

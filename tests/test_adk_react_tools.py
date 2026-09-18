@@ -1,26 +1,37 @@
-"""Google ADK 2.0 ネイティブ ReAct 観測ツール＆反復思考テスト (test_adk_react_tools.py).
+"""Google ADK 2.0 スキル構造＆3フェーズワークフローテスト (test_adk_react_tools.py).
 
 検証対象:
-1. ObservationTools の各ツール関数 (inspect_board, inspect_affordances, inspect_action_effect, inspect_roi)
-2. Google ADK 2.0 FunctionTool 宣言および SkillToolset との共存
-3. ADKGamePlayer + LocalQwenVL による自律的マルチターン ReAct 思考ループ (思考 -> ツール呼出 -> 観測反映 -> 行動決定)
+1. meta_skills/visual-inspector の VisualInspector コアエンジン
+2. SkillHarness の get_scoped_toolset による最小権限スキル分離
+3. ADKGamePlayer による 3フェーズ (Perceive -> Plan -> Act) パイプライン
 """
 
 from __future__ import annotations
 
-import asyncio
+import sys
+from pathlib import Path
 from typing import Any, Dict, List
 import numpy as np
 import pytest
 
-from google.adk.tools import FunctionTool
+# visual-inspector スクリプトのインポートパス解決
+_VISUAL_INSPECTOR_DIR = (
+    Path(__file__).resolve().parents[1]
+    / "meta_skills"
+    / "visual-inspector"
+    / "scripts"
+)
+if str(_VISUAL_INSPECTOR_DIR) not in sys.path and _VISUAL_INSPECTOR_DIR.exists():
+    sys.path.insert(0, str(_VISUAL_INSPECTOR_DIR))
+
+from visual_inspector import VisualInspector
 from acr_agi3.agent.adk_game_player import ADKGamePlayer
 from acr_agi3.agent.llm.local_vlm import LocalQwenVL
-from acr_agi3.tools.observation_tools import ObservationTools
+from acr_agi3.meta.skill_harness import SkillHarness
 
 
-class TestObservationToolsUnit:
-    """ObservationTools の各ツールの単体契約テスト."""
+class TestVisualInspectorUnit:
+    """meta_skills/visual-inspector の各分析機能の単体契約テスト."""
 
     @pytest.fixture
     def sample_grid(self) -> np.ndarray:
@@ -32,107 +43,75 @@ class TestObservationToolsUnit:
         return grid
 
     def test_inspect_board(self, sample_grid: np.ndarray) -> None:
-        ot = ObservationTools()
-        ot.update_context(grid=sample_grid, step_index=1, available_actions=["ACTION1", "ACTION2"])
-        res = ot.inspect_board()
+        vi = VisualInspector()
+        res = vi.inspect_board(sample_grid, step_index=1)
 
-        assert res.get("success") is True
         assert res.get("grid_dimensions") == [5, 5]
         assert 1 in res.get("foreground_colors", [])
         assert 2 in res.get("foreground_colors", [])
 
     def test_inspect_affordances(self, sample_grid: np.ndarray) -> None:
-        ot = ObservationTools()
-        ot.update_context(grid=sample_grid, step_index=1)
-        res = ot.inspect_affordances(detail=True)
+        vi = VisualInspector()
+        report = vi.analyze_frame(sample_grid)
 
-        assert res.get("success") is True
-        assert res.get("grid_shape") == [5, 5]
-        assert "style" in res
+        assert report.grid_shape == (5, 5)
+        assert report.style in ["OPEN_EXPLORATION", "CLOSED_MAZE", "ITEM_TRIGGER_PUZZLE", "SYMMETRIC_PATTERN"]
 
-    def test_inspect_action_effect(self, sample_grid: np.ndarray) -> None:
-        ot = ObservationTools()
-        # 直前アクションなし
-        res0 = ot.inspect_action_effect()
-        assert res0["is_effective"] is False
+    def test_scoped_toolsets_per_node(self) -> None:
+        """各ノードへ渡す SkillToolset が指定スキルのみに限定開示されているかを検証."""
+        harness = SkillHarness()
 
-        # 直前アクションあり
-        last_info = {
-            "action": "ACTION1",
-            "action_id": 1,
-            "pixels_changed": 4,
-            "is_effective": True,
-            "reasoning": "Moving up",
-        }
-        ot.update_context(
-            grid=sample_grid,
-            step_index=2,
-            last_action_info=last_info,
-            dynamics_map={"UP": 1},
-        )
-        res1 = ot.inspect_action_effect()
-        assert res1["is_effective"] is True
-        assert res1["pixels_changed"] == 4
-        assert res1["last_action"] == "ACTION1"
-        assert res1["dynamics_map"] == {"UP": 1}
+        # Node 1: visual-inspector のみ
+        ts1 = harness.get_scoped_toolset(["visual-inspector"])
+        s1_names = list(ts1._skills.keys())
+        assert "visual-inspector" in s1_names
+        assert "game-controller" not in s1_names
+        assert "memory-notebook" not in s1_names
 
-    def test_inspect_roi(self, sample_grid: np.ndarray) -> None:
-        ot = ObservationTools()
-        ot.update_context(grid=sample_grid)
-        res = ot.inspect_roi(top=0, left=0, height=3, width=3)
+        # Node 2: memory-notebook のみ
+        ts2 = harness.get_scoped_toolset(["memory-notebook"])
+        s2_names = list(ts2._skills.keys())
+        assert "memory-notebook" in s2_names
+        assert "visual-inspector" not in s2_names
+        assert "game-controller" not in s2_names
 
-        assert res.get("success") is True
-        assert res.get("subgrid_shape") == [3, 3]
-        # (1, 1) にある色 1 が含まれる
-        assert 1 in res.get("colors_in_roi", [])
-
-    def test_get_tools_returns_adk_function_tools(self) -> None:
-        ot = ObservationTools()
-        tools = ot.get_tools()
-        assert len(tools) == 4
-        tool_names = [t.name for t in tools]
-        assert "inspect_board" in tool_names
-        assert "inspect_affordances" in tool_names
-        assert "inspect_action_effect" in tool_names
-        assert "inspect_roi" in tool_names
-        for t in tools:
-            assert isinstance(t, FunctionTool)
+        # Node 3: game-controller のみ
+        ts3 = harness.get_scoped_toolset(["game-controller"])
+        s3_names = list(ts3._skills.keys())
+        assert "game-controller" in s3_names
+        assert "visual-inspector" not in s3_names
+        assert "memory-notebook" not in s3_names
 
 
-class TestADKReActLoop:
-    """エージェントによるマルチターン自律 ReAct 思考ループテスト."""
+class TestADKThreePhaseWorkflow:
+    """エージェントによる 3フェーズ (Perceive -> Plan -> Act) パイプラインテスト."""
 
-    def test_agent_multi_turn_react_loop(self) -> None:
-        """エージェントが複数ツールを自律的に呼び出し、観測結果を反映して決定することを検証."""
-        turn_counter = 0
+    def test_agent_three_phase_workflow_execution(self) -> None:
+        """3つのフェーズが順番に実行され、最終アクションが正しく決定されることを検証."""
+        calls = []
 
-        def react_simulation_fn(prompt: str, images: Any = None) -> Any:
-            nonlocal turn_counter
-            turn_counter += 1
-
-            if turn_counter == 1:
-                # ターン 1: 盤面の大域情報を観測したい
-                return {"tool_call": "inspect_board", "tool_args": {}}
-            elif turn_counter == 2:
-                # ターン 2: アフォーダンス (プレイヤー位置等) を詳細観測したい
-                assert "inspect_board" in prompt or "Tool response" in prompt
-                return {"tool_call": "inspect_affordances", "tool_args": {"detail": True}}
+        def simulation_fn(prompt: str, images: Any = None) -> Any:
+            calls.append(prompt)
+            # フェーズごとに適切な応答をシミュレート
+            if len(calls) == 1:
+                # Phase 1 (Perceive) への応答
+                return "Observation Summary: Player at (1, 1), Goal at (4, 4), layout is OPEN_EXPLORATION."
+            elif len(calls) == 2:
+                # Phase 2 (Plan) への応答
+                return "Plan Strategy: Immediate subgoal is to move towards Goal at (4, 4) avoiding deadlocks."
             else:
-                # ターン 3: 十分な観測が集まったので、最終アクションを決定
-                assert "inspect_affordances" in prompt or "Tool response" in prompt
+                # Phase 3 (Act) への応答
                 return (
                     '```json\n'
                     '{\n'
-                    '  "hypothesis": "Visual inspection verified clear path to target",\n'
-                    '  "goal": "Reach the green objective",\n'
                     '  "action": "ACTION1",\n'
-                    '  "reasoning": "Moving forward based on multi-turn tool observation"\n'
+                    '  "reasoning": "Moving up to advance towards goal"\n'
                     '}\n'
                     '```'
                 )
 
-        mock_vlm = LocalQwenVL(model_name_or_path="mock", generate_fn=react_simulation_fn)
-        player = ADKGamePlayer(model=mock_vlm, name="test_react_player")
+        mock_vlm = LocalQwenVL(model_name_or_path="mock", generate_fn=simulation_fn)
+        player = ADKGamePlayer(model=mock_vlm, name="test_3phase_player")
 
         grid = np.zeros((6, 6), dtype=int)
         grid[1, 1] = 1  # player
@@ -144,8 +123,8 @@ class TestADKReActLoop:
             state_str="NOT_FINISHED",
         )
 
-        # 3ターン (2回のツール呼び出し + 1回の最終決定) が実行されたことを確認
-        assert turn_counter == 3
+        # 3 つのフェーズ（Perceive -> Plan -> Act）が実行されたことを確認
+        assert len(calls) >= 3
         assert decision.action_id == 1
         assert decision.action_name == "ACTION1"
-        assert "multi-turn tool observation" in decision.reasoning
+        assert decision.metadata.get("success") is True

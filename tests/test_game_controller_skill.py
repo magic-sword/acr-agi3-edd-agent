@@ -104,3 +104,36 @@ def test_negative_controller_validation_flags_unavailable_action():
     assert validation["error"] is not None
     assert "disabled" in validation["error"] or "not in available actions" in validation["error"]
 
+
+def test_positive_step_action_with_extra_coordinates():
+    """正例 5: LLM が ACTION1 に冗長な coordinates を付加して出力した場合でも、誤って click_at にルーティングされず STEP として受理されること."""
+    controller = GameController(available_actions=[1, 2, 3, 4])
+    validation = controller.parse_and_validate({
+        "action": "ACTION1",
+        "coordinates": {"x": 1, "y": 1},
+        "reasoning": "Move forward",
+    })
+
+    assert validation["success"] is True
+    assert validation["action_type"] == "STEP"
+    assert validation["action_id"] == 1
+    assert validation["action_name"] == "ACTION1"
+    assert validation["error"] is None
+
+
+def test_positive_step_action_direction_name_with_coords():
+    """正例 6: 'UP' や 'ACTION2' に x, y が含まれていても、6 が利用不可の環境で正しく STEP として受理されること."""
+    controller = GameController(available_actions=[1, 2, 3, 4])
+    validation = controller.parse_and_validate({
+        "action": "ACTION2",
+        "x": 2,
+        "y": 2,
+        "reasoning": "Move down",
+    })
+
+    assert validation["success"] is True
+    assert validation["action_type"] == "STEP"
+    assert validation["action_id"] == 2
+    assert validation["error"] is None
+
+

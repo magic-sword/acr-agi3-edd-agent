@@ -130,10 +130,16 @@ def test_adk_game_player_rethink_on_rejected_action():
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            # 初回: 移動専用ゲームなのに click_at を提案してしまう
+            # Phase 1: Perceive
+            return "Perceive: Found player at (0, 0)."
+        elif call_count == 2:
+            # Phase 2: Plan
+            return "Plan: Move player towards goal."
+        elif call_count == 3:
+            # Phase 3 (Act 初回): 移動専用ゲームなのに誤って click_at を提案
             return '```json\n{\n  "action": "click_at",\n  "coordinates": {"x": 1, "y": 1},\n  "reasoning": "Try clicking tile"\n}\n```'
         else:
-            # 再検討: エラー通知を受けて ACTION2 (下移動) に自己修正
+            # Phase 3 (Act 再検討): エラー通知を受けて ACTION2 (下移動) に自己修正
             assert "ACTION REJECTED BY GAME CONTROLLER" in prompt
             return '```json\n{\n  "action": "ACTION2",\n  "reasoning": "Click was disabled, moving down instead"\n}\n```'
 
@@ -149,7 +155,7 @@ def test_adk_game_player_rethink_on_rejected_action():
         state_str="NOT_FINISHED",
     )
 
-    assert call_count == 2
+    assert call_count == 4
     assert decision.action_id == 2
     assert decision.action_name == "ACTION2"
     assert decision.metadata.get("rethink_attempts") == 1

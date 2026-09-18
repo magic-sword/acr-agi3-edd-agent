@@ -1,6 +1,6 @@
 # ARC-AGI-3 一新された処理フロー仕様書 (Current Workflow)
 
-本ドキュメントは、複雑な多分岐ルーティングや旧世代コードを全廃し、**「観測スキル・ツール（visual-inspector / ObservationTools）」＋「Google ADK 2.0 ReAct 反復思考（Planner Agent）」＋「出力スキル（game-controller）」** に一新された最新の自律ゲームプレイ処理フローをまとめたものです。
+本ドキュメントは、複雑な多分岐ルーティングやベタ書き個別関数（旧 ObservationTools）を全廃し、**Google ADK 2.0 準拠の 3 フェーズ自律ワークフロー（Node 1: Perceive ➔ Node 2: Plan ➔ Node 3: Act）とノードごとの最小限スキル開示（最小権限の原則）** に一新された最新のゲームプレイ処理フローをまとめたものです。
 
 ---
 
@@ -8,60 +8,43 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ 1. 視覚知覚・観測基盤: meta_skills/visual-inspector & ObservationTools       │
+│ 1. 視覚知覚・目視点検 (Node 1: Perceive Node)                                │
 │    ├─ [統合画面] 公式10色カラー盤面 ＋ コントローラーHUD (前回押下ボタン💡発光)│
-│    ├─ [客観事実] 盤面サイズ (H x W)、色一覧、Δ変化ピクセル数、有効キー一覧    │
-│    └─ [観測ツール] Google ADK 2.0 FunctionTool (思考中にオンデマンド呼出):   │
-│         • inspect_board: 大域幾何、色分布、ゲシュタルト分類、ゲームスタイル    │
-│         • inspect_affordances: プレイヤー候補、ゴール、障害物、インタラクティブ│
-│         • inspect_action_effect: 直前手による変位、効果判定、動的操作力学    │
-│         • inspect_roi: 注目領域 (ROI) の拡大・局所色パレット検査             │
+│    ├─ [客観事実] 盤面サイズ (H x W)、構成色、Δ変化ピクセル数、有効キー一覧    │
+│    └─ [最小権限スキル] meta_skills/visual-inspector (SkillToolset) のみ開示   │
+│         • 大域幾何、色分布、ゲシュタルト分類、自機・ゴール・連動ブロックの特定 │
+│         • 出力: Visual Observation Summary (盤面状況の客観的要約)            │
 └──────────────────────────────────────┬──────────────────────────────────────┘
                                        │
-                                       ▼
+                                       ▼ (観察レポートを引き渡し)
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ 2. 思考: Google ADK 2.0 ReAct 反復思考ループ (Self-Iterative Tool-Use Loop)  │
-│                                                                             │
-│    [ Node 1: perceive_node ]                                                │
-│      └─ 画像キャンバスと客観事実を CognitiveState に読み込み                  │
-│                        │                                                    │
-│                        ▼                                                    │
-│    [ Node 2: plan_node (Planner Agent: 人間適応原理に基づく思考＆ツールループ) ]│
-│      ├─ 4フェーズ認知プロトコル:                                             │
-│      │   Phase 1: [目視休止] 空間ゲシュタルト差分からパズル型分類            │
-│      │   Phase 2: [認識論的実験] 最小介入で物理法則・キーバインド解明       │
-│      │   Phase 3: [逆算プランニング] キーストーン固定と待避バッファの活用    │
-│      │   Phase 4: [失敗帰因・禁忌学習] 手詰まりをNo-Go化し能動リセット      │
-│      ├─ 長期記憶メタスキル (meta_skills/memory-notebook):                   │
-│      │   • しおり (TOC): `toc --format markdown` で既知知識を極小トークン想起│
-│      │   • しおり (Bookmark): `bookmark current_goal` で重要目標をピン留め   │
-│      │   • ペン (Pen): `write` で新ルール (rules.controls, nogo) を記録      │
-│      │   • 消しゴム (Eraser): `delete` / `clear` で棄却された誤仮説を即座に消去 │
-│      ├─ 思考中の自律的ツール呼び出し (ReAct Loop):                           │
-│      │   ① 記憶想起 (TOC) ➔ ② 状況分析 ➔ ③ 観測ツール呼出 (ROI / Affordance) │
-│      │   ➔ ④ 観測結果受領 ➔ ⑤ 新事実の記憶 (Pen) ➔ ⑥ 目標・最小手決定      │
-│      └─ 確定出力: PlanProposal { hypothesis, goal, action, reasoning, coords }│
+│ 2. 認知プランニング・記憶 (Node 2: Plan Node)                                │
+│    ├─ [人間適応原理] 逆算プランニング (Backward Chaining) ＆ 待避バッファ活用 │
+│    └─ [最小権限スキル] meta_skills/memory-notebook (SkillToolset) のみ開示   │
+│         • しおり (TOC): `toc --format markdown` で既知知識を極小トークン想起│
+│         • しおり (Bookmark): `bookmark current_goal` で重要目標をピン留め   │
+│         • ペン (Pen): `write` で新ルール (rules.controls, nogo) を記録      │
+│         • 消しゴム (Eraser): `delete` / `clear` で棄却された誤仮説を即座に消去 │
+│         • 出力: Immediate Subgoal & Strategy (直近サブゴールとキーストーン)  │
 └──────────────────────────────────────┬──────────────────────────────────────┘
                                        │
-                                       ▼
+                                       ▼ (サブゴールを引き渡し)
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ 3. 出力スキル: meta_skills/game-controller (決定論的 1手発行)                │
-│                                                                             │
-│    [ Node 3: act_node (GameController) ]                                    │
-│      ├─ 動的操作力学の解決 (resolve_action_id)                               │
-│      │   └─ LLMの「UP」指示を、同定済みの物理キーIDへ自動変換 (例: ACTION3)    │
-│      ├─ 幾何アフォーダンス吸着 (click_at)                                    │
-│      │   └─ クリック座標が省略・空セルの場合、有色オブジェクトの重心へ自動補正│
-│      └─ 出力: 100% 確実に環境へ発行可能な ActionDecision {action_id, coords}│
+│ 3. 1手確定・安全検証 (Node 3: Act Node)                                     │
+│    ├─ [最小権限スキル] meta_skills/game-controller (SkillToolset) のみ開示   │
+│    │    • 動的操作力学の解決 (UP -> ACTION3 等)                              │
+│    │    • 幾何アフォーダンス吸着 (クリック座標オートスナップ)                │
+│    │    • 無効ボタン（押せないアクション）のブロック ＆ 再検討 (Re-think)    │
+│    └─ 出力: 100% 確実に環境へ発行可能な ActionDecision {action_id, coords}  │
 └──────────────────────────────────────┬──────────────────────────────────────┘
                                        │
-                                       ▼
+                                       ▼ (確定した1手を環境へ発行)
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ 4. 環境実行 ＆ フィードバックループ (Environment Execution)                  │
 │    ├─ env.step(action) を実行                                               │
 │    ├─ 完了判定:                                                             │
 │    │   ├─ WIN (クリア) / GAME_OVER ──► [ 終了 ]                             │
-│    │   └─ 継続 ──────────────────────► [ Step + 1 として 1. 観測基盤へ戻る ]  │
+│    │   └─ 継続 ──────────────────────► [ Step + 1 として 1. Perceive へ戻る ]│
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 

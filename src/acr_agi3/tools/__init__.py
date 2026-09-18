@@ -1,5 +1,3 @@
-"""Google ADK 2.0 準拠・ゲームプレイ観測ツールパッケージ."""
+"""Google ADK 2.0 準拠・ゲームプレイツールパッケージ."""
 
-from acr_agi3.tools.observation_tools import ObservationTools
-
-__all__ = ["ObservationTools"]
+__all__: list[str] = []

@@ -92,6 +92,20 @@ class SkillHarness:
             tool_name_prefix=tool_name_prefix,
         )
 
+    def get_scoped_toolset(
+        self, skill_names: List[str], tool_name_prefix: Optional[str] = None
+    ) -> SkillToolset:
+        """指定されたスキルのみに絞り込んだ最小権限の SkillToolset を生成して返却."""
+        scoped_skills: List[Skill] = []
+        for name in skill_names:
+            skill = self.get_skill(name)
+            if skill and skill not in scoped_skills:
+                scoped_skills.append(skill)
+        return SkillToolset(
+            skills=scoped_skills,
+            tool_name_prefix=tool_name_prefix,
+        )
+
     def list_skills(self) -> List[Skill]:
         return self.skills
 
