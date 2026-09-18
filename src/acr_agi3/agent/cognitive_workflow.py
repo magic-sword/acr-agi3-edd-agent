@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from google.adk import Context
 from google.adk.workflow import Edge, FunctionNode, Workflow, START
 
-from acr_agi3.agent.workflow_schemas import PlanProposal, ReviewFeedback
+from acr_agi3.agent.workflow_schemas import PlanProposal
 from acr_agi3.harness.game_action_tools import ActionDecision
 
 logger = logging.getLogger(__name__)
@@ -29,8 +29,10 @@ class CognitiveState:
     stagnation_count: int = 0
     selected_skill: Optional[str] = None
     cognitive_mode: str = "direct_plan"
+    current_subgoal: str = ""
+    cognitive_intent: str = ""
+    method_known: bool = True
     plan_proposal: Optional[PlanProposal] = None
-    review_feedback: Optional[ReviewFeedback] = None
     final_decision: Optional[ActionDecision] = None
     routing_reason: str = ""
     is_probing: bool = False
@@ -42,50 +44,56 @@ class CognitiveState:
 def assess_cognitive_state(ctx: Context, state: CognitiveState) -> CognitiveState:
     """ステップ1: 状況認識とメタスキルルーティング (Assessment Node).
 
-    盤面状況、エピソード記憶、停滞カウント、プローブ状態、生成済みスキル状態から
+    盤面状況、エピソード記憶、停滞カウント、サブゴール進捗、認知意図から
     現在の認知フェーズを決定し、対応するルート (ctx.route) を設定する。
     """
     step = state.step
     stagnation = state.stagnation_count
     wm = (state.working_memory or "").lower()
 
-    # 1. ルート決定ルール (優先度順)
+    # 1. ルート決定ルール (人間の認知優先度順)
     if stagnation >= 2 or "stagnant" in wm or "barrier hit" in wm or "trap" in wm:
-        # 停滞・壁衝突・トラップ: Taboo Reset Guard (禁忌学習 & マクロ解除 & リセット判定)
+        # 停滞・壁衝突・手詰まり: Taboo Reset Guard (禁忌学習 & マクロ解除 & リセット判定)
         route = "route_taboo_reset"
         skill = "taboo-reset-guard"
         mode = "taboo_reset"
-        reason = f"Stagnation detected (stagnation_count={stagnation} >= 2) or obstacle/trap in memory"
-    elif state.is_macro_mode and state.active_macro_skill:
-        # 承認済み生成マクロスキル実行: Macro Execution (高速バイパス)
+        reason = f"Stagnation detected (stagnation_count={stagnation} >= 2) or barrier in memory, engaging taboo guard"
+    elif state.is_macro_mode and state.active_macro_skill and not state.is_probing:
+        # 承認済みマクロスキル実行: Fast Macro Execution (LLM推論バイパス)
         route = "route_macro_execution"
         skill = state.active_macro_skill
         mode = "macro_execution"
-        reason = f"Executing verified generated macro skill '{state.active_macro_skill}'"
-    elif state.is_probing or "unknown" in wm or "probe" in wm:
-        # 未解明ルール・アフォーダンス探索: Epistemic Prober (能動探索・反証行動)
+        reason = f"Executing verified macro skill '{state.active_macro_skill}'"
+    elif (
+        state.is_probing
+        or state.cognitive_intent == "PROBE"
+        or not state.method_known
+        or "unknown" in wm
+        or "probe" in wm
+    ):
+        # サブゴール達成手法が未知 / 操作法則未解明: Epistemic Prober (能動探索・実験)
         route = "route_epistemic_probe"
         skill = "epistemic-prober"
         mode = "epistemic_probe"
-        reason = "Active probing phase or unknown affordances in working memory"
-    elif step <= 1 or "initial inspection needed" in wm:
+        reason = f"Subgoal '{state.current_subgoal or 'unknown'}' method is unknown or probing requested, requiring epistemic probing"
+    elif step <= 1 or "initial inspection needed" in wm or "inspect" in wm:
         # 初手: Visual Inspection (目視点検 & ゲシュタルト構造解析)
         route = "route_visual_inspection"
         skill = "visual-inspector"
         mode = "visual_inspection"
-        reason = f"Initial step (step={step}) or visual inspection requested"
-    elif "target far" in wm or "path blocked" in wm or "complex" in wm:
-        # 遠隔ゴール・障害物迂回: Backward Planner (逆算プランニング)
+        reason = f"Initial step (step={step}): inspecting overall gestalt and entities"
+    elif "target far" in wm or "path blocked" in wm or "complex" in wm or state.cognitive_intent == "PLAN":
+        # 遠隔ゴール・障害物迂回・大目標逆算: Backward Planner (逆算プランニング & サブゴール分解)
         route = "route_backward_plan"
         skill = "backward-planner"
         mode = "backward_plan"
-        reason = "Target far or path blocked, backward chaining needed"
+        reason = "Decomposing goal into milestones and sequencing subgoals via backward chaining"
     else:
         # 通常前進行動: Direct Macro Plan
         route = "route_direct_plan"
         skill = "macro-skill-compiler"
         mode = "direct_plan"
-        reason = "Standard progression without stagnation, macro-skill execution"
+        reason = "Standard progression without stagnation, direct action plan"
 
     state.selected_skill = skill
     state.cognitive_mode = mode
@@ -148,57 +156,45 @@ def macro_execution_node(state: CognitiveState) -> CognitiveState:
     return state
 
 
-def reviewer_audit_node(state: CognitiveState) -> CognitiveState:
-    """合流ノード: 3点客観監査 (Reviewer Audit Node).
-
-    すべての認知フェーズから提案された計画に対し、客観的ゲートキーパーとして
-    座標妥当性、無駄打ち抑止、禁忌回避の監査を行う。
-    """
-    logger.info("⚖️ [reviewer_audit_node] Auditing plan proposed under skill '%s'", state.selected_skill)
-    if state.plan_proposal is None:
-        state.plan_proposal = PlanProposal(
-            hypothesis=f"Action guided by {state.selected_skill}",
-            goal="Advance game exploration",
-            action="UP",
-            reasoning="Default exploration action",
-            load_skill=state.selected_skill,
-        )
-    return state
-
-
 def act_finalizer_node(state: CognitiveState) -> CognitiveState:
     """終端ノード: 実行アクション確定 (Act Finalizer Node).
 
-    Reviewer の監査と GameController の検証を経て最終 ActionDecision を構築する。
+    提案された計画と GameController の検証を経て最終 ActionDecision を構築する。
     """
     plan = state.plan_proposal
     raw_action = (plan.action if plan else "UP").upper()
-    action_map = {
-        "RESET": (0, "RESET"),
-        "ACTION1": (1, "ACTION1"),
-        "ACTION2": (2, "ACTION2"),
-        "ACTION3": (3, "ACTION3"),
-        "ACTION4": (4, "ACTION4"),
-        "ACTION5": (5, "ACTION5"),
-        "ACTION6": (6, "ACTION6"),
-        "ACTION7": (7, "ACTION7"),
-        "UP": (1, "ACTION1"),
-        "DOWN": (2, "ACTION2"),
-        "LEFT": (3, "ACTION3"),
-        "RIGHT": (4, "ACTION4"),
-        "CLICK": (6, "ACTION6"),
-    }
-    action_id, action_name = action_map.get(raw_action, (1, "ACTION1"))
+    # meta_skills/game-controller の GameController による安全・決定論的検証
     coords = plan.coordinates if plan else None
-    action_type = "CLICK" if action_id == 6 else ("RESET" if action_id == 0 else "STEP")
+    reasoning = plan.reasoning if plan else "Workflow executed"
+    action_type = "STEP"
+    action_id = 1
+    action_name = "ACTION1"
+
+    try:
+        from game_controller import GameController
+        controller = GameController()
+        payload = {"action": raw_action, "reasoning": reasoning}
+        if coords:
+            payload["coordinates"] = coords
+        val = controller.parse_and_validate(payload, grid=state.observation)
+        action_type = val["action_type"]
+        action_id = val["action_id"]
+        action_name = val["action_name"]
+        coords = val.get("coordinates")
+        reasoning = val.get("reasoning", reasoning)
+    except Exception:
+        # 最低限のフォールバック
+        action_type = "CLICK" if "CLICK" in raw_action or "6" in raw_action else "STEP"
+        action_id = 6 if action_type == "CLICK" else 1
+        action_name = "ACTION6" if action_type == "CLICK" else "ACTION1"
 
     decision = ActionDecision(
         action_type=action_type,
-        action_name=raw_action,
+        action_name=action_name,
         action_id=action_id,
         coordinates=coords,
-        reasoning=plan.reasoning if plan else "Workflow executed",
-        loaded_skill=state.selected_skill,
+        reasoning=reasoning,
+        loaded_skill=state.selected_skill or "game-controller",
     )
     state.final_decision = decision
     logger.info(
@@ -217,8 +213,6 @@ def build_cognitive_workflow(name: str = "cognitive_game_workflow") -> Workflow:
     node_taboo = FunctionNode(func=taboo_reset_node, name="taboo_reset_node")
     node_direct = FunctionNode(func=direct_plan_node, name="direct_plan_node")
     node_macro = FunctionNode(func=macro_execution_node, name="macro_execution_node")
-
-    node_reviewer = FunctionNode(func=reviewer_audit_node, name="reviewer_audit_node")
     node_finalizer = FunctionNode(func=act_finalizer_node, name="act_finalizer_node")
 
     edges = [
@@ -233,16 +227,13 @@ def build_cognitive_workflow(name: str = "cognitive_game_workflow") -> Workflow:
         Edge(from_node=node_assess, to_node=node_direct, route="route_direct_plan"),
         Edge(from_node=node_assess, to_node=node_macro, route="route_macro_execution"),
 
-        # 各認知ノード -> Reviewer Audit (合流)
-        Edge(from_node=node_vis, to_node=node_reviewer),
-        Edge(from_node=node_probe, to_node=node_reviewer),
-        Edge(from_node=node_backward, to_node=node_reviewer),
-        Edge(from_node=node_taboo, to_node=node_reviewer),
-        Edge(from_node=node_direct, to_node=node_reviewer),
-        Edge(from_node=node_macro, to_node=node_reviewer),
-
-        # Reviewer Audit -> Act Finalizer
-        Edge(from_node=node_reviewer, to_node=node_finalizer),
+        # 各認知ノード -> Act Finalizer (直接合流)
+        Edge(from_node=node_vis, to_node=node_finalizer),
+        Edge(from_node=node_probe, to_node=node_finalizer),
+        Edge(from_node=node_backward, to_node=node_finalizer),
+        Edge(from_node=node_taboo, to_node=node_finalizer),
+        Edge(from_node=node_direct, to_node=node_finalizer),
+        Edge(from_node=node_macro, to_node=node_finalizer),
     ]
 
     return Workflow(name=name, edges=edges)

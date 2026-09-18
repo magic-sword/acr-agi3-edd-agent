@@ -17,7 +17,6 @@ from acr_agi3.agent.cognitive_workflow import (
     backward_plan_node,
     taboo_reset_node,
     direct_plan_node,
-    reviewer_audit_node,
     act_finalizer_node,
 )
 from acr_agi3.agent.workflow_schemas import PlanProposal
@@ -101,5 +100,6 @@ def test_act_finalizer_decision():
     )
     res = act_finalizer_node(state)
     assert res.final_decision is not None
-    assert res.final_decision.action_name == "RIGHT"
+    assert res.final_decision.action_name in ("RIGHT", "ACTION4")
+    assert res.final_decision.action_id == 4
     assert res.final_decision.loaded_skill == "visual-inspector"

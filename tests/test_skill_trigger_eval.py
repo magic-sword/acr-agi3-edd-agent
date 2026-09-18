@@ -37,11 +37,6 @@ def test_positive_backward_planner_trigger_on_complex_maze():
             "action": "RIGHT",
             "reasoning": "First milestone determined by backward plan",
         }),
-        # 3. Reviewer: 承認
-        json.dumps({
-            "status": "APPROVED",
-            "critique": "Sound milestone-based plan generated via backward-planner",
-        }),
     ]
 
     def mock_fn(prompt: str) -> str:
@@ -78,11 +73,6 @@ def test_positive_visual_inspector_trigger_on_novel_board():
             "goal": "Step down into open passage",
             "action": "DOWN",
             "reasoning": "Passage identified below player",
-        }),
-        # 3. Reviewer: 承認
-        json.dumps({
-            "status": "APPROVED",
-            "critique": "Visual inspection verified passage clearance",
         }),
     ]
 
@@ -121,11 +111,6 @@ def test_positive_epistemic_prober_trigger_on_ambiguous_affordance():
             "action": "RIGHT",
             "reasoning": "Contact test",
         }),
-        # 3. Reviewer: 承認
-        json.dumps({
-            "status": "APPROVED",
-            "critique": "Epistemic probe hypothesis clear and testable",
-        }),
     ]
 
     def mock_fn(prompt: str) -> str:
@@ -159,11 +144,6 @@ def test_negative_no_skill_trigger_on_trivial_straight_move():
             "load_skill": None,
             "reasoning": "Goal is adjacent, immediate 1-step clear",
         }),
-        # 2. Reviewer: 即時承認
-        json.dumps({
-            "status": "APPROVED",
-            "critique": "Direct goal step, no expert skills needed",
-        }),
     ]
 
     def mock_fn(prompt: str) -> str:
@@ -195,11 +175,6 @@ def test_negative_invalid_skill_fallback():
             "load_skill": "super-imaginary-cheat-skill-999",
             "reasoning": "Trying unknown skill",
         }),
-        # 2. Reviewer: 承認またはフォールバック
-        json.dumps({
-            "status": "APPROVED",
-            "critique": "Fall back to valid action UP",
-        }),
     ]
 
     def mock_fn(prompt: str) -> str:
@@ -218,31 +193,16 @@ def test_negative_invalid_skill_fallback():
     assert decision.action_name == "ACTION1"
 
 
-def test_negative_reviewer_flags_unjustified_skill_loop():
-    """負例 3: 計画性なく同じスキルを無意味に要求し続けた場合、Reviewer が指摘して行動へ修正させること."""
+def test_negative_invalid_action_fallback():
+    """負例 3: モデルが無効・存在しないアクション名を指定した場合、利用可能アクションへ安全にフォールバックすること."""
     call_idx = 0
     responses = [
-        # 1. Planner: アクションを決めずにスキル要求のみ
+        # 1. Planner: 存在しないアクション (TELEPORT) を提案
         json.dumps({
-            "hypothesis": "Still analyzing",
-            "goal": "Read more instructions",
-            "action": "UP",
-            "load_skill": "visual-inspector",
-            "reasoning": "Re-reading visual inspector again",
-        }),
-        # 2. Planner (展開後も曖昧なまま):
-        json.dumps({
-            "hypothesis": "Still reading",
-            "goal": "Wait",
-            "action": "UP",
-            "reasoning": "Hesitant",
-        }),
-        # 3. Reviewer: REVISE (行動の意図性が薄い)
-        json.dumps({
-            "status": "REVISE",
-            "critique": "Repeated inspection without taking concrete movement. Commit to moving DOWN toward the open path.",
-            "suggested_fix": "Select DOWN to explore the lower corridor",
-            "refined_action": "DOWN",
+            "hypothesis": "Confused model output",
+            "goal": "Instant teleport",
+            "action": "TELEPORT",
+            "reasoning": "Hallucinated action",
         }),
     ]
 
@@ -253,10 +213,9 @@ def test_negative_reviewer_flags_unjustified_skill_loop():
         return responses[idx]
 
     mock_llm = LocalTransformersLlm(model_name_or_path="mock", generation_fn=mock_fn)
-    player = ADKGamePlayer(model=mock_llm, name="test_loop_player", app_name="test_app_loop")
+    player = ADKGamePlayer(model=mock_llm, name="test_invalid_act_player", app_name="test_app_inv")
     grid = np.zeros((8, 8), dtype=np.uint8)
 
     decision = player.decide_next_action(grid=grid, available_actions=[1, 2, 3, 4])
-    # Reviewer の refined_action ("DOWN") が適用される
-    assert decision.action_id == 2
-    assert decision.action_name == "ACTION2"
+    # 利用可能なアクション（available_actions）の中から有効なIDが選ばれること
+    assert decision.action_id in [1, 2, 3, 4]

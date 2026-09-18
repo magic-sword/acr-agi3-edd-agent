@@ -215,29 +215,43 @@ class OnlineSkillDeveloper:
                 dr = int(round(c_r - p_r))
                 dc = int(round(c_c - p_c))
 
-        # 方向ベクトルの同定
+        # 方向ベクトルの同定 (主軸判定によるロバスト推定)
         direction = None
-        if dr < 0 and dc == 0:
-            direction = "UP"
-        elif dr > 0 and dc == 0:
-            direction = "DOWN"
-        elif dr == 0 and dc < 0:
-            direction = "LEFT"
-        elif dr == 0 and dc > 0:
-            direction = "RIGHT"
+        if abs(dr) > abs(dc) and abs(dr) > 0:
+            direction = "UP" if dr < 0 else "DOWN"
+        elif abs(dc) > abs(dr) and abs(dc) > 0:
+            direction = "LEFT" if dc < 0 else "RIGHT"
+        elif dr != 0 or dc != 0:
+            if dr < 0:
+                direction = "UP"
+            elif dr > 0:
+                direction = "DOWN"
+            elif dc < 0:
+                direction = "LEFT"
+            elif dc > 0:
+                direction = "RIGHT"
 
         if direction:
             self.action_semantics[direction] = action_id
             self.reverse_action_map[action_id] = (dr, dc)
             logger.info(
-                "🧪 [Epistemic Invariant Identified] ACTION%d -> %s (dr=%d, dc=%d) | Agent Color: %s",
+                "🧪 [Epistemic Invariant Identified] ACTION%s -> %s (dr=%d, dc=%d) | Agent Color: %s",
                 action_id, direction, dr, dc, self.agent_color
             )
 
-        # 4方向が揃ったか、または主要方向が同定されたら力学確立
-        if len(self.action_semantics) >= 3:
+        # クリック・トグル型アクションの効果同定
+        if action_id == 6 or "6" in str(action_id):
+            self.is_click_game = True
+            logger.info("🧪 [Epistemic Affordance Identified] ACTION6 confirmed as effective interact/click actuator (ΔPixels: %d)", diff_count)
+
+        # 4方向が揃ったか、あるいは対向軸（上下または左右）が同定されたら力学確立
+        has_nav = ("UP" in self.action_semantics or "DOWN" in self.action_semantics) and ("LEFT" in self.action_semantics or "RIGHT" in self.action_semantics)
+        if len(self.action_semantics) >= 2 and has_nav:
             self.is_dynamics_identified = True
-            logger.info("🎉 [Environmental Dynamics Fully Identified] Invariant Action Map: %s", self.action_semantics)
+            logger.info("🎉 [Environmental Dynamics Identified via Probing] Invariant Action Map: %s", self.action_semantics)
+        elif self.is_click_game and diff_count > 0:
+            self.is_dynamics_identified = True
+            logger.info("🎉 [Click Dynamics Identified via Probing] Interactive click affordance verified.")
 
         return {
             "identified": direction is not None,

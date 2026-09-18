@@ -26,7 +26,7 @@ class TestADKGamePlayerSkillCycle(unittest.TestCase):
             reasoning="Fallback mock reasoning",
             loaded_skill="taboo-reset-guard",
         )
-        self.player._run_plan_review_act_workflow = AsyncMock(return_value=fallback_decision)
+        self.player._run_plan_act_workflow = AsyncMock(return_value=fallback_decision)
 
     def test_epistemic_probe_then_synthesize_and_macro_execute(self):
         """プローブから同定、スキル合成、マクロ実行、停滞時解除までの全フロー検証."""

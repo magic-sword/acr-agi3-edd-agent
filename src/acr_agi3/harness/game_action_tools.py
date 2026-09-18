@@ -1,14 +1,31 @@
 """ARC-AGI-3 ゲーム操作ツールセット (Google ADK 2.0 Function Tools).
 
-LLM/VLM がゲーム環境を操作するためのツール群を提供します。
-決定論的なハードコードではなく、LLM 自身の Function Calling により
-移動アクション（step_action）や座標指定クリック（click_at）、能動的リセット（reset_game）を選択・実行します。
+LLM/VLM がゲーム環境を操作するための 1 手実行ツール群を提供します。
+決定論的なハードコードではなく、メタスキル `game-controller` の検証エンジンと
+同定済み操作力学マップ（Invariant Action Map）に基づき、
+方向移動（step_action）、座標指定・幾何吸着クリック（click_at）、能動的リセット（reset_game）を実行します。
 """
 
 from __future__ import annotations
 
 import dataclasses
+import logging
+import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
+
+# meta_skills/game-controller から GameController をインポート
+_SKILL_DIR = Path(__file__).resolve().parents[3] / "meta_skills" / "game-controller" / "scripts"
+if str(_SKILL_DIR) not in sys.path:
+    sys.path.insert(0, str(_SKILL_DIR))
+
+try:
+    from game_controller import GameController
+except ImportError:
+    # パスが異なる場合のフォールバックインポート
+    GameController = None
 
 
 @dataclasses.dataclass
@@ -27,24 +44,20 @@ class ActionDecision:
 class GameActionTools:
     """ゲーム環境操作を ADK 2.0 ツールとして公開し、決定をバッファリングするハーネス."""
 
-    ACTION_MAP = {
-        "RESET": 0,
-        "ACTION1": 1,
-        "ACTION2": 2,
-        "ACTION3": 3,
-        "ACTION4": 4,
-        "ACTION5": 5,
-        "ACTION6": 6,
-        "ACTION7": 7,
-        "UP": 1,
-        "DOWN": 2,
-        "LEFT": 3,
-        "RIGHT": 4,
-        "CLICK": 6,
-    }
-
-    def __init__(self, available_actions: Optional[List[int]] = None) -> None:
+    def __init__(
+        self,
+        available_actions: Optional[List[int]] = None,
+        dynamics_map: Optional[Dict[str, int]] = None,
+    ) -> None:
         self.available_action_ids: List[int] = available_actions or [1, 2, 3, 4]
+        self.dynamics_map: Dict[str, int] = dict(dynamics_map or {})
+        if GameController is not None:
+            self.controller = GameController(
+                available_actions=self.available_action_ids,
+                dynamics_map=self.dynamics_map,
+            )
+        else:
+            self.controller = None
         self.pending_decision: Optional[ActionDecision] = None
         self.history: List[ActionDecision] = []
 
@@ -52,67 +65,117 @@ class GameActionTools:
         """現在のターンで利用可能なアクション ID を更新."""
         self.available_action_ids = available_actions
         self.pending_decision = None
+        if self.controller is not None:
+            self.controller.set_available_actions(available_actions)
+
+    def set_dynamics_map(self, dynamics_map: Dict[str, int]) -> None:
+        """同定された操作力学マップを注入・更新."""
+        self.dynamics_map = dict(dynamics_map or {})
+        if self.controller is not None:
+            self.controller.set_dynamics_map(self.dynamics_map)
 
     def step_action(self, action: str, reasoning: str = "") -> str:
-        """ゲーム環境で指定されたボタンまたは方向キーのアクションを実行します。
+        """ゲーム環境で指定された方向キーまたはボタンのアクションを実行します。
 
         Args:
-            action: 実行するアクション名 ("UP", "DOWN", "LEFT", "RIGHT", "ACTION1"〜"ACTION7")。
+            action: 移動方向 ("UP", "DOWN", "LEFT", "RIGHT") またはアクション名 ("ACTION1"〜"ACTION7")。
             reasoning: この行動を選択した戦略的理由。
         """
-        act_clean = action.strip().upper()
-        act_id = self.ACTION_MAP.get(act_clean)
-
-        if act_id is None:
-            # 数値文字列対応
-            try:
-                act_id = int(act_clean)
-            except ValueError:
-                act_id = self.available_action_ids[0] if self.available_action_ids else 1
-
-        if act_id not in self.available_action_ids and act_id != 0:
+        if self.controller is not None:
+            res = self.controller.step_action(direction=action, reasoning=reasoning)
+            self.pending_decision = ActionDecision(
+                action_type=res["action_type"],
+                action_name=res["action_name"],
+                action_id=res["action_id"],
+                coordinates=None,
+                reasoning=res["reasoning"],
+                loaded_skill="game-controller",
+            )
+        else:
+            # フォールバック
             act_id = self.available_action_ids[0] if self.available_action_ids else 1
+            self.pending_decision = ActionDecision(
+                action_type="STEP",
+                action_name=action.upper(),
+                action_id=act_id,
+                coordinates=None,
+                reasoning=reasoning,
+                loaded_skill="game-controller",
+            )
 
-        self.pending_decision = ActionDecision(
-            action_type="STEP",
-            action_name=act_clean,
-            action_id=act_id,
-            reasoning=reasoning,
-        )
         self.history.append(self.pending_decision)
-        return f"Action `{act_clean}` (ID: {act_id}) scheduled for execution. Reason: {reasoning}"
+        return (
+            f"Action `{action}` (ID: {self.pending_decision.action_id}) "
+            f"scheduled. Reason: {self.pending_decision.reasoning}"
+        )
 
-    def click_at(self, x: int, y: int, reasoning: str = "") -> str:
-        """指定された盤面座標 (列 x, 行 y) をクリックします。
+    def click_at(
+        self,
+        x: Optional[int] = None,
+        y: Optional[int] = None,
+        grid: Optional[Any] = None,
+        reasoning: str = "",
+    ) -> str:
+        """指定された盤面座標または自動検出オブジェクトをクリックします (ACTION6).
 
         Args:
-            x: クリック対象の列インデックス (Column, 0-indexed horizontal coordinate)。
-            y: クリック対象の行インデックス (Row, 0-indexed vertical coordinate)。
-            reasoning: この座標をクリックする戦略的理由。
+            x: クリック対象の列インデックス (0-indexed)。省略時はオブジェクト重心へスナップ。
+            y: クリック対象の行インデックス (0-indexed)。省略時はオブジェクト重心へスナップ。
+            grid: 盤面グリッド配列 (重心吸着に使用)。
+            reasoning: このクリックを選択した戦略的理由。
         """
-        click_act_id = 6  # ACTION6 (標準クリックアクション)
-        self.pending_decision = ActionDecision(
-            action_type="CLICK",
-            action_name="ACTION6",
-            action_id=click_act_id,
-            coordinates={"x": int(x), "y": int(y)},
-            reasoning=reasoning,
-        )
+        if self.controller is not None:
+            res = self.controller.click_at(x=x, y=y, grid=grid, reasoning=reasoning)
+            self.pending_decision = ActionDecision(
+                action_type=res["action_type"],
+                action_name=res["action_name"],
+                action_id=res["action_id"],
+                coordinates=res["coordinates"],
+                reasoning=res["reasoning"],
+                loaded_skill="game-controller",
+            )
+        else:
+            safe_x = x if x is not None else 0
+            safe_y = y if y is not None else 0
+            self.pending_decision = ActionDecision(
+                action_type="CLICK",
+                action_name="ACTION6",
+                action_id=6,
+                coordinates={"x": safe_x, "y": safe_y},
+                reasoning=reasoning,
+                loaded_skill="game-controller",
+            )
+
         self.history.append(self.pending_decision)
-        return f"Click scheduled at coordinate (x={x}, y={y}). Reason: {reasoning}"
+        coords = self.pending_decision.coordinates
+        return f"Click scheduled at coordinate {coords}. Reason: {self.pending_decision.reasoning}"
 
     def reset_game(self, reasoning: str = "") -> str:
-        """現在のレベルをリセットして初期状態に戻します（デッドロックや手詰まり時の能動的リセット）。
+        """現在のレベルをリセットして初期状態に戻します（手詰まり時の能動的リセット）.
 
         Args:
-            reasoning: リセットを決断した理由（ループ検知、行き止まりなど）。
+            reasoning: リセットを決断した理由。
         """
-        self.pending_decision = ActionDecision(
-            action_type="RESET",
-            action_name="RESET",
-            action_id=0,
-            reasoning=reasoning,
-        )
+        if self.controller is not None:
+            res = self.controller.reset_game(reasoning=reasoning)
+            self.pending_decision = ActionDecision(
+                action_type="RESET",
+                action_name="RESET",
+                action_id=0,
+                coordinates=None,
+                reasoning=res["reasoning"],
+                loaded_skill="game-controller",
+            )
+        else:
+            self.pending_decision = ActionDecision(
+                action_type="RESET",
+                action_name="RESET",
+                action_id=0,
+                coordinates=None,
+                reasoning=reasoning,
+                loaded_skill="game-controller",
+            )
+
         self.history.append(self.pending_decision)
         return f"Environment reset scheduled. Reason: {reasoning}"
 

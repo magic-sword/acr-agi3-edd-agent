@@ -1,15 +1,15 @@
 ---
 name: visual-inspector
 description: |
-  Comprehensive visual perception engine: extracts affordances, visual objects, gestalt differences, and game style.
-  Implements the human visual inspection pause protocol at level onset and classifies environment genres.
-  Use whenever inspecting game frames, extracting affordances (agent, obstacles, goals), comparing targets, or classifying game style.
+  Official visual inspection and console observation engine for ARC-AGI-3 dynamic games.
+  Provides integrated console screen perception (game board + controller HUD with highlighted buttons)
+  and human visual inspection pause protocols for LLM visual recognition and causal grounding.
   Do NOT use for high-level multi-step planning or executing primitive actions.
 license: MIT
 allowed-tools: run_skill_script load_skill_resource
 metadata:
   pattern: workflow
-  version: "2.0.0"
+  version: "2.1.0"
   inputs:
     - name: current_grid
       type: list[list[int]] | numpy.ndarray
@@ -30,59 +30,54 @@ metadata:
     - name: style
       type: str
       description: Classified game genre (OPEN_EXPLORATION, CLOSED_MAZE, ITEM_TRIGGER_PUZZLE, SYMMETRIC_PATTERN)
-    - name: affordances
-      type: dict
-      description: Extracted agent position, goals, rails, obstacles, and open travel space
-    - name: invariants_hypothesized
-      type: list[str]
-      description: High-level physical rule hypotheses
+    - name: grid_dimensions
+      type: list[int]
+      description: Board dimensions [height, width]
+    - name: active_colors
+      type: list[int]
+      description: Palette of active foreground colors present
 ---
 
 # Visual Inspector
 
 ## When to use
-- At Step 0 of any new ACR-AGI-3 level or newly initialized board.
-- When inspecting observation frames to extract visual affordances (agent position, target candidates, obstacles).
-- When analyzing the spatial gestalt gap between starting layout and target sequence.
-- When classifying the game style/genre (Open Exploration, Closed Maze, Item Trigger, Symmetric Pattern).
-- When formulating initial invariant hypotheses before taking premature actions.
+- At Step 0 of any new ACR-AGI-3 level or newly initialized board (Visual Inspection Pause).
+- When inspecting the integrated console image (game board + controller HUD).
+- When cross-referencing which button on the HUD was highlighted with visual displacement on the board.
+- When classifying the spatial gestalt gap between starting layout and target sequence.
+- When allowing the multimodal LLM to visually discover objects, causality, and affordances.
 
 ## When NOT to use
-- During mid-episode primitive action execution (use compiled macro-skills).
-- For resolving deep causal deadlocks or lethal trap collisions (use `taboo-reset-guard`).
+- For deterministic hardcoded guessing of player/goal positions (the LLM must recognize these visually).
+- During mid-episode primitive action execution (use `game-controller`).
 - For multi-step backward subgoal decomposition (use `backward-planner`).
 
 ## Workflow
 1. **Visual Reconnaissance & Inspection**:
-   - Inspect the main game grid to identify agent position, target candidates, fixed rails, and obstacle boundaries.
-   - Inspect the lower game console HUD (D-Pad, Action Buttons, and RESET). Cross-reference the actively highlighted button (last executed action) with visual displacement on the board to verify action-outcome contingency.
+   - Observe the full console canvas containing both the game board (top) and the physical controller HUD (bottom).
+   - Check the highlighted/glowing button on the HUD to see exactly which action was just executed.
+   - Use visual Gestalt perception to observe what moved, appeared, or disappeared on the board.
 2. **Gestalt Difference & Genre Classification**:
-   - Classify layout difference against target (Reversal, Interleaved, Identity) and detect overall game style.
-   ```bash
-   python scripts/visual_inspector.py --grid '[[0,0],[1,2]]' --target '[2,1]' --step 0
-   ```
-3. **Affordance & Invariant Report Emission**:
-   - Emit structured report to guide downstream `epistemic-prober` and `backward-planner`.
+   - Compare current layout against target layout (if provided) to identify transformation style.
+   - Observe whether the game is open movement, maze navigation, click-based toggle, or pattern completion.
+3. **Causal Grounding**:
+   - Ground the button action to visual pixel changes without hardcoded assumptions.
 
 ## Examples
-- Input: `current_grid=[[0, 0], [1, 2]]`, `target=[2, 1]`, `step=0`
-  → Output: `{"pause_required": true, "diff_type": "REVERSAL_REORDER", "style": "CLOSED_MAZE", "affordances": {...}}`
-
-## Output format
-- Structured JSON containing `pause_required`, `diff_type`, `style`, `affordances`, and `invariants_hypothesized`.
+- Example 1 (Initial level onset):
+  - Input: `current_grid` at `step_index: 0`
+  - Output: `{"pause_required": true, "recommended_action": "NO_OP", "grid_dimensions": [15, 15]}`
+- Example 2 (Causal frame inspection):
+  - Inspecting console image reveals `ACTION4` (Right) was executed, and a blue square shifted right by 1 cell.
 
 ## Anti-patterns to avoid
-- Do not execute actions at step 0 before evaluating target difference and affordance layout.
-- Do not assume agent coordinate is always color 2 without checking motion displacement.
-- Do not read large scripts into LLM context window without running `--help`.
+- Do not use hardcoded programs to guess which object is the player or target; let the multimodal LLM determine roles via visual recognition.
+- Do not blindly assume there is only one controllable object; observe if multiple objects move simultaneously or if the game is click-driven.
 
 ## Requirements & Prerequisites
 - Python: >= 3.10
-- Dependencies: numpy
+- Dependencies: standard library (json, collections, argparse), numpy
 
 ## Bundled Resources
-### `scripts/` (Executable Tools - Zero-dependency)
-- `scripts/visual_inspector.py`: Deterministic CLI tool for unified visual inspection & affordance extraction.
-
-### `references/` (On-Demand Knowledge)
-- `references/guide.md`: Specifications, human inspection pause patterns, visual gestalt, and game genre taxonomy.
+### `scripts/` (Executable Tools)
+- `scripts/visual_inspector.py`: Deterministic helper for grid dimensions, color palette, and gestalt diff classification.

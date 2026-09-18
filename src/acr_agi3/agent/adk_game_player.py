@@ -1,8 +1,8 @@
 """Google ADK 2.0 準拠・自律ワークフロー駆動型ゲームプレイエージェント (ADKGamePlayer).
 
 プロンプトへの禁則事項の肥大化を廃止し、Google ADK 2.0 の構造的ワークフロー
-（思考・計画: Planner -> 検証・審査: Reviewer -> 実行: GameController）
-によって質の高い自律的行動決定と自己改善ループを実現するエージェント。
+（思考・計画: Planner -> 実行: GameController）
+によって高速かつ質の高い自律的行動決定と自己改善ループを実現するエージェント。
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from unittest.mock import MagicMock
 from acr_agi3.agent.cognitive_workflow import CognitiveState, assess_cognitive_state
 from acr_agi3.agent.llm.local_vlm import LocalQwenVL
 from acr_agi3.agent.online_skill_developer import OnlineSkillDeveloper
-from acr_agi3.agent.workflow_schemas import PlanProposal, ReviewFeedback
+from acr_agi3.agent.workflow_schemas import PlanProposal
 from acr_agi3.harness.game_action_tools import ActionDecision, GameActionTools
 from acr_agi3.harness.vision_observation import (
     VisionObservationHarness,
@@ -73,7 +73,7 @@ except ImportError:
 
 
 class ADKGamePlayer:
-    """Google ADK 2.0 準拠・Plan-Review-Act ワークフロー自律ゲームプレイエージェント."""
+    """Google ADK 2.0 準拠・Plan-Act ワークフロー自律ゲームプレイエージェント."""
 
     def __init__(
         self,
@@ -82,11 +82,17 @@ class ADKGamePlayer:
         app_name: str = "acr_agi3_adk_player",
         cell_size: int = 12,
         session_refresh_interval: int = 1,
+        autonomous_probing: Optional[bool] = None,
     ) -> None:
         self.name = name
         self.app_name = app_name
         self.session_refresh_interval = session_refresh_interval
         self.model = model or LocalQwenVL(model_name_or_path="auto")
+        if autonomous_probing is not None:
+            self.autonomous_probing = autonomous_probing
+        else:
+            # mock-model (結合テスト用モック) の場合は自動で自律プローブを有効化
+            self.autonomous_probing = (self.model == "mock-model")
 
         # 1. 視覚認識ハーネス & 操作ツール
         self.vision_harness = VisionObservationHarness(cell_size=cell_size)
@@ -99,55 +105,35 @@ class ADKGamePlayer:
         # 3. エピソード記憶マネージャー (Transcript からの因果蒸留 & Working Memory)
         self.memory = EpisodicMemoryManager(capacity=100) if EpisodicMemoryManager else None
 
-        # 4. Google ADK 2.0 Planner Agent (思考・計画立案者)
+        # 4. Google ADK 2.0 Planner Agent (階層的逆算プランナー)
         planner_instruction = (
-            "You are the Chief Strategist and Planning Agent playing ARC-AGI-3 dynamic games.\n"
-            "Your goal is to inspect the current visual observation and Working Memory, formulate a hypothesis about game mechanics, and propose a concrete action plan.\n\n"
-            "=== 2-STEP COGNITIVE PLANNING PROTOCOL ===\n"
-            "1. Analyze visual entities (player, targets, obstacles, colors) and past step outcomes.\n"
-            "2. Output your plan as a structured JSON object:\n"
+            "You are the Chief Strategist and Backward Planning Agent playing ARC-AGI-3 dynamic games.\n"
+            "Your core competence is HIERARCHICAL SUBGOAL DECOMPOSITION (Backward Chaining):\n"
+            "1. Inspect the terminal goal/target pattern and working memory.\n"
+            "2. Break down the objective into ordered intermediate subgoals (e.g. key before door, isolate pieces into staging buffer).\n"
+            "3. Honestly declare whether the method to achieve the immediate subgoal is KNOWN or UNKNOWN:\n"
+            "   - If UNKNOWN (actuator laws or physics unverified): set `\"need_probe\": true` and `\"cognitive_intent\": \"PROBE\"` to request experimental validation.\n"
+            "   - If KNOWN (rules verified): select the purposeful action to advance the immediate milestone.\n\n"
+            "=== STRUCTURED OUTPUT JSON FORMAT ===\n"
             "```json\n"
             "{\n"
-            '  "hypothesis": "What the board state means (e.g. red square is player, gold star is goal)",\n'
-            '  "goal": "Immediate objective (e.g. move toward gold star, click the blue tile)",\n'
-            '  "action": "UP" | "DOWN" | "LEFT" | "RIGHT" | "click_at" | "RESET" | "ACTION1"..."ACTION7",\n'
-            '  "coordinates": {"x": 5, "y": 8}, // REQUIRED if action is click_at or ACTION6! (x=col, y=row)\n'
-            '  "reasoning": "Logical reason why this action advances your goal"\n'
+            '  "hypothesis": "Mental model of board entities, colors, and actuator physics",\n'
+            '  "goal": "Ultimate game objective (e.g. arrange blocks horizontally R-O-B-G)",\n'
+            '  "subgoal": "Immediate milestone (e.g. move blue obstacle to bottom staging buffer)",\n'
+            '  "cognitive_intent": "PLAN" | "PROBE" | "DIRECT",\n'
+            '  "need_probe": false, // Set true if actuator dynamics are unverified or you need to experiment\n'
+            '  "action": "UP" | "DOWN" | "LEFT" | "RIGHT" | "click_at" | "ACTION1"..."ACTION7",\n'
+            '  "coordinates": {"x": col, "y": row}, // REQUIRED if action is click_at or ACTION6!\n'
+            '  "reasoning": "Logical explanation of how this action advances the immediate milestone"\n'
             "}\n"
             "```\n"
-            "If you need strategic guidance from an expert skill, include `\"load_skill\": \"visual-inspector\"` or `\"backward-planner\"`.\n"
+            "Consult expert meta-skills when needed: `\"load_skill\": \"backward-planner\"` or `\"epistemic-prober\"`.\n"
         )
         self.planner_agent = Agent(
             name=f"{self.name}_planner",
             model=self.model,
             tools=[self.skill_toolset],
             instruction=planner_instruction,
-        )
-
-        # 5. Google ADK 2.0 Reviewer Agent (計画レビュー・審査者)
-        reviewer_instruction = (
-            "You are the Senior Game Reviewer and Quality Gatekeeper for ARC-AGI-3 gameplay.\n"
-            "Your role is to rigorously review the Planner's proposed action plan before execution.\n\n"
-            "=== 3-POINT OBJECTIVE QUALITY AUDIT ===\n"
-            "1. SPECIFICITY: If action is `click_at` or `ACTION6`, are valid numeric coordinates {\"x\": col, \"y\": row} provided? If missing, mark REVISE or provide refined coordinates.\n"
-            "2. REFLECTIVE: Does this action repeat an action that was just marked as INEFFECTIVE or barrier hit in Working Memory without justification?\n"
-            "3. INTENTIONALITY: Does the reasoning clearly explain how this action advances the hypothesis or goal, avoiding mechanical repetitive cycling?\n\n"
-            "Output your audit result as a structured JSON object:\n"
-            "```json\n"
-            "{\n"
-            '  "status": "APPROVED" | "REVISE",\n'
-            '  "critique": "Brief explanation of whether the plan is sound or flawed",\n'
-            '  "suggested_fix": "If REVISE, explicit instructions on what to change (e.g. specify click coordinates, try a different direction)",\n'
-            '  "refined_action": "Optional fallback action name if easily corrected",\n'
-            '  "refined_coordinates": {"x": col, "y": row} // Optional fallback coordinates\n'
-            "}\n"
-            "```\n"
-        )
-        self.reviewer_agent = Agent(
-            name=f"{self.name}_reviewer",
-            model=self.model,
-            tools=[],
-            instruction=reviewer_instruction,
         )
 
         self.session_service = InMemorySessionService()
@@ -157,21 +143,12 @@ class ADKGamePlayer:
             session_service=self.session_service,
             auto_create_session=True,
         )
-        self.reviewer_runner = Runner(
-            agent=self.reviewer_agent,
-            app_name=f"{self.app_name}_reviewer",
-            session_service=self.session_service,
-            auto_create_session=True,
-        )
 
         self.step_index = 0
         self.stagnation_count = 0
         self.last_grid: Optional[np.ndarray] = None
         self.last_action_info: Optional[Dict[str, Any]] = None
-        self.last_was_revised: bool = False
-        self.last_revised_info: Optional[Dict[str, Any]] = None
         self.planner_session_id: Optional[str] = None
-        self.reviewer_session_id: Optional[str] = None
 
         # オンライン自己改善・スキル開発エンジン (仮説検証プローブ・ルール同定・EDD契約テスト・動的スキル生成)
         self.skill_developer = OnlineSkillDeveloper(game_id=self.name)
@@ -182,14 +159,11 @@ class ADKGamePlayer:
         self.stagnation_count = 0
         self.last_grid = None
         self.last_action_info = None
-        self.last_was_revised = False
-        self.last_revised_info = None
         self.action_tools.pending_decision = None
         self.action_tools.history.clear()
         if self.memory:
             self.memory.clear()
         self.planner_session_id = None
-        self.reviewer_session_id = None
         if hasattr(self, "skill_developer"):
             self.skill_developer.reset()
 
@@ -199,7 +173,7 @@ class ADKGamePlayer:
         available_actions: Optional[List[int]] = None,
         state_str: str = "NOT_FINISHED",
     ) -> ActionDecision:
-        """ADK 2.0 Plan-Review-Act ワークフローと自己改善エンジンを経て次のアクションを決定."""
+        """ADK 2.0 Plan-Act ワークフローと自己改善エンジンを経て次のアクションを決定."""
         self.step_index += 1
         arr = normalize_grid(grid)
 
@@ -211,22 +185,7 @@ class ADKGamePlayer:
             pixels_changed = int(np.sum(diff_mask))
             is_effective = (pixels_changed > 0)
 
-        # 直前の自己改善（Reviewer 修正）結果の因果検証ログ
-        if self.last_was_revised and self.last_revised_info:
-            orig = self.last_revised_info.get("original_action")
-            rev = self.last_revised_info.get("revised_action")
-            critique = self.last_revised_info.get("critique", "")
-            if is_effective:
-                logger.info(
-                    "🔄 [Self-Correction Outcome] ✅ EFFECTIVE: Reviewer revision (%s -> %s) successfully changed game state! (ΔPixels: %d, Step: %d). Critique was: %s",
-                    orig, rev, pixels_changed, self.last_revised_info.get("step", 0), critique[:100]
-                )
-            else:
-                logger.warning(
-                    "🔄 [Self-Correction Outcome] ❌ INEFFECTIVE: Reviewer revision (%s -> %s) did NOT change game state (ΔPixels: 0, Step: %d). Critique was: %s",
-                    orig, rev, self.last_revised_info.get("step", 0), critique[:100]
-                )
-        elif self.last_action_info is not None:
+        if self.last_action_info is not None:
             act_n = self.last_action_info.get("action", "UNKNOWN")
             logger.info(
                 "⚡ [Direct Action Outcome] Action %s produced ΔPixels: %d (Effective: %s, Stagnation: %d)",
@@ -268,6 +227,7 @@ class ADKGamePlayer:
         avail_ids = available_actions or [1, 2, 3, 4]
         avail_names = [f"ACTION{i}" for i in avail_ids]
         self.action_tools.set_available_actions(avail_ids)
+        self.action_tools.set_dynamics_map(self.skill_developer.action_semantics)
 
         # 1. 停滞検出時のマクロポリシー解除（手詰まり・壁衝突時は即座に解除し LLM / Taboo Reset へ委託）
         if self.stagnation_count >= 2 and self.skill_developer.active_policy is not None:
@@ -311,8 +271,8 @@ class ADKGamePlayer:
                 )
                 return macro_decision
 
-        # 4. 能動的プローブ行動（ルール未確定かつプローブ手順が残っている場合）
-        if self.skill_developer.is_probing:
+        # 4. 能動的プローブ行動（ルール未確定かつ自律プローブが有効な場合）
+        if self.autonomous_probing and self.skill_developer.is_probing:
             probe_decision = self.skill_developer.get_next_probe_action(avail_ids)
             if probe_decision is not None:
                 self.last_grid = arr.copy()
@@ -348,13 +308,16 @@ class ADKGamePlayer:
             observation=arr,
             working_memory=memory_summary,
             stagnation_count=self.stagnation_count,
+            current_subgoal=getattr(self, "last_subgoal", ""),
+            cognitive_intent=getattr(self, "last_cognitive_intent", "PLAN"),
+            method_known=getattr(self, "last_method_known", True),
             is_probing=self.skill_developer.is_probing,
             active_macro_skill=self.skill_developer.active_skill_name,
             is_macro_mode=(self.skill_developer.active_policy is not None),
         )
         dummy_ctx = MagicMock(spec=Context)
         assess_cognitive_state(dummy_ctx, cog_state)
-        active_skill = cog_state.selected_skill or "visual-inspector"
+        active_skill = cog_state.selected_skill or "backward-planner"
 
         logger.info(
             "🧠 [Cognitive Routing] Step %d: Active Skill='%s' (Mode='%s', Stagnation=%d)\n"
@@ -390,7 +353,7 @@ class ADKGamePlayer:
             nest_asyncio.apply()
 
         decision = loop.run_until_complete(
-            self._run_plan_review_act_workflow(
+            self._run_plan_act_workflow(
                 obs_parts=parts,
                 available_action_ids=avail_ids,
                 avail_names=avail_names,
@@ -410,7 +373,7 @@ class ADKGamePlayer:
         }
         return decision
 
-    async def _run_plan_review_act_workflow(
+    async def _run_plan_act_workflow(
         self,
         obs_parts: List[Part],
         available_action_ids: List[int],
@@ -421,13 +384,12 @@ class ADKGamePlayer:
         grid: Optional[np.ndarray] = None,
         cog_state: Optional[CognitiveState] = None,
     ) -> ActionDecision:
-        """Planner -> Reviewer -> Act の 3 フェーズ自律協調ワークフロー."""
+        """Planner -> Act の高速単一推論ワークフロー."""
         user_id = "arc_workflow_user"
 
         # 1. セッションの定期的新設 (会話履歴の肥大化・自己模倣ループ・CUDA OOM を完全防止)
         need_new_session = (
             self.planner_session_id is None
-            or self.reviewer_session_id is None
             or self.session_refresh_interval <= 1
             or (self.step_index % self.session_refresh_interval == 1)
         )
@@ -437,14 +399,8 @@ class ADKGamePlayer:
                 app_name=f"{self.app_name}_planner", user_id=user_id
             )
             self.planner_session_id = s_plan.id
-
-            s_rev = await self.session_service.create_session(
-                app_name=f"{self.app_name}_reviewer", user_id=user_id
-            )
-            self.reviewer_session_id = s_rev.id
         else:
             await self._archive_session_images(f"{self.app_name}_planner", self.planner_session_id, user_id)
-            await self._archive_session_images(f"{self.app_name}_reviewer", self.reviewer_session_id, user_id)
 
         # -------------------------------------------------------------
         # Phase 1: Planning (思考・仮説・行動計画の立案)
@@ -506,113 +462,24 @@ class ADKGamePlayer:
                 self.step_index, active_skill
             )
 
-        # -------------------------------------------------------------
-        # Phase 2: Review (計画の客観的検証・レビュー)
-        # -------------------------------------------------------------
-        affordance_desc = ""
-        if grid is not None:
-            detected_objs = detect_interactable_objects(grid)
-            if detected_objs:
-                affordance_desc = "\nDetected Click Target Centers:\n" + "\n".join(
-                    f"- Target #{i+1}: Color {o['color']} at Center (x={o['center']['x']}, y={o['center']['y']})"
-                    for i, o in enumerate(detected_objs[:6])
-                ) + "\n"
+        chosen_action = proposal.action
+        chosen_coords = proposal.coordinates
 
-        review_prompt = (
-            f"=== [PLAN REVIEW REQUEST for Step {self.step_index}] ===\n"
-            f"Available Actions: {avail_names} ({available_action_ids})\n"
-            f"Grid Shape: {grid_shape[0]} rows x {grid_shape[1]} cols\n"
-            f"{affordance_desc}"
-            f"Working Memory:\n{memory_summary or 'No previous actions.'}\n\n"
-            f"Planner's Proposed Plan:\n"
-            f"```json\n{json.dumps(proposal.to_dict(), indent=2)}\n```\n\n"
-            f"Perform the 3-point audit:\n"
-            f"1. SPECIFICITY: If action is click/ACTION6, verify that coordinates match a valid target center. "
-            f"If missing or pointing to empty space, supply refined_coordinates with the best target center.\n"
-            f"2. REFLECTIVE: Does this action repeat an action that was just marked as INEFFECTIVE in Working Memory?\n"
-            f"3. TABOO: Does it avoid known traps or barriers?\n"
-            f"If unapproved, mark REVISE and provide specific fixes."
-        )
-        review_content = Content(role="user", parts=[Part.from_text(text=review_prompt)])
-        reviewer_events = self.reviewer_runner.run_async(
-            session_id=self.reviewer_session_id,
-            user_id=user_id,
-            new_message=review_content,
-        )
-
-        review_raw_text = ""
-        async for ev in reviewer_events:
-            if hasattr(ev, "content") and ev.content:
-                for p in getattr(ev.content, "parts", []):
-                    if hasattr(p, "text") and p.text:
-                        review_raw_text += p.text
-
-        logger.info(f"Step {self.step_index} [Phase 2: Reviewer Raw] {review_raw_text!r}")
-        review = ReviewFeedback.from_text(review_raw_text)
-        logger.info(
-            "Step %d [Phase 2: Reviewer Audit Result] Status: %s | Critique: %s | Suggested Fix: %s | Refined Action: %s (Coords: %s)",
-            self.step_index, review.status, review.critique, review.suggested_fix, review.refined_action, review.refined_coordinates
-        )
+        # 高速ルールサニタイズ（LLM再推論不要の即時幾何補正: 1ms）
+        # クリック行動で座標が欠落している場合は、画面内のアフォーダンス中心に即時オートスナップ
+        if (chosen_action == "ACTION6" or chosen_action == "click_at" or "6" in str(chosen_action)) and not chosen_coords:
+            if grid is not None:
+                detected_objs = detect_interactable_objects(grid)
+                if detected_objs:
+                    best = detected_objs[0]
+                    chosen_coords = {"x": best["center"]["x"], "y": best["center"]["y"]}
+                    logger.info(
+                        "⚡ [Fast Python Sanitize] Auto-snapped missing click coordinates to object center: %s",
+                        chosen_coords
+                    )
 
         # -------------------------------------------------------------
-        # Phase 3: Revision Loop (不合格時の修正)
-        # -------------------------------------------------------------
-        is_revised_this_step = False
-        if not review.is_approved:
-            is_revised_this_step = True
-            logger.info(
-                "Step %d [Phase 3: Revision Required] Planner proposed '%s', but Reviewer required fix: %s",
-                self.step_index, original_proposed_action, review.critique
-            )
-            revise_prompt = (
-                f"Your proposed plan was REVISED by the Quality Reviewer:\n"
-                f"Critique: {review.critique}\n"
-                f"Suggested Fix: {review.suggested_fix or 'Provide valid coordinates or select an alternative productive action.'}\n\n"
-                f"Please produce an updated, corrected plan JSON now:"
-            )
-            revise_events = self.planner_runner.run_async(
-                session_id=self.planner_session_id,
-                user_id=user_id,
-                new_message=Content(role="user", parts=[Part.from_text(text=revise_prompt)]),
-            )
-            revised_text = ""
-            async for ev in revise_events:
-                if hasattr(ev, "content") and ev.content:
-                    for p in getattr(ev.content, "parts", []):
-                        if hasattr(p, "text") and p.text:
-                            revised_text += p.text
-
-            proposal = PlanProposal.from_text(revised_text)
-            logger.info(
-                "Step %d [Phase 3: Revised Plan] Original Proposed: '%s' -> Revised Plan: '%s' (Coords: %s)",
-                self.step_index, original_proposed_action, proposal.action, proposal.coordinates
-            )
-
-        # Reviewer からの直接オーバーライド補正（座標やアクション）があれば適用
-        chosen_action = review.refined_action or proposal.action
-        chosen_coords = review.refined_coordinates or proposal.coordinates
-
-        # 自己改善（修正介入）の判定
-        was_revised = (
-            is_revised_this_step
-            or (chosen_action != original_proposed_action)
-            or (chosen_coords != original_proposed_coords)
-        )
-        if was_revised:
-            self.last_was_revised = True
-            self.last_revised_info = {
-                "step": self.step_index,
-                "original_action": original_proposed_action,
-                "revised_action": chosen_action,
-                "critique": review.critique,
-                "suggested_fix": review.suggested_fix,
-            }
-        else:
-            self.last_was_revised = False
-            self.last_revised_info = None
-
-        # -------------------------------------------------------------
-        # Phase 4: Act (GameController による確定行動の検証と実行)
+        # Phase 4: Act (確定行動の検証と ActionDecision 生成)
         # -------------------------------------------------------------
         # 認知ワークフローで選定されたメタスキルを反映 (明示指定された場合はそれを尊重)
         if proposal.load_skill_explicit:
@@ -620,21 +487,24 @@ class ADKGamePlayer:
         else:
             final_skill = proposal.load_skill or active_skill
 
+        self.last_subgoal = proposal.subgoal
+        self.last_cognitive_intent = proposal.cognitive_intent
+        self.last_method_known = proposal.method_known
+
         meta = {
-            "was_revised": was_revised,
             "original_action": original_proposed_action,
             "final_action": chosen_action,
+            "subgoal": proposal.subgoal,
+            "cognitive_intent": proposal.cognitive_intent,
+            "method_known": proposal.method_known,
             "routing_reason": cog_state.routing_reason if cog_state else "",
             "cognitive_mode": cog_state.cognitive_mode if cog_state else "",
-            "review_status": review.status,
-            "review_critique": review.critique,
-            "suggested_fix": review.suggested_fix,
             "working_memory_snippet": memory_summary[:100] if memory_summary else "",
         }
 
         logger.info(
-            "Step %d [Phase 4: Act Finalized] Action: %s, Coords: %s, Skill: %s, RevisedByReviewer: %s, Hypothesis: %r",
-            self.step_index, chosen_action, chosen_coords, final_skill, was_revised, proposal.hypothesis
+            "Step %d [Phase 4: Act Finalized] Action: %s, Coords: %s, Skill: %s, Hypothesis: %r",
+            self.step_index, chosen_action, chosen_coords, final_skill, proposal.hypothesis
         )
 
         decision = self._convert_to_decision(
@@ -669,82 +539,57 @@ class ADKGamePlayer:
         grid: Optional[Any] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> ActionDecision:
-        """計画内容を GameController を用いて安全に ActionDecision へ変換."""
+        """計画内容をメタスキル game-controller (GameController) を通じて安全・決定論的に ActionDecision へ変換."""
         h, w = grid_shape
         meta_dict = metadata or {}
-        if GameController is not None:
-            controller = GameController(available_actions=available_action_ids)
-            # JSON 形式の文字列に変換して GameController の厳格バリデーションへ渡す
-            payload: Dict[str, Any] = {"action": action_str, "reasoning": reasoning}
+        dynamics = getattr(self.skill_developer, "action_semantics", {})
+
+        # GameController インスタンスの用意 (同定済み力学マップを注入)
+        if self.action_tools is not None and getattr(self.action_tools, "controller", None) is not None:
+            controller = self.action_tools.controller
+            controller.set_available_actions(available_action_ids)
+            controller.set_dynamics_map(dynamics)
+        elif GameController is not None:
+            controller = GameController(
+                available_actions=available_action_ids,
+                dynamics_map=dynamics,
+            )
+        else:
+            controller = None
+
+        if controller is not None:
+            payload: Dict[str, Any] = {
+                "action": action_str,
+                "reasoning": reasoning,
+            }
             if coordinates and "x" in coordinates and "y" in coordinates:
                 payload["x"] = coordinates["x"]
                 payload["y"] = coordinates["y"]
 
             validation = controller.parse_and_validate(
-                json.dumps(payload),
+                payload,
                 available_actions=available_action_ids,
                 grid_shape=(h, w),
                 grid=grid,
             )
-            if validation["success"]:
-                return ActionDecision(
-                    action_type=validation["action_type"],
-                    action_name=validation["action_name"],
-                    action_id=validation["action_id"],
-                    coordinates=validation["coordinates"],
-                    reasoning=validation["reasoning"],
-                    loaded_skill=loaded_skill,
-                    metadata=meta_dict,
-                )
+            return ActionDecision(
+                action_type=validation["action_type"],
+                action_name=validation["action_name"],
+                action_id=validation["action_id"],
+                coordinates=validation.get("coordinates"),
+                reasoning=validation.get("reasoning", reasoning),
+                loaded_skill=loaded_skill,
+                metadata=meta_dict,
+            )
 
-        # フォールバック安全処理
-        act_upper = action_str.upper()
-        name_map = {
-            "RESET": 0,
-            "ACTION1": 1, "UP": 1,
-            "ACTION2": 2, "DOWN": 2,
-            "ACTION3": 3, "LEFT": 3,
-            "ACTION4": 4, "RIGHT": 4,
-            "ACTION5": 5,
-            "ACTION6": 6, "CLICK": 6, "CLICK_AT": 6,
-            "ACTION7": 7,
-        }
-        for k, aid in name_map.items():
-            if k in act_upper:
-                if aid == 6:
-                    coords = coordinates or {"x": w // 2, "y": h // 2}
-                    if GameController is not None and grid is not None:
-                        sx, sy, snap_note = GameController.snap_coordinates_to_affordance(
-                            coords.get("x", 0), coords.get("y", 0), h, w, grid=grid
-                        )
-                        coords = {"x": sx, "y": sy}
-                        reasoning += snap_note
-                    return ActionDecision(
-                        action_type="CLICK",
-                        action_name="ACTION6",
-                        action_id=6,
-                        coordinates=coords,
-                        reasoning=reasoning,
-                        loaded_skill=loaded_skill,
-                        metadata=meta_dict,
-                    )
-                return ActionDecision(
-                    action_type="STEP" if aid != 0 else "RESET",
-                    action_name=f"ACTION{aid}" if aid != 0 else "RESET",
-                    action_id=aid,
-                    coordinates=None,
-                    reasoning=reasoning,
-                    loaded_skill=loaded_skill,
-                    metadata=meta_dict,
-                )
-
+        # 最低限のフォールバック
         default_id = available_action_ids[0] if available_action_ids else 1
         return ActionDecision(
             action_type="STEP",
             action_name=f"ACTION{default_id}",
             action_id=default_id,
             coordinates=None,
-            reasoning=f"Fallback default action: {reasoning}",
+            reasoning=f"Emergency fallback: {reasoning}",
             loaded_skill=loaded_skill,
             metadata=meta_dict,
         )

@@ -77,6 +77,7 @@ class MyAgent(Agent):
         record: bool = False,
         arc_env: Any = None,
         model: Optional[Any] = None,
+        autonomous_probing: Optional[bool] = None,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -90,10 +91,18 @@ class MyAgent(Agent):
         # ADK 2.0 ネイティブゲームプレイヤー
         import re
         clean_id = re.sub(r"[^a-zA-Z0-9_]", "_", self.game_id)
+        if autonomous_probing is not None:
+            auto_probe = autonomous_probing
+        else:
+            # model が明示的に渡されたカスタム推論（テストモック等）の場合は False、
+            # デフォルト（本番自律推論）の場合は True
+            auto_probe = (model is None)
+
         self.player = ADKGamePlayer(
             model=model,
             name=f"adk_player_{clean_id}",
             app_name=f"app_{clean_id}",
+            autonomous_probing=auto_probe,
         )
 
     def is_done(self, frames: list[FrameData], latest_frame: FrameData) -> bool:
