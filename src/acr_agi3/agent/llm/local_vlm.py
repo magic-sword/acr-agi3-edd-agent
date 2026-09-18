@@ -6,12 +6,14 @@ ARC のグリッド画像とテキスト (SKILL.md やプロンプト) を統合
 """
 
 import inspect
+import json
 import logging
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Tuple
+import re
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Tuple, Union
 
 from google.adk.models import BaseLlm, LlmRequest, LlmResponse
-from google.genai.types import Content, Part
+from google.genai.types import Content, Part, FunctionCall, FunctionResponse
 from PIL import Image
 from pydantic import PrivateAttr
 
@@ -173,6 +175,12 @@ class LocalQwenVL(BaseLlm):
             for part in getattr(content, "parts", []):
                 if hasattr(part, "text") and part.text:
                     parts_text.append(part.text)
+                elif hasattr(part, "function_call") and part.function_call:
+                    fc = part.function_call
+                    parts_text.append(f"[Assistant called tool: {fc.name} with args: {fc.args}]")
+                elif hasattr(part, "function_response") and part.function_response:
+                    fr = part.function_response
+                    parts_text.append(f"[Tool response ({fr.name}): {json.dumps(fr.response)}]")
                 # 画像バイトデータまたは PIL Image の取得
                 elif hasattr(part, "inline_data") and part.inline_data:
                     import io
@@ -184,26 +192,84 @@ class LocalQwenVL(BaseLlm):
         prompt = "\n".join(parts_text)
         return prompt, images
 
+    def _detect_tool_call(self, output: Any) -> Optional[Tuple[str, Dict[str, Any]]]:
+        """出力からツール呼び出し (Function Call) を検出・パース."""
+        if isinstance(output, Part) and hasattr(output, "function_call") and output.function_call:
+            return output.function_call.name, dict(output.function_call.args or {})
+
+        if isinstance(output, dict):
+            if "name" in output and "args" in output:
+                return output["name"], output.get("args") or {}
+            if "tool_call" in output:
+                tc = output["tool_call"]
+                if isinstance(tc, str):
+                    return tc, output.get("tool_args", {})
+                if isinstance(tc, dict) and "name" in tc:
+                    return tc["name"], tc.get("args") or tc.get("arguments") or {}
+
+        if isinstance(output, str):
+            # 1. <tool_call>{"name": "...", "arguments": {...}}</tool_call>
+            m = re.search(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", output, re.DOTALL)
+            if m:
+                try:
+                    data = json.loads(m.group(1))
+                    name = data.get("name")
+                    args = data.get("arguments") or data.get("args") or {}
+                    if name:
+                        return name, args
+                except Exception:
+                    pass
+
+            # 2. ```json { "tool_call": ... } ```
+            m_json = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", output, re.DOTALL)
+            if m_json:
+                try:
+                    data = json.loads(m_json.group(1))
+                    if "tool_call" in data:
+                        tc = data["tool_call"]
+                        if isinstance(tc, str):
+                            return tc, data.get("tool_args", {})
+                        if isinstance(tc, dict) and "name" in tc:
+                            return tc["name"], tc.get("args") or tc.get("arguments") or {}
+                except Exception:
+                    pass
+
+        return None
+
     async def generate_content_async(
         self, llm_request: LlmRequest, stream: bool = False
     ) -> AsyncGenerator[LlmResponse, None]:
         """マルチモーダル (画像 + テキスト) リクエストを推論処理."""
         prompt, images = self._extract_text_and_images(llm_request)
 
-        # 1. カスタム生成関数 (モック) の場合
+        # 1. カスタム生成関数 (モック・テスト用) の場合
         if self._generate_fn is not None:
             if inspect.iscoroutinefunction(self._generate_fn):
-                generated_text = await self._generate_fn(prompt, images=images)
+                generated = await self._generate_fn(prompt, images=images)
             else:
-                generated_text = self._generate_fn(prompt, images=images)
+                generated = self._generate_fn(prompt, images=images)
+
+            tc = self._detect_tool_call(generated)
+            if tc:
+                tool_name, tool_args = tc
+                part = Part.from_function_call(name=tool_name, args=tool_args)
+            elif isinstance(generated, Part):
+                part = generated
+            else:
+                part = Part.from_text(text=str(generated))
+
+            yield LlmResponse(
+                content=Content(role="model", parts=[part]),
+                turn_complete=True,
+            )
+            return
+
         # 2. Qwen2.5-VL モデルの場合
-        elif self._model is not None and self._processor is not None:
+        if self._model is not None and self._processor is not None:
             import torch
             from qwen_vl_utils import process_vision_info
 
             content_items: List[Dict[str, Any]] = []
-            # 最新フレーム画像 1 枚のみを視覚入力として渡す (過去画像の累積による OOM を物理的に完全根絶)
-            # 過去の試行錯誤やアクション結果はテキスト (prompt) に保持される
             if images:
                 content_items.append({"type": "image", "image": images[-1]})
             content_items.append({"type": "text", "text": prompt})
@@ -240,8 +306,6 @@ class LocalQwenVL(BaseLlm):
                 logger.info(f"[LocalQwenVL] raw generated_text: {generated_text!r}")
         else:
             # ARC-AGI-3 動的ゲーム環境向けモックアクション生成
-            import re
-
             avail_match = re.search(r"Available Actions:\s*([^\n]+)", prompt)
             avail_actions = (
                 [a.strip() for a in avail_match.group(1).split(",")]
@@ -254,9 +318,16 @@ class LocalQwenVL(BaseLlm):
                 f"I decide to call step_action(action='{first_act}', reasoning='Navigating toward active objective')."
             )
 
+        tc = self._detect_tool_call(generated_text)
+        if tc:
+            tool_name, tool_args = tc
+            part = Part.from_function_call(name=tool_name, args=tool_args)
+        else:
+            part = Part.from_text(text=generated_text)
+
         response_content = Content(
             role="model",
-            parts=[Part.from_text(text=generated_text)],
+            parts=[part],
         )
         yield LlmResponse(
             content=response_content,

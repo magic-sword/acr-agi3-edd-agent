@@ -21,15 +21,16 @@ def inspector():
 # Positive Contract Tests (3件)
 # ==========================================
 
-def test_positive_step_zero_pause_enforcement(inspector):
-    """Positive 1: ステップ0での目視点検休止（Visual Inspection Pause）が要求されること."""
+def test_positive_step_zero_perception_facts(inspector):
+    """Positive 1: ステップ0での初期盤面の客観的事実抽出（寸法・背景色・構成色・差分分類）が正常動作すること."""
     grid = [[0, 0, 0], [1, 2, 3], [0, 0, 0]]
     target = [3, 2, 1]
     res = inspector.inspect_board(grid, target, step_index=0)
 
     assert res["success"] is True
-    assert res["pause_required"] is True
-    assert res["recommended_action"] == "NO_OP"
+    assert res["grid_dimensions"] == [3, 3]
+    assert res["background_color"] == 0
+    assert 1 in res["foreground_colors"]
     assert res["diff_type"] == VisualInspector.ALIGNMENT_REVERSAL_REORDER
     assert any("buffer" in inv.lower() for inv in res["invariants_hypothesized"])
 
@@ -41,8 +42,7 @@ def test_positive_reversal_reorder_classification(inspector):
     res = inspector.inspect_board(grid, target, step_index=1)
 
     assert res["success"] is True
-    assert res["pause_required"] is False
-    assert res["recommended_action"] == "PROCEED"
+    assert res["grid_dimensions"] == [3, 4]
     assert res["diff_type"] == VisualInspector.ALIGNMENT_REVERSAL_REORDER
     assert res["current_sequence"] == [4, 3, 2, 1]
     assert res["target_sequence"] == [1, 2, 3, 4]
@@ -70,7 +70,6 @@ def test_negative_empty_observation_handling(inspector):
 
     assert res["success"] is False
     assert "Empty" in res["error"]
-    assert res["recommended_action"] == "NO_OP"
 
 
 def test_negative_missing_target_graceful_degradation(inspector):

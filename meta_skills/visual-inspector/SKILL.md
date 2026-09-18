@@ -21,9 +21,6 @@ metadata:
       type: optional[int]
       description: Current environment step index (0 indicates onset)
   outputs:
-    - name: pause_required
-      type: bool
-      description: Whether the agent should pause actions for visual inspection at onset
     - name: diff_type
       type: str
       description: Gestalt diff classification (IDENTITY, REVERSAL_REORDER, INTERLEAVED, TRANSLATION_ONLY)
@@ -41,16 +38,14 @@ metadata:
 # Visual Inspector
 
 ## When to use
-- At Step 0 of any new ACR-AGI-3 level or newly initialized board (Visual Inspection Pause).
 - When inspecting the integrated console image (game board + controller HUD).
 - When cross-referencing which button on the HUD was highlighted with visual displacement on the board.
 - When classifying the spatial gestalt gap between starting layout and target sequence.
-- When allowing the multimodal LLM to visually discover objects, causality, and affordances.
+- When extracting objective facts (grid dimensions, active colors, diff classification) to feed the planning node.
 
 ## When NOT to use
 - For deterministic hardcoded guessing of player/goal positions (the LLM must recognize these visually).
 - During mid-episode primitive action execution (use `game-controller`).
-- For multi-step backward subgoal decomposition (use `backward-planner`).
 
 ## Workflow
 1. **Visual Reconnaissance & Inspection**:
@@ -66,7 +61,7 @@ metadata:
 ## Examples
 - Example 1 (Initial level onset):
   - Input: `current_grid` at `step_index: 0`
-  - Output: `{"pause_required": true, "recommended_action": "NO_OP", "grid_dimensions": [15, 15]}`
+  - Output: `{"grid_dimensions": [15, 15], "style": "OPEN_EXPLORATION", "diff_type": "IDENTITY"}`
 - Example 2 (Causal frame inspection):
   - Inspecting console image reveals `ACTION4` (Right) was executed, and a blue square shifted right by 1 cell.
 

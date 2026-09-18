@@ -54,7 +54,7 @@ class PlanProposal:
         json_blocks = re.findall(r"```(?:json)?\s*([\s\S]*?)\s*```", clean_text)
         candidates = json_blocks if json_blocks else [clean_text]
 
-        for cand in candidates:
+        for cand in reversed(candidates):
             # { ... } の抽出
             match = re.search(r"\{[\s\S]*\}", cand)
             if match:

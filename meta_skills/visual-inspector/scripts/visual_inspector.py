@@ -119,11 +119,7 @@ class VisualInspector:
             return {
                 "success": False,
                 "error": "Empty observation grid",
-                "recommended_action": "NO_OP",
-                "pause_required": True,
             }
-
-        pause_required = (step_index == 0)
 
         # 構成色と背景色の同定
         unique_colors, counts = np.unique(grid, return_counts=True)
@@ -148,8 +144,6 @@ class VisualInspector:
         return {
             "success": True,
             "step_index": step_index,
-            "pause_required": pause_required,
-            "recommended_action": "NO_OP" if pause_required else "PROCEED",
             "grid_dimensions": [h, w],
             "background_color": int(bg_color),
             "foreground_colors": fg_colors,

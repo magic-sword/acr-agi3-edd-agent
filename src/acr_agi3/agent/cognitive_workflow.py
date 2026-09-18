@@ -43,11 +43,13 @@ def perceive_node(state: CognitiveState) -> CognitiveState:
 
 
 def plan_node(state: CognitiveState) -> CognitiveState:
-    """ノード2: プランニング・画像認識による思考 (Plan Node).
+    """ノード2: 行動計画・仮説検証ノード (Plan Node / Planning-First Protocol).
 
-    VLM / LLM による画像認識思考結果 (plan_proposal) を保持する。
+    ループの初めに必ず実行される思考ノード。
+    VLM / LLM がゲームルール（動的変化への適応、法則発見、最小手クリア）に基づき、
+    状況分析 (Hypothesis) -> 目標策定 (Goal) -> 最小手行動 (Action) を立案する。
     """
-    logger.info("🧠 [plan_node] Step %d: Evaluating action plan", state.step)
+    logger.info("🧠 [plan_node] Step %d: Constructing action plan (Hypothesis -> Goal -> Action)", state.step)
     return state
 
 

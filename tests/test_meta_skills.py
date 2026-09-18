@@ -38,7 +38,7 @@ def test_meta_skills_via_harness():
     vi = vi_mod.VisualInspector()
     res_vi = vi.inspect_board([[0, 1], [2, 0]], [1, 2], step_index=0)
     assert res_vi["success"] is True
-    assert res_vi["pause_required"] is True
+    assert res_vi["grid_dimensions"] == [2, 2]
 
     # 2. game-controller
     gc_mod = harness.get_skill_module("game-controller")

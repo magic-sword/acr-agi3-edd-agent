@@ -30,6 +30,7 @@ from acr_agi3.harness.vision_observation import (
     normalize_grid,
 )
 from acr_agi3.meta.skill_harness import SkillHarness
+from acr_agi3.tools.observation_tools import ObservationTools
 
 logger = logging.getLogger(__name__)
 
@@ -67,31 +68,55 @@ class ADKGamePlayer:
         self.action_tools = GameActionTools()
         self.skill_harness = SkillHarness()
         self.skill_toolset = self.skill_harness.get_toolset()
+        self.observation_tools = ObservationTools()
 
         # 2. 動的操作力学マップ (ボタンと移動方向の同定結果: 例 {'UP': 3, 'DOWN': 4})
         self.dynamics_map: Dict[str, int] = {}
 
         # 3. Google ADK 2.0 Planner Agent
         planner_instruction = (
-            "You are an expert autonomous game player playing ARC-AGI-3 dynamic games.\n"
-            "Observe the game console canvas carefully (top: game board, bottom: controller HUD with highlighted buttons).\n"
-            "Use visual recognition to identify the current board state, what objects exist, "
-            "and what changed after your last executed action.\n\n"
+            "You are an expert autonomous game player playing ARC-AGI-3 dynamic interactive games.\n\n"
+            "=== CORE OBJECTIVE & ARC-AGI-3 GAME PRINCIPLES ===\n"
+            "1. MISSION: Play the game actively, adapt to unknown dynamics, and achieve victory (WIN / CLEAR).\n"
+            "2. ADAPTIVE DISCOVERY: Game environments, physical mechanics, and keybindings change drastically across tasks. "
+            "No rules are provided upfront. You must discover and verify the rules yourself by observing visual feedback "
+            "(the highlighted glowing button on the controller HUD and the resulting pixel displacement Δ on the board).\n"
+            "3. STEP MINIMIZATION: Aim to clear the game in the fewest possible steps. Avoid blind trial-and-error, wall bumping, "
+            "or looping in traps. Every single action must be intentional and purposeful.\n\n"
+            "=== PLANNING-FIRST PROTOCOL & REASONING (REACT LOOP) ===\n"
+            "Before issuing any action, you must always construct an explicit action plan:\n"
+            "  Step A. SITUATION ANALYSIS: Inspect the integrated console image. "
+            "Identify candidate controllable objects, target patterns/goals, hazards, and layout geometry.\n"
+            "  Step B. ON-DEMAND OBSERVATION (TOOLS): You have access to specialized observation and skill tools. "
+            "If you need deeper clarity or want to confirm hypotheses, call tools before finalizing your move:\n"
+            "    - `inspect_board(target_pattern=None)`: Global board geometry, colors, and estimated game style.\n"
+            "    - `inspect_affordances(detail=True)`: Candidate player position, target goal positions, and obstacles.\n"
+            "    - `inspect_action_effect()`: Last action's displacement, pixel delta, and keybinding verification.\n"
+            "    - `inspect_roi(top, left, height, width)`: Close-up zoom into critical maze junctions or intricate patterns.\n"
+            "    - Skill tools (`list_skills`, `load_skill`, `run_skill_script`): Load or run meta-skills on demand.\n"
+            "  Step C. GOAL FORMATION: Formulate a clear immediate subgoal that brings you closer to victory.\n"
+            "  Step D. ACTION SELECTION: Choose the most efficient 1-step action that advances your subgoal.\n\n"
             "=== STRUCTURED OUTPUT JSON FORMAT ===\n"
+            "When you are ready to execute your 1-step action, respond with your final JSON block enclosed in ```json ... ```:\n"
             "```json\n"
             "{\n"
-            '  "hypothesis": "Visual interpretation of entities, colors, and mechanics",\n'
-            '  "goal": "Immediate objective",\n'
+            '  "hypothesis": "What do you perceive? (e.g. entities, roles, observed causal mechanics from last action)",\n'
+            '  "goal": "Immediate subgoal (e.g. move toward switch, align color block, test unexplored direction)",\n'
             '  "action": "UP" | "DOWN" | "LEFT" | "RIGHT" | "click_at" | "RESET" | "ACTION1"..."ACTION7",\n'
             '  "coordinates": {"x": col, "y": row}, // Specify if action is click_at or ACTION6 (optional)\n'
-            '  "reasoning": "Strategic reasoning for choosing this action"\n'
+            '  "reasoning": "Why this specific action is the optimal step to achieve the goal with fewest moves"\n'
             "}\n"
             "```\n"
         )
+        all_tools: List[Any] = []
+        if self.skill_toolset:
+            all_tools.append(self.skill_toolset)
+        all_tools.extend(self.observation_tools.get_tools())
+
         self.planner_agent = Agent(
             name=f"{self.name}_planner",
             model=self.model,
-            tools=[self.skill_toolset] if self.skill_toolset else [],
+            tools=all_tools,
             instruction=planner_instruction,
         )
 
@@ -152,6 +177,16 @@ class ADKGamePlayer:
         self.action_tools.set_available_actions(avail_ids)
         self.action_tools.set_dynamics_map(self.dynamics_map)
 
+        # 観測ツールのコンテキスト更新 (ReAct ループ中にエージェントが参照可能)
+        self.observation_tools.update_context(
+            grid=arr,
+            prev_grid=self.last_grid,
+            step_index=self.step_index,
+            last_action_info=self.last_action_info,
+            dynamics_map=self.dynamics_map,
+            available_actions=avail_names,
+        )
+
         # 視覚観測 Parts の生成 (統合コンソール画面 + 客観的事実)
         parts = self.vision_harness.create_observation_parts(
             grid_data=arr,
@@ -198,7 +233,7 @@ class ADKGamePlayer:
         grid_shape: Tuple[int, int],
         grid: Optional[np.ndarray] = None,
     ) -> ActionDecision:
-        """Planner による単一推論 -> game-controller による決定論的 1 手確定."""
+        """Planner による ReAct 推論 (Tool-Calling) -> game-controller による決定論的 1 手確定."""
         user_id = "arc_workflow_user"
 
         need_new_session = (
@@ -224,13 +259,29 @@ class ADKGamePlayer:
         )
 
         plan_raw_text = ""
+        rethink_count = 0
         async for ev in planner_events:
             if hasattr(ev, "content") and ev.content:
                 for p in getattr(ev.content, "parts", []):
-                    if hasattr(p, "text") and p.text:
+                    if hasattr(p, "function_call") and p.function_call:
+                        rethink_count += 1
+                        logger.info(
+                            "Step %d [ReAct Loop #%d] Tool Call: %s(args=%s)",
+                            self.step_index, rethink_count, p.function_call.name, p.function_call.args
+                        )
+                    elif hasattr(p, "function_response") and p.function_response:
+                        resp_preview = str(p.function_response.response)[:150]
+                        logger.info(
+                            "Step %d [ReAct Loop #%d] Tool Response: %s -> %s...",
+                            self.step_index, rethink_count, p.function_response.name, resp_preview
+                        )
+                    elif hasattr(p, "text") and p.text:
                         plan_raw_text += p.text
 
-        logger.info("Step %d [Planner Raw] %r", self.step_index, plan_raw_text)
+        logger.info(
+            "Step %d [Planner Complete] (ReAct Tool Calls: %d) Raw: %r",
+            self.step_index, rethink_count, plan_raw_text
+        )
         proposal = PlanProposal.from_text(plan_raw_text)
 
         # game-controller スキルを通じた決定論的変換
