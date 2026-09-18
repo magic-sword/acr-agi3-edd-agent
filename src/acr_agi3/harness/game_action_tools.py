@@ -83,6 +83,8 @@ class GameActionTools:
         """
         if self.controller is not None:
             res = self.controller.step_action(direction=action, reasoning=reasoning)
+            if not res.get("success", False):
+                return f"Error from game-controller: {res.get('error', 'Invalid action')}"
             self.pending_decision = ActionDecision(
                 action_type=res["action_type"],
                 action_name=res["action_name"],
@@ -92,8 +94,10 @@ class GameActionTools:
                 loaded_skill="game-controller",
             )
         else:
-            # フォールバック
+            # フォールバック (controller なし)
             act_id = self.available_action_ids[0] if self.available_action_ids else 1
+            if action.upper() not in ["UP", "DOWN", "LEFT", "RIGHT"] and not any(action.upper() == f"ACTION{i}" for i in self.available_action_ids):
+                return f"Error from game-controller: Action '{action}' is disabled. Available actions: {self.available_action_ids}."
             self.pending_decision = ActionDecision(
                 action_type="STEP",
                 action_name=action.upper(),
@@ -126,6 +130,8 @@ class GameActionTools:
         """
         if self.controller is not None:
             res = self.controller.click_at(x=x, y=y, grid=grid, reasoning=reasoning)
+            if not res.get("success", False):
+                return f"Error from game-controller: {res.get('error', 'Invalid click action')}"
             self.pending_decision = ActionDecision(
                 action_type=res["action_type"],
                 action_name=res["action_name"],
@@ -135,6 +141,8 @@ class GameActionTools:
                 loaded_skill="game-controller",
             )
         else:
+            if 6 not in self.available_action_ids:
+                return f"Error from game-controller: Click action (ACTION6 / click_at) is disabled in this environment. Available actions: {self.available_action_ids}."
             safe_x = x if x is not None else 0
             safe_y = y if y is not None else 0
             self.pending_decision = ActionDecision(

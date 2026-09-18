@@ -100,9 +100,8 @@ class GameController:
         except ValueError:
             pass
 
-        # 4. 未知のアクション名の場合、利用可能アクションの先頭へフォールバック
-        fb_id = self.available_actions[0] if self.available_actions else 1
-        return fb_id, self.ACTION_NAMES.get(fb_id, f"ACTION{fb_id}"), False
+        # 4. 未知のアクション名の場合、-1 を返却
+        return -1, f"UNKNOWN({act_clean})", False
 
     @staticmethod
     def snap_coordinates_to_affordance(
@@ -186,6 +185,16 @@ class GameController:
         """
         act_id, act_name, is_mapped = self.resolve_action_id(direction)
         note = f" (via dynamic map: {direction}->{act_name})" if is_mapped else ""
+        if act_id != 0 and act_id not in self.available_actions:
+            return {
+                "success": False,
+                "action_type": "STEP",
+                "action_name": act_name,
+                "action_id": act_id,
+                "coordinates": None,
+                "reasoning": f"{reasoning}{note}".strip(),
+                "error": f"Action '{direction}' (resolved to {act_name}/ID:{act_id}) is disabled in this environment. Available actions: {self.available_actions}. Please choose from available actions.",
+            }
         return {
             "success": True,
             "action_type": "STEP" if act_id != 0 else "RESET",
@@ -232,15 +241,14 @@ class GameController:
             }
 
         if 6 not in self.available_actions:
-            fb_id = self.available_actions[0] if self.available_actions else 1
             return {
                 "success": False,
-                "action_type": "STEP",
-                "action_name": self.ACTION_NAMES.get(fb_id, f"ACTION{fb_id}"),
-                "action_id": fb_id,
-                "coordinates": None,
-                "reasoning": f"{reasoning_full} [fallback: ACTION6 unavailable]",
-                "error": "Click action (ACTION6) is not in available actions",
+                "action_type": "CLICK",
+                "action_name": "ACTION6",
+                "action_id": 6,
+                "coordinates": {"x": snap_x, "y": snap_y},
+                "reasoning": reasoning_full,
+                "error": f"Click action (ACTION6 / click_at) is disabled and not in available actions: {self.available_actions}. Do NOT use click_at; choose an action from available actions.",
             }
 
         return {

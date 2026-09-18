@@ -75,21 +75,32 @@ def test_positive_active_reset():
     assert decision.action_id == 0
 
 
-def test_negative_invalid_action_safe_fallback():
-    """負例 1: 未知・無効なアクション名が渡された場合、利用可能アクションの有効IDへ安全にフォールバックすること."""
+def test_negative_invalid_action_rejection():
+    """負例 1: 未知・無効なアクション名が渡された場合、暗黙のフォールバックを行わずエラーを返却すること."""
     tools = GameActionTools(available_actions=[2, 4])
-    tools.step_action("TELEPORT", reasoning="Hallucinated action")
+    res = tools.step_action("TELEPORT", reasoning="Hallucinated action")
 
-    decision = tools.pending_decision
-    assert decision is not None
-    assert decision.action_id in [2, 4]
+    assert "Error" in res
+    assert "disabled" in res or "not in available actions" in res
+    assert tools.pending_decision is None
 
 
-def test_negative_click_unavailable_fallback():
-    """負例 2: ACTION6 が利用不可の状態でクリックが呼ばれた場合、クラッシュせず移動アクションへフォールバックすること."""
+def test_negative_click_unavailable_rejection():
+    """負例 2: ACTION6 が利用不可の状態でクリックが呼ばれた場合、勝手に移動へ書き換えずにエラーを返却すること."""
     tools = GameActionTools(available_actions=[1, 2, 3, 4])  # 6 は含まれない
-    tools.click_at(x=5, y=5, reasoning="Click when click disabled")
+    res = tools.click_at(x=5, y=5, reasoning="Click when click disabled")
 
-    decision = tools.pending_decision
-    assert decision is not None
-    assert decision.action_id in [1, 2, 3, 4]
+    assert "Error" in res
+    assert "disabled" in res or "not in available actions" in res
+    assert tools.pending_decision is None
+
+
+def test_negative_controller_validation_flags_unavailable_action():
+    """負例 3: GameController.parse_and_validate が無効アクションに対して success=False と error を正しく返すこと."""
+    controller = GameController(available_actions=[1, 2, 3, 4])
+    validation = controller.parse_and_validate({"action": "click_at", "x": 5, "y": 5})
+
+    assert validation["success"] is False
+    assert validation["error"] is not None
+    assert "disabled" in validation["error"] or "not in available actions" in validation["error"]
+

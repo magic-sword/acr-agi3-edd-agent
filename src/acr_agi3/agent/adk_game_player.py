@@ -293,7 +293,7 @@ class ADKGamePlayer:
         )
         proposal = PlanProposal.from_text(plan_raw_text)
 
-        # game-controller スキルを通じた決定論的変換
+        # game-controller スキルを通じた決定論的検証・変換
         decision = self._convert_to_decision(
             action_str=proposal.action,
             coordinates=proposal.coordinates,
@@ -303,6 +303,66 @@ class ADKGamePlayer:
             grid=grid,
             loaded_skill=proposal.load_skill,
         )
+
+        # game-controller によるアクション拒絶時の自律的再検討 (Re-think) ループ
+        retry_count = 0
+        max_retries = 2
+        while not decision.metadata.get("success", True) and retry_count < max_retries:
+            retry_count += 1
+            err_msg = decision.metadata.get("error", "Invalid action proposed")
+            logger.warning(
+                "Step %d [Action Rejected by game-controller] Attempt %d: %s. Requesting re-thinking...",
+                self.step_index, retry_count, err_msg
+            )
+            feedback_prompt = (
+                f"=== ACTION REJECTED BY GAME CONTROLLER ===\n"
+                f"Error: {err_msg}\n"
+                f"Currently available actions in this game are: {available_action_ids}\n"
+                f"You CANNOT perform this action. You must re-think your hypothesis, respect available actions, and choose from the available actions.\n"
+                f"Output your revised JSON block enclosed in ```json ... ``` with a valid action."
+            )
+            feedback_content = Content(role="user", parts=[Part.from_text(text=feedback_prompt)])
+            retry_events = self.planner_runner.run_async(
+                session_id=self.planner_session_id,
+                user_id=user_id,
+                new_message=feedback_content,
+            )
+            retry_raw_text = ""
+            async for ev in retry_events:
+                if hasattr(ev, "content") and ev.content:
+                    for p in getattr(ev.content, "parts", []):
+                        if hasattr(p, "text") and p.text:
+                            retry_raw_text += p.text
+
+            proposal = PlanProposal.from_text(retry_raw_text)
+            decision = self._convert_to_decision(
+                action_str=proposal.action,
+                coordinates=proposal.coordinates,
+                reasoning=proposal.reasoning or proposal.hypothesis,
+                available_action_ids=available_action_ids,
+                grid_shape=grid_shape,
+                grid=grid,
+                loaded_skill=proposal.load_skill,
+                metadata={"rethink_attempts": retry_count, "rethink_feedback": err_msg},
+            )
+            if decision.metadata.get("success", True):
+                logger.info(
+                    "Step %d [Re-think Succeeded] Planner self-corrected action to %s (ID: %d) after %d attempt(s)",
+                    self.step_index, decision.action_name, decision.action_id, retry_count
+                )
+                break
+
+        # リトライ上限を超えても無効な場合の最外周フェイルセーフ
+        if not decision.metadata.get("success", True):
+            default_id = available_action_ids[0] if available_action_ids else 1
+            logger.error(
+                "Step %d [Re-think Exhausted] Action still invalid after %d retries. Applying safety fail-safe to ACTION%d.",
+                self.step_index, retry_count, default_id
+            )
+            decision.action_id = default_id
+            decision.action_name = f"ACTION{default_id}"
+            decision.action_type = "STEP"
+            decision.reasoning += f" [Safety fail-safe after {retry_count} re-thinks: {decision.metadata.get('error')}]"
 
         try:
             import torch
@@ -326,7 +386,7 @@ class ADKGamePlayer:
     ) -> ActionDecision:
         """game-controller メタスキルを用いて安全・決定論的に ActionDecision へ変換."""
         h, w = grid_shape
-        meta_dict = metadata or {}
+        meta_dict = dict(metadata or {})
 
         if self.action_tools is not None and getattr(self.action_tools, "controller", None) is not None:
             controller = self.action_tools.controller
@@ -355,10 +415,12 @@ class ADKGamePlayer:
                 grid_shape=(h, w),
                 grid=grid,
             )
+            meta_dict["success"] = validation.get("success", True)
+            meta_dict["error"] = validation.get("error")
             return ActionDecision(
-                action_type=validation["action_type"],
-                action_name=validation["action_name"],
-                action_id=validation["action_id"],
+                action_type=validation.get("action_type", "STEP"),
+                action_name=validation.get("action_name", "UNKNOWN"),
+                action_id=validation.get("action_id", available_action_ids[0] if available_action_ids else 1),
                 coordinates=validation.get("coordinates"),
                 reasoning=validation.get("reasoning", reasoning),
                 loaded_skill=loaded_skill,
@@ -367,6 +429,7 @@ class ADKGamePlayer:
 
         # 最低限のフォールバック
         default_id = available_action_ids[0] if available_action_ids else 1
+        meta_dict["success"] = True
         return ActionDecision(
             action_type="STEP",
             action_name=f"ACTION{default_id}",
