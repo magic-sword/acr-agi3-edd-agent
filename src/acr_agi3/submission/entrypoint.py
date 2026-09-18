@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 
-from acr_agi3.agent.orchestrator import ARCOrchestrator
+from acr_agi3.agent.my_agent import MyAgent
 from acr_agi3.game.env import Action, GameEnvironment
 from acr_agi3.game.vcgt_game import GridWorldGameEnv
 from acr_agi3.submission.path_resolver import ModelPathResolver
@@ -77,12 +77,12 @@ class KaggleSubmissionPipeline:
     def __init__(
         self,
         model_path: Optional[Union[str, Path]] = None,
-        orchestrator: Optional[ARCOrchestrator] = None,
+        agent: Optional[Any] = None,
         max_steps_per_task: int = 50,
         time_limit_per_task_sec: float = 60.0,
     ) -> None:
         self.resolved_model_path = ModelPathResolver.resolve_model_path(model_path)
-        self.orchestrator = orchestrator or ARCOrchestrator()
+        self.agent = agent or MyAgent()
         self.max_steps_per_task = max_steps_per_task
         self.time_limit_per_task_sec = time_limit_per_task_sec
 
@@ -148,35 +148,34 @@ class KaggleSubmissionPipeline:
         status = "INCOMPLETE"
 
         try:
-            # オーケストレーターによるメタスキル駆動推論の実行
-            result = self.orchestrator.solve_game(
-                env=env,
-                max_steps=self.max_steps_per_task,
-                task_id=task_id,
-            )
+            obs = env.reset()
+            is_solved = False
 
-            # アクション履歴の抽出 (actions_taken または verification.history)
-            raw_actions = result.get("actions_taken", [])
-            if not raw_actions and "verification" in result:
-                hist = result["verification"].get("history", [])
-                raw_actions = [h.get("action") for h in hist if "action" in h]
+            for step_i in range(self.max_steps_per_task):
+                if hasattr(self.agent, "player"):
+                    decision = self.agent.player.decide_next_action(
+                        grid=obs.tolist() if isinstance(obs, np.ndarray) else obs,
+                        available_actions=[1, 2, 3, 4],
+                        state_str="NOT_FINISHED",
+                    )
+                    act_id = decision.action_id
+                else:
+                    act_id = 1
 
-            for a in raw_actions:
-                if isinstance(a, Action):
-                    action_sequence.append(int(a.value))
-                elif isinstance(a, int):
-                    action_sequence.append(a)
-                elif isinstance(a, str):
-                    try:
-                        action_sequence.append(int(Action.from_str(a).value))
-                    except Exception:
-                        action_sequence.append(int(Action.WAIT.value))
+                try:
+                    action_enum = Action(act_id)
+                except Exception:
+                    action_enum = Action.WAIT
 
-            is_solved = (
-                result.get("is_solved", False)
-                or result.get("cleared", False)
-                or result.get("verification", {}).get("success", False)
-            )
+                res = env.step(action_enum)
+                action_sequence.append(act_id)
+                obs = res.observation
+
+                if res.done:
+                    if res.reward > 0 or res.info.get("status") == "goal_reached":
+                        is_solved = True
+                    break
+
             status = "CLEARED" if is_solved else "MAX_STEPS"
 
             # もしクリア未達またはアクション列が空の場合、幾何直感フォールバックで走破

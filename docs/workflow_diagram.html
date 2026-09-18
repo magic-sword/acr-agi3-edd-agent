@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>ARC-AGI-3 Agent Architecture & Cognitive Workflow</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 30px;
+      background-color: #0f172a;
+      color: #f8fafc;
+    }
+    h1 {
+      color: #38bdf8;
+      border-bottom: 2px solid #334155;
+      padding-bottom: 12px;
+      margin-bottom: 24px;
+    }
+    h2 {
+      color: #a855f7;
+      margin-top: 40px;
+      margin-bottom: 16px;
+    }
+    p {
+      color: #94a3b8;
+      font-size: 15px;
+      line-height: 1.6;
+    }
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 36px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+    }
+    .mermaid {
+      background: #0f172a;
+      padding: 20px;
+      border-radius: 8px;
+      overflow-x: auto;
+    }
+  </style>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      flowchart: {
+        useMaxWidth: false,
+        htmlLabels: true,
+        curve: 'basis'
+      }
+    });
+  </script>
+</head>
+<body>
+
+  <h1>🤖 ARC-AGI-3 エージェント 自律ゲームプレイ & 認知ワークフロー構造</h1>
+  <p>本ドキュメントは、エージェントがゲーム開始から入力を知覚し、自律的に思考・判断して1手を出力し、完了に至るまでの全プロセスを可視化したものです。</p>
+
+  <div class="card">
+    <h2>1. 全体ゲームプレイ・ライフサイクルループ (Game Lifecycle Loop)</h2>
+    <p>人間がゲームをプレイする（画面を見る ➔ 考える ➔ コントローラーを押す ➔ 変化を見る）サイクルと一致した閉ループ制御構造です。</p>
+    <div class="mermaid">
+flowchart TD
+    subgraph S_INIT["0. ゲーム初期化 (Game Start)"]
+        START([ゲーム開始: step=0])
+        --> VI_PAUSE["Visual Inspection Pause<br/>(visual-inspector: 初期盤面・ターゲットの全体目視点検)"]
+    end
+
+    subgraph S_OBS["1. 視覚的入力・観測の生成 (Visual Perception Input)"]
+        ENV["ARC-AGI-3 ゲーム環境 (GameEnvironment)"]
+        --> HUD["統合コンソール画像の生成 (renderer.py)<br/>・上部: 公式10色カラー盤面<br/>・下部: コントローラーHUD (前回実行ボタンが発光💡)"]
+        
+        ENV --> FACTS["純粋な客観的事実の抽出<br/>・盤面寸法 (H x W)<br/>・出現カラーパレット<br/>・前回の物理変化ピクセル数 (ΔPixels)<br/>・利用可能アクション一覧"]
+        
+        HUD & FACTS --> VLM_EYE["エージェントの視覚入力 (VLM Canvas)<br/>※ プログラムによる自機・ゴールの決め打ちは全廃。<br/>人間と同じ目線で画面全体を直接画像認識。"]
+    end
+
+    subgraph S_WF["2. エージェントの認知ワークフロー (Cognitive Plan-Act Workflow)"]
+        VLM_EYE --> COG_ROUTER{"状況評価 & 認知モード判定<br/>(assess_cognitive_state)"}
+        
+        COG_ROUTER -- "遠隔ゴール / 迂回路" --> M_BP["backward-planner<br/>(大目標からの逆算サブゴール立案)"]
+        COG_ROUTER -- "未知の力学 / ギミック" --> M_EP["epistemic-prober<br/>(仮説検証型プローブ探索)"]
+        COG_ROUTER -- "定石確立済み (1ms実行)" --> M_MC["macro-execution<br/>(オンライン合成スキルの高速走破)"]
+        COG_ROUTER -- "停滞 (2歩無変化) / 衝突" --> M_TR["taboo-reset-guard<br/>(禁忌制約学習 & 能動リセット)"]
+        COG_ROUTER -- "通常の進行" --> M_DIR["direct-plan<br/>(目視に基づく直接行動立案)"]
+
+        M_BP & M_EP & M_TR & M_DIR --> PLANNER["Planner Agent (LocalQwenVL / LocalTransformersLlm)<br/>単一推論による高速意思決定 (10〜15秒)<br/>出力: PlanProposal {hypothesis, goal, subgoal, action, coordinates}"]
+    end
+
+    subgraph S_ACT["3. 1手出力スキルによる確定実行 (game-controller Meta-Skill)"]
+        PLANNER --> GC["game-controller (決定論的実行エンジン)"]
+        
+        GC --> RES_DYN["動的操作力学の解決 (resolve_action_id)<br/>・UP/DOWN等のセマンティックを同定済みキーIDへ自動変換<br/>(例: このゲームでは UP -> ACTION3)"]
+        GC --> RES_CLK["幾何アフォーダンス吸着 (click_at)<br/>・クリック座標の省略や空セル指定時、<br/>有色オブジェクト重心へ自動スナップ"]
+        GC --> RES_RST["能動リセットの安全発行 (reset_game)"]
+        
+        RES_DYN & RES_CLK & RES_RST --> DECISION["確定アクション (ActionDecision)<br/>{action_id: 1..6, coordinates: (x, y)}"]
+    end
+
+    subgraph S_ENV["4. 環境への反映 & フィードバック (Environment Execution)"]
+        DECISION --> STEP_ENV["env.step(action)<br/>(ゲーム環境へ発行)"]
+        
+        STEP_ENV --> CHECK_DONE{"完了判定 (is_done?)"}
+        CHECK_DONE -- "クリア / ゲーム終了" --> FINISH([レベル完了: Success])
+        CHECK_DONE -- "継続 (step = step + 1)" --> MEM_UPDATE["エピソード記憶 & 操作力学の更新<br/>・前回アクションと盤面変化Δの因果記憶<br/>・ボタンと移動方向のマッピング同定"]
+        MEM_UPDATE --> S_OBS
+    end
+
+    S_INIT --> S_OBS
+
+    classDef init fill:#1e293b,stroke:#64748b,stroke-width:2px,color:#f8fafc;
+    classDef obs fill:#0c4a6e,stroke:#0284c7,stroke-width:2px,color:#f8fafc;
+    classDef wf fill:#581c87,stroke:#a855f7,stroke-width:2px,color:#f8fafc;
+    classDef act fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#f8fafc;
+    classDef env fill:#78350f,stroke:#f59e0b,stroke-width:2px,color:#f8fafc;
+    classDef highlight fill:#881337,stroke:#f43f5e,stroke-width:2px,color:#f8fafc;
+
+    class S_INIT init;
+    class S_OBS obs;
+    class S_WF wf;
+    class S_ACT act;
+    class S_ENV env;
+    class PLANNER,GC highlight;
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>2. Google ADK 2.0 認知ワークフローの内部グラフ構造 (Cognitive Graph)</h2>
+    <p>状況に応じたメタスキルのオンデマンド展開と、単一推論による高速な確定処理の流れです。</p>
+    <div class="mermaid">
+graph TD
+    subgraph CogWorkflow["Google ADK 2.0 Cognitive Workflow (Plan-Act Architecture)"]
+        START_N([START]) --> NODE_ASSESS["assess_cognitive_state<br/>(現在の停滞度、記憶、サブゴール進捗を評価)"]
+        
+        NODE_ASSESS -->|"route_visual_inspection (初手)"| NODE_VI["visual_inspection_node<br/>(全景認識 & ターゲット差分把握)"]
+        NODE_ASSESS -->|"route_epistemic_probe (力学未同定/未知)"| NODE_EP["epistemic_probe_node<br/>(ボタン力学やギミックの仮説検証)"]
+        NODE_ASSESS -->|"route_backward_plan (遠隔ゴール)"| NODE_BP["backward_plan_node<br/>(ゴールからの逆算サブゴール策定)"]
+        NODE_ASSESS -->|"route_taboo_reset (2歩停滞/罠衝突)"| NODE_TR["taboo_reset_node<br/>(行き止まり・ループの禁忌解除 & リセット)"]
+        NODE_ASSESS -->|"route_direct_plan (通常進行)"| NODE_DIR["direct_plan_node<br/>(目視による直接行動立案)"]
+        NODE_ASSESS -->|"route_macro_execution (定石同定済み)"| NODE_MACRO["macro_execution_node<br/>(LLMバイパス: 1ミリ秒の高速走破)"]
+
+        NODE_VI & NODE_EP & NODE_BP & NODE_TR & NODE_DIR --> HARNESS["SkillHarness (Level 2 Progressive Disclosure)<br/>必要なスキルの SKILL.md のみをオンデマンド展開"]
+
+        HARNESS --> LLM_PLAN["Planner Model (単一推論)<br/>・画像認識により自機や状況を自律特定<br/>・PlanProposal を構造化出力"]
+
+        LLM_PLAN & NODE_MACRO --> NODE_FINAL["act_finalizer_node<br/>(game-controller による決定論的キー解決 & 幾何吸着)"]
+
+        NODE_FINAL --> END_N([ActionDecision 確定])
+    end
+
+    classDef node fill:#1e293b,stroke:#64748b,stroke-width:2px,color:#f8fafc;
+    classDef router fill:#78350f,stroke:#f59e0b,stroke-width:2px,color:#f8fafc;
+    classDef core fill:#0c4a6e,stroke:#0284c7,stroke-width:2px,color:#f8fafc;
+    classDef final fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#f8fafc;
+
+    class NODE_VI,NODE_EP,NODE_BP,NODE_TR,NODE_DIR,NODE_MACRO node;
+    class NODE_ASSESS router;
+    class HARNESS,LLM_PLAN core;
+    class NODE_FINAL final;
+    </div>
+  </div>
+
+</body>
+</html>

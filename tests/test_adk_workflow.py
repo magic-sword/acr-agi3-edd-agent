@@ -59,7 +59,7 @@ def test_adk_workflow_direct_execution():
     decision = player.decide_next_action(grid=grid, available_actions=[1, 2, 3, 4])
     assert decision.action_id == 1
     assert decision.action_name == "ACTION1"
-    assert "Move up toward goal" in decision.reasoning
+    assert "Direct path up" in decision.reasoning
 
 
 def test_adk_workflow_click_coordinate_auto_snap():
