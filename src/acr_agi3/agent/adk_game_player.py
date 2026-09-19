@@ -30,7 +30,7 @@ from acr_agi3.harness.vision_observation import (
     normalize_grid,
 )
 from acr_agi3.meta.skill_harness import SkillHarness
-from acr_agi3.tools import MemoryTools, VisionTools
+from acr_agi3.tools import MemoryTools, PlanningTools, SpatialTools, VisionTools
 
 logger = logging.getLogger(__name__)
 logging.getLogger("opentelemetry.context").setLevel(logging.CRITICAL)
@@ -65,29 +65,31 @@ class ADKGamePlayer:
         self.model = model or LocalQwenVL(model_name_or_path="auto")
         self.autonomous_probing = bool(autonomous_probing) if autonomous_probing is not None else False
 
-        # 1. ハーネス初期化
+        # 1. ハーネスおよび Level 3 実行ツールの初期化
         self.vision_harness = VisionObservationHarness(cell_size=cell_size)
         self.action_tools = GameActionTools()
         self.vision_tools = VisionTools()
+        self.spatial_tools = SpatialTools()
+        self.planning_tools = PlanningTools()
         self.memory_tools = MemoryTools()
         self.skill_harness = SkillHarness()
 
         # 2. 各ノード専用の最小限スキルセット（最小権限の原則 ＋ Level 3 実行ツールの動的解放）
-        self.perceive_additional_tools = self.vision_tools.get_tools()
+        self.perceive_additional_tools = self.vision_tools.get_tools() + self.spatial_tools.get_tools()
         self.perceive_toolset = self.skill_harness.get_scoped_toolset(
-            ["visual-inspector"],
+            ["visual-inspector", "spatial-grounder"],
             additional_tools=self.perceive_additional_tools,
         )
 
-        self.plan_additional_tools = self.memory_tools.get_tools()
+        self.plan_additional_tools = self.memory_tools.get_tools() + self.planning_tools.get_tools()
         self.plan_toolset = self.skill_harness.get_scoped_toolset(
-            ["memory-notebook"],
+            ["memory-notebook", "backward-planner"],
             additional_tools=self.plan_additional_tools,
         )
 
-        self.act_additional_tools = self.action_tools.get_tools()
+        self.act_additional_tools = self.action_tools.get_tools() + self.spatial_tools.get_tools() + self.planning_tools.get_tools()
         self.act_toolset = self.skill_harness.get_scoped_toolset(
-            ["game-controller"],
+            ["game-controller", "taboo-reset-guard", "epistemic-prober"],
             additional_tools=self.act_additional_tools,
         )
         self.skill_toolset = self.skill_harness.get_toolset(
@@ -234,7 +236,19 @@ class ADKGamePlayer:
         self.action_tools.set_available_actions(avail_ids)
         self.action_tools.set_dynamics_map(self.dynamics_map)
         self.vision_tools.set_context(arr, step_index=self.step_index)
+        self.spatial_tools.set_context(arr, step_index=self.step_index)
+        self.planning_tools.set_context(arr, step_index=self.step_index, available_actions=avail_ids)
         self.memory_tools.set_step(self.step_index)
+
+        # 操作力学同定 (Epistemic Prober) のオンライン更新
+        if self.last_grid is not None and self.last_action_info is not None:
+            self.planning_tools.prober.analyze_displacement(
+                grid_before=self.last_grid,
+                grid_after=arr,
+                action_id=self.last_action_info.get("action_id", 1),
+            )
+            self.dynamics_map.update(self.planning_tools.prober.get_dynamics_map())
+            self.action_tools.set_dynamics_map(self.dynamics_map)
 
         # 視覚観測 Parts の生成 (統合コンソール画面 + 客観的事実)
         parts = self.vision_harness.create_observation_parts(
@@ -371,10 +385,15 @@ class ADKGamePlayer:
         # ---------------------------------------------------------------------
         self.action_tools.pending_decision = None
 
+        anchors_hint = ""
+        if 6 in available_action_ids and self.spatial_tools.cached_anchors and self.spatial_tools.grounder is not None:
+            anchors_hint = f"\n\n{self.spatial_tools.grounder.format_anchors_prompt(self.spatial_tools.cached_anchors)}\nWhen calling click_at, choose an anchor's (col, row) coordinates."
+
         act_prompt = (
             f"=== IMMEDIATE SUBGOAL & STRATEGY (Phase 2) ===\n"
             f"{plan_summary}\n\n"
-            f"Step: {self.step_index}, Game State: {state_str}, Available Action Buttons: {available_action_names}\n"
+            f"Step: {self.step_index}, Game State: {state_str}, Available Action Buttons: {available_action_names}"
+            f"{anchors_hint}\n"
             f"Execute your 1-step action by calling `step_action` or `click_at` tool."
         )
         act_content = Content(role="user", parts=[Part.from_text(text=act_prompt)])
@@ -477,6 +496,44 @@ class ADKGamePlayer:
             decision.action_name = f"ACTION{default_id}"
             decision.action_type = "STEP"
             decision.reasoning += f" [Safety fail-safe after {retry_count} re-thinks: {decision.metadata.get('error')}]"
+
+        # クリック座標の幾何接地 (Spatial Grounding: 空振りクリックの自動吸着)
+        if decision.action_id == 6 or decision.action_name == "ACTION6":
+            coords = decision.coordinates or {}
+            cx, cy = coords.get("x", 0), coords.get("y", 0)
+            if (cx == 0 and cy == 0) or not coords:
+                if self.spatial_tools.cached_anchors:
+                    best = self.spatial_tools.cached_anchors[0]
+                    decision.coordinates = {"x": best["x"], "y": best["y"]}
+                    decision.reasoning += f" [SpatialGrounder: Auto-snapped click to Anchor {best['id']} at ({best['x']}, {best['y']})]"
+            elif self.spatial_tools.cached_anchors and self.spatial_tools.grounder is not None:
+                sx, sy, aid = self.spatial_tools.grounder.snap_to_anchor(cx, cy, self.spatial_tools.cached_anchors)
+                if aid is not None:
+                    decision.coordinates = {"x": sx, "y": sy}
+
+        # 禁忌アクション刈り込み＆能動的リセット (Taboo Reset Guard)
+        if self.planning_tools.guard is not None:
+            last_eff = self.last_action_info.get("is_effective", True) if self.last_action_info else True
+            last_aid = self.last_action_info.get("action_id") if self.last_action_info else None
+            is_allowed, sanitized, reason = self.planning_tools.guard.filter_taboo_actions(
+                proposed_action=decision.action_id,
+                last_action_effective=last_eff,
+                last_action_id=last_aid,
+                available_actions=available_action_ids,
+                stagnation_count=self.stagnation_count,
+            )
+            if not is_allowed:
+                decision.action_id = sanitized
+                decision.action_name = f"ACTION{sanitized}"
+                decision.reasoning += f" [TabooGuard: {reason}]"
+
+            if self.planning_tools.guard.should_active_reset(self.stagnation_count):
+                decision.action_id = 0
+                decision.action_name = "RESET"
+                decision.action_type = "RESET"
+                decision.reasoning += f" [TabooGuard: Active reset triggered after {self.stagnation_count} stagnant steps]"
+
+            self.planning_tools.guard.record_step(decision.action_id)
 
         try:
             import torch

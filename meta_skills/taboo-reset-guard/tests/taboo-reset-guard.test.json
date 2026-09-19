@@ -1,0 +1,280 @@
+{
+  "eval_set_id": "taboo-reset-guard_edd",
+  "name": "taboo-reset-guard_edd",
+  "description": "Google ADK 2.0 Native EvalSet for taboo-reset-guard",
+  "skill_name": "taboo-reset-guard",
+  "eval_cases": [
+    {
+      "eval_id": "taboo-reset-guard_001",
+      "conversation": [
+        {
+          "invocation_id": "inv_taboo-reset-guard_001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Please execute taboo reset guard workflow with --help parameter"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "usage_help"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "taboo-reset-guard",
+                  "file_path": "scripts/taboo_reset_guard.py",
+                  "args": [
+                    "--help"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_taboo-reset-guard_001_1",
+          "rubric_content": {
+            "text_property": "correctly invokes run_skill_script with taboo_reset_guard.py"
+          },
+          "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_taboo-reset-guard_001_2",
+          "rubric_content": {
+            "text_property": "verifies execution output without cluttering context window"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "taboo-reset-guard_002",
+      "conversation": [
+        {
+          "invocation_id": "inv_taboo-reset-guard_002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Run taboo-reset-guard task for target data"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "execution_confirmation"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "taboo-reset-guard",
+                  "file_path": "scripts/taboo_reset_guard.py",
+                  "positional_args": [
+                    "sample_value"
+                  ],
+                  "args": {}
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_taboo-reset-guard_002_1",
+          "rubric_content": {
+            "text_property": "runs run_skill_script with taboo_reset_guard.py inputs"
+          },
+          "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_taboo-reset-guard_002_2",
+          "rubric_content": {
+            "text_property": "preserves data structure"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "taboo-reset-guard_003",
+      "conversation": [
+        {
+          "invocation_id": "inv_taboo-reset-guard_003",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Process batch operations using taboo-reset-guard"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "batch_summary"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "taboo-reset-guard",
+                  "file_path": "scripts/taboo_reset_guard.py",
+                  "positional_args": [
+                    "batch_item_1"
+                  ],
+                  "args": {}
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_taboo-reset-guard_003_1",
+          "rubric_content": {
+            "text_property": "handles multiple items properly"
+          },
+          "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_taboo-reset-guard_003_2",
+          "rubric_content": {
+            "text_property": "produces clear structured batch output"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "taboo-reset-guard_neg_001",
+      "conversation": [
+        {
+          "invocation_id": "inv_taboo-reset-guard_neg_001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Summarize the architectural benefits of Google ADK 2.0"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "conceptual_summary"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_taboo-reset-guard_neg_001_1",
+          "rubric_content": {
+            "text_property": "does not trigger taboo-reset-guard"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "taboo-reset-guard_neg_002",
+      "conversation": [
+        {
+          "invocation_id": "inv_taboo-reset-guard_neg_002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "What is the capital of France?"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "factual_answer"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_taboo-reset-guard_neg_002_1",
+          "rubric_content": {
+            "text_property": "does not trigger taboo-reset-guard"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "taboo-reset-guard_neg_003",
+      "conversation": [
+        {
+          "invocation_id": "inv_taboo-reset-guard_neg_003",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Explain the internal implementation of taboo-reset-guard without running tools"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "explanation_text"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_taboo-reset-guard_neg_003_1",
+          "rubric_content": {
+            "text_property": "does not trigger taboo-reset-guard"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    }
+  ]
+}

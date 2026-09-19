@@ -1,0 +1,280 @@
+{
+  "eval_set_id": "epistemic-prober_edd",
+  "name": "epistemic-prober_edd",
+  "description": "Google ADK 2.0 Native EvalSet for epistemic-prober",
+  "skill_name": "epistemic-prober",
+  "eval_cases": [
+    {
+      "eval_id": "epistemic-prober_001",
+      "conversation": [
+        {
+          "invocation_id": "inv_epistemic-prober_001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Please execute epistemic prober workflow with --help parameter"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "usage_help"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "epistemic-prober",
+                  "file_path": "scripts/epistemic_prober.py",
+                  "args": [
+                    "--help"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_epistemic-prober_001_1",
+          "rubric_content": {
+            "text_property": "correctly invokes run_skill_script with epistemic_prober.py"
+          },
+          "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_epistemic-prober_001_2",
+          "rubric_content": {
+            "text_property": "verifies execution output without cluttering context window"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "epistemic-prober_002",
+      "conversation": [
+        {
+          "invocation_id": "inv_epistemic-prober_002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Run epistemic-prober task for target data"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "execution_confirmation"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "epistemic-prober",
+                  "file_path": "scripts/epistemic_prober.py",
+                  "positional_args": [
+                    "sample_value"
+                  ],
+                  "args": {}
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_epistemic-prober_002_1",
+          "rubric_content": {
+            "text_property": "runs run_skill_script with epistemic_prober.py inputs"
+          },
+          "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_epistemic-prober_002_2",
+          "rubric_content": {
+            "text_property": "preserves data structure"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "epistemic-prober_003",
+      "conversation": [
+        {
+          "invocation_id": "inv_epistemic-prober_003",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Process batch operations using epistemic-prober"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "batch_summary"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "epistemic-prober",
+                  "file_path": "scripts/epistemic_prober.py",
+                  "positional_args": [
+                    "batch_item_1"
+                  ],
+                  "args": {}
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_epistemic-prober_003_1",
+          "rubric_content": {
+            "text_property": "handles multiple items properly"
+          },
+          "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_epistemic-prober_003_2",
+          "rubric_content": {
+            "text_property": "produces clear structured batch output"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "epistemic-prober_neg_001",
+      "conversation": [
+        {
+          "invocation_id": "inv_epistemic-prober_neg_001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Summarize the architectural benefits of Google ADK 2.0"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "conceptual_summary"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_epistemic-prober_neg_001_1",
+          "rubric_content": {
+            "text_property": "does not trigger epistemic-prober"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "epistemic-prober_neg_002",
+      "conversation": [
+        {
+          "invocation_id": "inv_epistemic-prober_neg_002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "What is the capital of France?"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "factual_answer"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_epistemic-prober_neg_002_1",
+          "rubric_content": {
+            "text_property": "does not trigger epistemic-prober"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "epistemic-prober_neg_003",
+      "conversation": [
+        {
+          "invocation_id": "inv_epistemic-prober_neg_003",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Explain the internal implementation of epistemic-prober without running tools"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "explanation_text"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_epistemic-prober_neg_003_1",
+          "rubric_content": {
+            "text_property": "does not trigger epistemic-prober"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    }
+  ]
+}
