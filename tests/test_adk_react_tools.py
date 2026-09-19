@@ -128,3 +128,38 @@ class TestADKThreePhaseWorkflow:
         assert decision.action_id == 1
         assert decision.action_name == "ACTION1"
         assert decision.metadata.get("success") is True
+
+    def test_level3_tool_invocation_by_act_agent(self) -> None:
+        """Act Agent が step_action ツールを直接呼び出して行動が決定されることを検証."""
+        calls = []
+
+        def simulation_fn(prompt: str, images: Any = None) -> Any:
+            calls.append(prompt)
+            if len(calls) == 1:
+                # Perceive: inspect_affordances のツール呼び出しをシミュレート
+                return '<tool_call>\n{"name": "inspect_affordances", "arguments": {"mode": "deep"}}\n</tool_call>'
+            elif len(calls) == 2:
+                # Perceive: ツール結果を受けて要約
+                return "Vision summary: detected board layout and agent at (1,1)."
+            elif len(calls) == 3:
+                # Plan: memory_write のツール呼び出しをシミュレート
+                return '<tool_call>\n{"name": "memory_write", "arguments": {"section_id": "subgoal.1", "content": "Move right"}}\n</tool_call>'
+            elif len(calls) == 4:
+                # Plan: 要約
+                return "Planning strategy complete: ready to act."
+            else:
+                # Act: step_action ツール呼び出し
+                return '<tool_call>\n{"name": "step_action", "arguments": {"action": "ACTION2", "reasoning": "Moving down via Level 3 tool"}}\n</tool_call>'
+
+        mock_vlm = LocalQwenVL(model_name_or_path="mock", generate_fn=simulation_fn)
+        player = ADKGamePlayer(model=mock_vlm, name="test_l3_player")
+
+        grid = np.zeros((5, 5), dtype=int)
+        grid[1, 1] = 1
+        decision = player.decide_next_action(grid=grid, available_actions=[1, 2, 3, 4])
+
+        assert decision.action_id == 2
+        assert decision.action_name == "ACTION2"
+        assert decision.reasoning == "Moving down via Level 3 tool"
+        assert decision.metadata.get("success", True) is True
+        assert decision.loaded_skill == "game-controller"

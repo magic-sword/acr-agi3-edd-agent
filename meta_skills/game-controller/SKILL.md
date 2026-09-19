@@ -9,7 +9,11 @@ license: MIT
 allowed-tools: run_skill_script load_skill_resource
 metadata:
   pattern: workflow
-  version: "1.1.0"
+  version: "1.2.0"
+  adk_additional_tools:
+    - step_action
+    - click_at
+    - reset_game
   inputs:
     - name: action_call
       type: dict | str

@@ -43,12 +43,16 @@ ACR-AGI-3 は **「未知の動的ゲーム環境において、状態観測か�
    * **車輪の再発明の禁止**: 独自パーサーや独自 Progressive Disclosure ツールを自作せず、Google ADK 2.0 公式の `google.adk.skills.load_skills_from_dir` および `google.adk.tools.skill_toolset.SkillToolset` を直接活用すること。
    * **Level 1 (Metadata)**: `SKILL.md` の YAML Frontmatter カタログのみをコンテキストに常駐させ、極小トークンでスキルを俯瞰すること（ADK `list_skills`）。
    * **Level 2 (Instructions)**: エージェントが必要に応じてトリガーした時のみ、該当スキルの `SKILL.md` 本文（ワークフロー・思考プロトコル）をオンデマンド展開すること（ADK `load_skill`）。
-   * **Level 3 (Execution)**: スキル配下の `scripts/` または許可されたツール（`allowed-tools`）をオンデマンド実行すること（ADK `run_skill_script`, `load_skill_resource`）。
+   * **Level 3 (Execution)**: スキルの YAML Frontmatter に `metadata.adk_additional_tools: [...]` として宣言された実行ツール、または `scripts/` をオンデマンド実行すること。
+   * **ゲームアクション実行の厳格なツール経由原則**:
+     - ゲーム環境への操作（アクション・クリック・リセット等）は、**必ず Level 3 実行ツール（`step_action`, `click_at`, `reset_game`）を経由**して実行すること。
+     - 自由記述テキストや JSON パース、あるいは `load_skill({'skill_name': 'ACTION1'})` のような誤認呼び出しによる環境操作は禁止（VLM 側で自動補正および構文保護を設けているが、プロンプトとツールバインドで第一義的に防護すること）。
    * スキルの管理・ロード・実行は必ず [`src/acr_agi3/meta/skill_harness.py`](file:///home/prog/work/kaggle/acr-agi3-edd-agent/src/acr_agi3/meta/skill_harness.py) の `SkillHarness`（ADK 公式ラッパー）を経由すること。
 
 8. **EDD MCP ツール（`edd-agent`）によるスキル作成・静的検証の必須化**
    * 新規スキルを作成・初期化する際は、必ず MCP ツール **`edd_init_skill`**（または `SkillScaffolder`）を用いて標準ディレクトリ構造（`SKILL.md`, `scripts/`, `tests/`）を生成すること。
    * スキルを作成・編集した後は、必ず MCP ツール **`edd_validate_skill`** を実行し、Markdown-First / Progressive Disclosure 規約に対する **エラー 0 件・警告 0 件** を確認してからコミットすること。
+   * 実行可能ツールを持つスキルは、`SKILL.md` の Frontmatter 内に `metadata.adk_additional_tools` を明記し、対応する Python クラス（例: `VisionTools`, `MemoryTools`, `ActionDecisionTools`）を Agent にバインドすること。
 
 9. **Kaggle Dataset 直参照（Read-Only）アーキテクチャの徹底**
    * メタスキル（`meta_skills/`）およびソースコード（`src/`）は、ノートブック内に Base64/辞書として埋め込んで物理再展開してはならない（コード肥大化・I/Oオーバーヘッドの禁止）。
@@ -61,14 +65,26 @@ ACR-AGI-3 は **「未知の動的ゲーム環境において、状態観測か�
 ## 🧩 Google ADK 準拠 3段階 Progressive Disclosure 設計思想
 
 ```
-[Level 1: Metadata Catalog] (常駐: 低コンテキスト消費)
-  │  - name, description, inputs, outputs, allowed-tools を把握
-  ▼ 自律判定により必要なスキルをトリガー (Trigger)
-[Level 2: Instructions] (オンデマンド展開: SKILL.md 本文)
-  │  - ワークフロー、思考プロトコル、制約事項、入出力例の理解
-  ▼ ワークフローの各ステップを実行 (Execution)
-[Level 3: Tools & Scripts] (オンデマンド実行: scripts/ & Tools)
-     - env_observer.py, game_style_intuitor.py, contract_tester.py 等
+┌─────────────────────────────────────────────────────────────┐
+│ [Level 1: Metadata Catalog] (常駐: 極小トークン)              │
+│  - ADK list_skills(): name, description, metadata を俯瞰      │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ 自律判定により必要なスキルをトリガー
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│ [Level 2: Instructions] (オンデマンド展開: SKILL.md 本文)      │
+│  - ADK load_skill(skill_name): 思考プロトコル・制約事項を理解  │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ 思考・行動の実行 (Execution)
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│ [Level 3: Tools & Scripts] (オンデマンド実行: Python ツール)  │
+│  - metadata.adk_additional_tools で定義された実行ツール群     │
+│    * game-controller   -> step_action, click_at, reset_game │
+│    * visual-inspector  -> inspect_affordances, inspect_...  │
+│    * memory-notebook   -> memory_write, memory_read, ...    │
+│    * contract-tester   -> run_contract_test                 │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ### スキル作成・検証クイックリファレンス (MCP Tools)
@@ -78,7 +94,7 @@ ACR-AGI-3 は **「未知の動的ゲーム環境において、状態観測か�
 call_mcp_tool(ServerName="edd-agent", ToolName="edd_init_skill", Arguments={"name": "new-skill-name", "path": "generated_skills"})
 
 # 2. スキルの規約静的検証 (MCP: edd_validate_skill)
-call_mcp_tool(ServerName="edd-agent", ToolName="edd_validate_skill", Arguments={"skill_dir": "meta_skills/env-observer"})
+call_mcp_tool(ServerName="edd-agent", ToolName="edd_validate_skill", Arguments={"skill_dir": "meta_skills/visual-inspector"})
 ```
 
 ---

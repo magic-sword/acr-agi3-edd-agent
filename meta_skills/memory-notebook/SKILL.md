@@ -9,7 +9,12 @@ license: MIT
 allowed-tools: run_skill_script load_skill_resource
 metadata:
   pattern: workflow
-  version: "1.0.0"
+  version: "1.1.0"
+  adk_additional_tools:
+    - memory_write
+    - memory_read
+    - memory_toc
+    - memory_search
   inputs:
     - name: command
       type: str

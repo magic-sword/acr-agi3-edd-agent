@@ -156,6 +156,78 @@ class LocalQwenVL(BaseLlm):
                 "Fallback to mock/generate_fn mode."
             )
 
+    @staticmethod
+    def _declaration_to_schema(fd: Any) -> Dict[str, Any]:
+        """ADK / Google GenAI の FunctionDeclaration を OpenAI / Qwen 互換の JSON Schema 辞書に変換."""
+        name = getattr(fd, "name", "")
+        desc = getattr(fd, "description", "") or ""
+        params: Dict[str, Any] = {"type": "object", "properties": {}}
+
+        raw_params = getattr(fd, "parameters", None)
+        if raw_params is not None:
+            if isinstance(raw_params, dict):
+                params = raw_params
+            elif hasattr(raw_params, "model_dump"):
+                try:
+                    params = raw_params.model_dump(exclude_none=True, by_alias=True)
+                except Exception:
+                    params = raw_params.model_dump(exclude_none=True)
+            elif hasattr(raw_params, "to_json_dict"):
+                params = raw_params.to_json_dict()
+            elif hasattr(raw_params, "properties"):
+                props = {}
+                for k, v in getattr(raw_params, "properties", {}).items():
+                    p_type = getattr(v, "type", "string")
+                    p_desc = getattr(v, "description", "")
+                    props[k] = {"type": str(p_type).lower(), "description": p_desc}
+                params = {
+                    "type": "object",
+                    "properties": props,
+                    "required": list(getattr(raw_params, "required", []) or []),
+                }
+
+        return {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": desc,
+                "parameters": params,
+            },
+        }
+
+    def _format_tools_for_qwen(self, tools: List[Any]) -> str:
+        """ADK ツールリストから Qwen 公式の <tools> ... </tools> プロンプトブロックを構築."""
+        declarations: List[Dict[str, Any]] = []
+        for t in tools:
+            # 1. google.genai.types.Tool (function_declarations)
+            if hasattr(t, "function_declarations") and t.function_declarations:
+                for fd in t.function_declarations:
+                    declarations.append(self._declaration_to_schema(fd))
+            # 2. 単一の FunctionDeclaration
+            elif hasattr(t, "name") and (hasattr(t, "parameters") or hasattr(t, "description")):
+                declarations.append(self._declaration_to_schema(t))
+            # 3. 辞書形式
+            elif isinstance(t, dict):
+                if "function" in t:
+                    declarations.append(t)
+                elif "name" in t:
+                    declarations.append({"type": "function", "function": t})
+
+        if not declarations:
+            return ""
+
+        tools_json_lines = "\n".join(json.dumps(d, ensure_ascii=False) for d in declarations)
+        return (
+            "\n# Tools\n\n"
+            "You may call one or more functions to assist with the user specification.\n\n"
+            "You are provided with function signatures within <tools></tools> XML tags:\n"
+            f"<tools>\n{tools_json_lines}\n</tools>\n\n"
+            "For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n"
+            "<tool_call>\n"
+            '{"name": "<function-name>", "arguments": <args-json-object>}\n'
+            "</tool_call>\n"
+        )
+
     def _extract_text_and_images(self, llm_request: LlmRequest) -> Tuple[str, List[Image.Image]]:
         """LlmRequest からテキストプロンプトと画像リストを抽出."""
         parts_text: List[str] = []
@@ -171,16 +243,27 @@ class LocalQwenVL(BaseLlm):
                     if hasattr(p, "text") and p.text:
                         parts_text.append(f"System: {p.text}\n")
 
+        # ツール定義の注入 (ADK ➔ Qwen ネイティブ形式)
+        if llm_request.config and hasattr(llm_request.config, "tools") and llm_request.config.tools:
+            tools_block = self._format_tools_for_qwen(llm_request.config.tools)
+            if tools_block:
+                parts_text.append(tools_block)
+
         for content in llm_request.contents or []:
             for part in getattr(content, "parts", []):
                 if hasattr(part, "text") and part.text:
                     parts_text.append(part.text)
                 elif hasattr(part, "function_call") and part.function_call:
                     fc = part.function_call
-                    parts_text.append(f"[Assistant called tool: {fc.name} with args: {fc.args}]")
+                    fc_args = fc.args if isinstance(fc.args, dict) else {}
+                    parts_text.append(
+                        f"<tool_call>\n{json.dumps({'name': fc.name, 'arguments': fc_args}, ensure_ascii=False)}\n</tool_call>"
+                    )
                 elif hasattr(part, "function_response") and part.function_response:
                     fr = part.function_response
-                    parts_text.append(f"[Tool response ({fr.name}): {json.dumps(fr.response)}]")
+                    parts_text.append(
+                        f"<tool_response>\n{json.dumps(fr.response, ensure_ascii=False, default=str)}\n</tool_response>"
+                    )
                 # 画像バイトデータまたは PIL Image の取得
                 elif hasattr(part, "inline_data") and part.inline_data:
                     import io
@@ -208,14 +291,24 @@ class LocalQwenVL(BaseLlm):
                     return tc["name"], tc.get("args") or tc.get("arguments") or {}
 
         if isinstance(output, str):
-            # 1. <tool_call>{"name": "...", "arguments": {...}}</tool_call>
+            # 1. <tool_call>\n{"name": "...", "arguments": {...}}\n</tool_call>
             m = re.search(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", output, re.DOTALL)
             if m:
                 try:
                     data = json.loads(m.group(1))
                     name = data.get("name")
                     args = data.get("arguments") or data.get("args") or {}
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except Exception:
+                            args = {}
                     if name:
+                        if name == "load_skill":
+                            raw_sn = str(args.get("skill_name", "")).strip().upper()
+                            if raw_sn in ["ACTION1", "ACTION2", "ACTION3", "ACTION4", "ACTION5", "ACTION6", "ACTION7", "UP", "DOWN", "LEFT", "RIGHT", "RESET"]:
+                                logger.info(f"[LocalQwenVL] Auto-correcting misrouted load_skill('{raw_sn}') to step_action(action='{raw_sn}')")
+                                return "step_action", {"action": raw_sn, "reasoning": f"Executing {raw_sn}"}
                         return name, args
                 except Exception:
                     pass
@@ -252,7 +345,13 @@ class LocalQwenVL(BaseLlm):
             tc = self._detect_tool_call(generated)
             if tc:
                 tool_name, tool_args = tc
+                if not isinstance(tool_args, dict):
+                    try:
+                        tool_args = json.loads(tool_args)
+                    except Exception:
+                        tool_args = {}
                 part = Part.from_function_call(name=tool_name, args=tool_args)
+                logger.info(f"[LocalQwenVL] Native Tool Call Detected (mock): {tool_name}({tool_args})")
             elif isinstance(generated, Part):
                 part = generated
             else:
@@ -303,6 +402,9 @@ class LocalQwenVL(BaseLlm):
                     skip_special_tokens=True,
                     clean_up_tokenization_spaces=False,
                 )[0]
+                if "</tool_call>" in generated_text:
+                    end_idx = generated_text.find("</tool_call>") + len("</tool_call>")
+                    generated_text = generated_text[:end_idx]
                 logger.info(f"[LocalQwenVL] raw generated_text: {generated_text!r}")
         else:
             # ARC-AGI-3 動的ゲーム環境向けモックアクション生成
@@ -321,7 +423,13 @@ class LocalQwenVL(BaseLlm):
         tc = self._detect_tool_call(generated_text)
         if tc:
             tool_name, tool_args = tc
+            if not isinstance(tool_args, dict):
+                try:
+                    tool_args = json.loads(tool_args)
+                except Exception:
+                    tool_args = {}
             part = Part.from_function_call(name=tool_name, args=tool_args)
+            logger.info(f"[LocalQwenVL] Native Tool Call Detected (model): {tool_name}({tool_args})")
         else:
             part = Part.from_text(text=generated_text)
 

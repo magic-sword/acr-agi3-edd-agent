@@ -85,15 +85,23 @@ class SkillHarness:
         alt = name.replace("-", "_")
         return self._skills_map.get(alt)
 
-    def get_toolset(self, tool_name_prefix: Optional[str] = None) -> SkillToolset:
+    def get_toolset(
+        self,
+        tool_name_prefix: Optional[str] = None,
+        additional_tools: Optional[List[Any]] = None,
+    ) -> SkillToolset:
         """Google ADK 公式 SkillToolset を生成して返却 (Level 1/2/3 自動提供)."""
         return SkillToolset(
             skills=self.skills,
             tool_name_prefix=tool_name_prefix,
+            additional_tools=additional_tools,
         )
 
     def get_scoped_toolset(
-        self, skill_names: List[str], tool_name_prefix: Optional[str] = None
+        self,
+        skill_names: List[str],
+        tool_name_prefix: Optional[str] = None,
+        additional_tools: Optional[List[Any]] = None,
     ) -> SkillToolset:
         """指定されたスキルのみに絞り込んだ最小権限の SkillToolset を生成して返却."""
         scoped_skills: List[Skill] = []
@@ -104,6 +112,7 @@ class SkillHarness:
         return SkillToolset(
             skills=scoped_skills,
             tool_name_prefix=tool_name_prefix,
+            additional_tools=additional_tools,
         )
 
     def list_skills(self) -> List[Skill]:

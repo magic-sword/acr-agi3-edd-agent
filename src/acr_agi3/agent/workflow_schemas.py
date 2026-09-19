@@ -95,10 +95,14 @@ class PlanProposal:
                         if not isinstance(synth_req, dict):
                             synth_req = None
 
+                        action_val = str(data.get("action", "")).strip()
+                        if (not action_val or action_val.lower() in ("step_action", "step", "action")) and "direction" in data:
+                            action_val = str(data["direction"]).strip()
+
                         return cls(
                             hypothesis=str(data.get("hypothesis", "")),
                             goal=str(data.get("goal", "")),
-                            action=str(data.get("action", "")).strip(),
+                            action=action_val,
                             coordinates=coords,
                             reasoning=str(data.get("reasoning", "")),
                             subgoal=subgoal_val,

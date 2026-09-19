@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 from google.adk.agents import Agent
-from google.adk.runners import Runner
+from google.adk.runners import Runner, RunConfig
 from google.adk.sessions import InMemorySessionService
 from google.genai.types import Content, Part
 
@@ -30,8 +30,11 @@ from acr_agi3.harness.vision_observation import (
     normalize_grid,
 )
 from acr_agi3.meta.skill_harness import SkillHarness
+from acr_agi3.tools import MemoryTools, VisionTools
 
 logger = logging.getLogger(__name__)
+logging.getLogger("opentelemetry.context").setLevel(logging.CRITICAL)
+logging.getLogger("google_adk.google.adk.runners").setLevel(logging.ERROR)
 
 # game-controller メタスキルのインポート
 GAME_CONTROLLER_DIR = Path(__file__).resolve().parents[3] / "meta_skills" / "game-controller" / "scripts"
@@ -65,13 +68,31 @@ class ADKGamePlayer:
         # 1. ハーネス初期化
         self.vision_harness = VisionObservationHarness(cell_size=cell_size)
         self.action_tools = GameActionTools()
+        self.vision_tools = VisionTools()
+        self.memory_tools = MemoryTools()
         self.skill_harness = SkillHarness()
 
-        # 2. 各ノード専用の最小限スキルセット（最小権限の原則）
-        self.perceive_toolset = self.skill_harness.get_scoped_toolset(["visual-inspector"])
-        self.plan_toolset = self.skill_harness.get_scoped_toolset(["memory-notebook"])
-        self.act_toolset = self.skill_harness.get_scoped_toolset(["game-controller"])
-        self.skill_toolset = self.skill_harness.get_toolset()
+        # 2. 各ノード専用の最小限スキルセット（最小権限の原則 ＋ Level 3 実行ツールの動的解放）
+        self.perceive_additional_tools = self.vision_tools.get_tools()
+        self.perceive_toolset = self.skill_harness.get_scoped_toolset(
+            ["visual-inspector"],
+            additional_tools=self.perceive_additional_tools,
+        )
+
+        self.plan_additional_tools = self.memory_tools.get_tools()
+        self.plan_toolset = self.skill_harness.get_scoped_toolset(
+            ["memory-notebook"],
+            additional_tools=self.plan_additional_tools,
+        )
+
+        self.act_additional_tools = self.action_tools.get_tools()
+        self.act_toolset = self.skill_harness.get_scoped_toolset(
+            ["game-controller"],
+            additional_tools=self.act_additional_tools,
+        )
+        self.skill_toolset = self.skill_harness.get_toolset(
+            additional_tools=self.perceive_additional_tools + self.plan_additional_tools + self.act_additional_tools
+        )
 
         # 3. 動的操作力学マップ (ボタンと移動方向の同定結果: 例 {'UP': 3, 'DOWN': 4})
         self.dynamics_map: Dict[str, int] = {}
@@ -81,7 +102,8 @@ class ADKGamePlayer:
         perceive_instruction = (
             "You are the Visual Inspection Specialist for ARC-AGI-3 dynamic games.\n"
             "Your objective is to observe the visual console screen (game board and controller HUD) and extract objective spatial layout, active colors, player candidates, targets, and affordances.\n"
-            "You have access to the visual-inspector skill. Use its scripts or resources if needed to inspect the board.\n"
+            "1. You have access to the skill: 'visual-inspector'. You may call `load_skill(skill_name='visual-inspector')` if you need detailed inspection guides or scripts.\n"
+            "2. You may also call inspection tools directly if needed: `inspect_affordances(mode='deep')` or `inspect_board_summary()`.\n"
             "Output a concise visual observation summary:\n"
             "- Board layout geometry, active colors, and spatial symmetry\n"
             "- Discovered entities (player, goal, obstacles, movable blocks)\n"
@@ -90,7 +112,7 @@ class ADKGamePlayer:
         self.perceive_agent = Agent(
             name=f"{self.name}_perceive",
             model=self.model,
-            tools=[self.perceive_toolset],
+            tools=[self.perceive_toolset] + self.perceive_additional_tools,
             instruction=perceive_instruction,
         )
 
@@ -98,8 +120,11 @@ class ADKGamePlayer:
         plan_instruction = (
             "You are the Cognitive Planner for ARC-AGI-3 dynamic games.\n"
             "Your objective is to review the visual observation summary from Node 1 and formulate a backward-chaining strategy and immediate subgoal.\n"
-            "You have access to the memory-notebook skill to recall established rules, bookmarks, and No-Go deadlock patterns.\n"
-            "Output your planning strategy:\n"
+            "CRITICAL CONSTRAINT: You are ONLY a planner. You MUST NOT execute actions or call step_action or click_at.\n"
+            "Node 3 will execute the action based on your plan.\n"
+            "1. You have access to the skill: 'memory-notebook'. You may call `load_skill(skill_name='memory-notebook')` if you need memory recall or state-tracking guides.\n"
+            "2. You may use memory tools to recall or store findings: `memory_write(section_id=..., content=...)`, `memory_read(section_id=...)`, `memory_toc()`, `memory_search(query=...)`.\n"
+            "Output your planning strategy as plain text:\n"
             "- Immediate subgoal (e.g. advance towards target, stage piece in buffer, test unexplored button, avoid trap)\n"
             "- Keystone piece or dependency ordering (Backward Chaining)\n"
             "- Key hypothesis on causal dynamics"
@@ -107,28 +132,25 @@ class ADKGamePlayer:
         self.plan_agent = Agent(
             name=f"{self.name}_plan",
             model=self.model,
-            tools=[self.plan_toolset],
+            tools=[self.plan_toolset] + self.plan_additional_tools,
             instruction=plan_instruction,
         )
 
         # Node 3: 1-Step Execution (Act Node) - 1手決定・安全検証
         act_instruction = (
             "You are the Action Decision Specialist for ARC-AGI-3 dynamic games.\n"
-            "Your objective is to review the immediate subgoal from Node 2 and decide the single optimal 1-step action from available buttons.\n"
-            "You have access to the game-controller skill to validate actions.\n"
-            "Output your final 1-step decision in a JSON block:\n"
-            "```json\n"
-            "{\n"
-            '  "action": "ACTION1" | "ACTION2" | "ACTION3" | "ACTION4" | "ACTION5" | "ACTION6" | "ACTION7" | "RESET",\n'
-            '  "coordinates": {"x": col, "y": row}, // ONLY needed if action is ACTION6 / click_at (otherwise omit or null)\n'
-            '  "reasoning": "Strategy explanation for this action"\n'
-            "}\n"
-            "```\n"
+            "Your objective is to execute the immediate subgoal from Node 2 using available tools.\n"
+            "1. You have access to the skill: 'game-controller'. Call `load_skill(skill_name='game-controller')` if you need to review its operational instructions and rules.\n"
+            "2. To execute your action, you MUST call one of the execution tools:\n"
+            "   - `step_action(action='...', reasoning='...')`: Execute a directional move ('UP', 'DOWN', 'LEFT', 'RIGHT') or physical button ('ACTION1'-'ACTION7').\n"
+            "   - `click_at(x=col, y=row, reasoning='...')`: Click at coordinate (ACTION6) or auto-snap to interactive element.\n"
+            "   - `reset_game(reasoning='...')`: Reset level when deadlocked.\n"
+            "DO NOT call load_skill with action names (e.g. do NOT call load_skill('ACTION1')). Always use `step_action` or `click_at` to execute actions."
         )
         self.act_agent = Agent(
             name=f"{self.name}_act",
             model=self.model,
-            tools=[self.act_toolset],
+            tools=[self.act_toolset] + self.act_additional_tools,
             instruction=act_instruction,
         )
 
@@ -211,6 +233,8 @@ class ADKGamePlayer:
         avail_names = [f"ACTION{i}" for i in avail_ids]
         self.action_tools.set_available_actions(avail_ids)
         self.action_tools.set_dynamics_map(self.dynamics_map)
+        self.vision_tools.set_context(arr, step_index=self.step_index)
+        self.memory_tools.set_step(self.step_index)
 
         # 視覚観測 Parts の生成 (統合コンソール画面 + 客観的事実)
         parts = self.vision_harness.create_observation_parts(
@@ -294,18 +318,23 @@ class ADKGamePlayer:
         # ---------------------------------------------------------------------
         # Phase 1: Visual Inspection (Perceive Node) - 最小限ツール: visual-inspector
         # ---------------------------------------------------------------------
+        node_run_config = RunConfig(max_llm_calls=4)
         perceive_content = Content(role="user", parts=obs_parts)
         perceive_events = self.perceive_runner.run_async(
             session_id=self.perceive_session_id,
             user_id=user_id,
             new_message=perceive_content,
+            run_config=node_run_config,
         )
         perceive_summary = ""
-        async for ev in perceive_events:
-            if hasattr(ev, "content") and ev.content:
-                for p in getattr(ev.content, "parts", []):
-                    if hasattr(p, "text") and p.text:
-                        perceive_summary += p.text
+        try:
+            async for ev in perceive_events:
+                if hasattr(ev, "content") and ev.content:
+                    for p in getattr(ev.content, "parts", []):
+                        if hasattr(p, "text") and p.text:
+                            perceive_summary += p.text
+        except Exception as e:
+            logger.warning("Step %d [Perceive Node notice]: %s", self.step_index, e)
 
         logger.info("Step %d [Phase 1: Perceive Complete] Summary: %s...", self.step_index, perceive_summary[:120].strip())
 
@@ -316,59 +345,78 @@ class ADKGamePlayer:
             f"=== VISUAL PERCEPTION SUMMARY (Phase 1) ===\n"
             f"{perceive_summary}\n\n"
             f"Step: {self.step_index}, Game State: {state_str}, Available Action Buttons: {available_action_names}\n"
-            f"Formulate your backward-chaining strategy and immediate subgoal."
+            f"Formulate your backward-chaining strategy and immediate subgoal. (Do not call any action tools like step_action)."
         )
         plan_content = Content(role="user", parts=[Part.from_text(text=plan_prompt)])
         plan_events = self.plan_runner.run_async(
             session_id=self.plan_session_id,
             user_id=user_id,
             new_message=plan_content,
+            run_config=node_run_config,
         )
         plan_summary = ""
-        async for ev in plan_events:
-            if hasattr(ev, "content") and ev.content:
-                for p in getattr(ev.content, "parts", []):
-                    if hasattr(p, "text") and p.text:
-                        plan_summary += p.text
+        try:
+            async for ev in plan_events:
+                if hasattr(ev, "content") and ev.content:
+                    for p in getattr(ev.content, "parts", []):
+                        if hasattr(p, "text") and p.text:
+                            plan_summary += p.text
+        except Exception as e:
+            logger.warning("Step %d [Plan Node notice]: %s", self.step_index, e)
 
         logger.info("Step %d [Phase 2: Plan Complete] Strategy: %s...", self.step_index, plan_summary[:120].strip())
 
         # ---------------------------------------------------------------------
         # Phase 3: Action Execution (Act Node) - 最小限ツール: game-controller
         # ---------------------------------------------------------------------
+        self.action_tools.pending_decision = None
+
         act_prompt = (
             f"=== IMMEDIATE SUBGOAL & STRATEGY (Phase 2) ===\n"
             f"{plan_summary}\n\n"
-            f"Available action buttons in this environment: {available_action_names}\n"
-            f"Decide the single optimal 1-step action to advance this subgoal and respond in JSON block."
+            f"Step: {self.step_index}, Game State: {state_str}, Available Action Buttons: {available_action_names}\n"
+            f"Execute your 1-step action by calling `step_action` or `click_at` tool."
         )
         act_content = Content(role="user", parts=[Part.from_text(text=act_prompt)])
         act_events = self.act_runner.run_async(
             session_id=self.act_session_id,
             user_id=user_id,
             new_message=act_content,
+            run_config=node_run_config,
         )
         act_raw_text = ""
-        async for ev in act_events:
-            if hasattr(ev, "content") and ev.content:
-                for p in getattr(ev.content, "parts", []):
-                    if hasattr(p, "text") and p.text:
-                        act_raw_text += p.text
+        try:
+            async for ev in act_events:
+                if hasattr(ev, "content") and ev.content:
+                    for p in getattr(ev.content, "parts", []):
+                        if hasattr(p, "text") and p.text:
+                            act_raw_text += p.text
+                if self.action_tools.pending_decision is not None:
+                    break
+        except (Exception, GeneratorExit) as e:
+            pass
 
-        proposal = PlanProposal.from_text(act_raw_text)
-        if not proposal.action and (perceive_summary or plan_summary):
-            # モックモデル等のフォールバック抽出
-            proposal = PlanProposal.from_text(f"{act_raw_text}\n{plan_summary}\n{perceive_summary}")
+        if self.action_tools.pending_decision is not None:
+            decision = self.action_tools.pending_decision
+            logger.info(
+                "Step %d [Act Node: Tool Call Succeeded] Action: %s (ID: %d) Reasoning: %s",
+                self.step_index, decision.action_name, decision.action_id, decision.reasoning
+            )
+        else:
+            proposal = PlanProposal.from_text(act_raw_text)
+            if not proposal.action and (perceive_summary or plan_summary):
+                # モックモデル等のフォールバック抽出
+                proposal = PlanProposal.from_text(f"{act_raw_text}\n{plan_summary}\n{perceive_summary}")
 
-        decision = self._convert_to_decision(
-            action_str=proposal.action,
-            coordinates=proposal.coordinates,
-            reasoning=proposal.reasoning or plan_summary or proposal.hypothesis,
-            available_action_ids=available_action_ids,
-            grid_shape=grid_shape,
-            grid=grid,
-            loaded_skill=proposal.load_skill,
-        )
+            decision = self._convert_to_decision(
+                action_str=proposal.action,
+                coordinates=proposal.coordinates,
+                reasoning=proposal.reasoning or plan_summary or proposal.hypothesis,
+                available_action_ids=available_action_ids,
+                grid_shape=grid_shape,
+                grid=grid,
+                loaded_skill=proposal.load_skill,
+            )
 
         # game-controller によるアクション拒絶時の自律的再検討 (Re-think) ループ
         retry_count = 0
