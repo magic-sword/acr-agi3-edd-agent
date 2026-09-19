@@ -145,3 +145,36 @@ def test_positive_step_action_direction_name_with_coords():
     assert validation["error"] is None
 
 
+def test_positive_dpad_label_formatting():
+    """正例 7: 利用可能アクションが十字キー (UP/DOWN/LEFT/RIGHT) や CLICK 付きの直感的ラベルに整形されること."""
+    from acr_agi3.agent.adk_game_player import ADKGamePlayer
+    player = ADKGamePlayer(name="test_player", app_name="test_app", model=None, autonomous_probing=False)
+
+    # 1. デフォルト力学時
+    labels = player._format_available_action_labels([1, 2, 3, 4, 6])
+    assert "UP (ACTION1)" in labels
+    assert "DOWN (ACTION2)" in labels
+    assert "LEFT (ACTION3)" in labels
+    assert "RIGHT (ACTION4)" in labels
+    assert "CLICK (ACTION6)" in labels
+
+    # 2. 操作力学が動的同定された場合 (例: UP -> ACTION3, RIGHT -> ACTION1)
+    player.dynamics_map = {"UP": 3, "DOWN": 4, "LEFT": 2, "RIGHT": 1}
+    updated_labels = player._format_available_action_labels([1, 2, 3, 4])
+    assert "RIGHT (ACTION1)" in updated_labels
+    assert "LEFT (ACTION2)" in updated_labels
+    assert "UP (ACTION3)" in updated_labels
+    assert "DOWN (ACTION4)" in updated_labels
+
+
+def test_renderer_normalizes_dpad_labels():
+    """正例 8: renderer が 'UP (ACTION1)' や 'CLICK (ACTION6)' 形式のラベルからアクションIDを正しく抽出できること."""
+    from acr_agi3.dsl.renderer import _normalize_action_id
+    assert _normalize_action_id("UP (ACTION1)") == 1
+    assert _normalize_action_id("DOWN (ACTION2)") == 2
+    assert _normalize_action_id("CLICK (ACTION6)") == 6
+    assert _normalize_action_id("RESET (ACTION0)") == 0
+    assert _normalize_action_id("UP") == 1
+    assert _normalize_action_id("ACTION4") == 4
+
+

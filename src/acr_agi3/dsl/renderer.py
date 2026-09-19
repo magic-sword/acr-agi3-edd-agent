@@ -136,7 +136,13 @@ def _normalize_action_id(action: Optional[Union[int, str, Any]]) -> Optional[int
         except (ValueError, TypeError):
             pass
 
+    import re
     act_str = str(action).strip().upper()
+    # "ACTION1" や "UP (ACTION1)" から数字IDを抽出
+    m = re.search(r"ACTION(\d+)", act_str)
+    if m:
+        return int(m.group(1))
+
     name_map = {
         "RESET": 0,
         "UP": 1,
@@ -152,8 +158,9 @@ def _normalize_action_id(action: Optional[Union[int, str, Any]]) -> Optional[int
         "ACTION7": 7,
         "CLICK": 6,
     }
-    if act_str in name_map:
-        return name_map[act_str]
+    for k, v in name_map.items():
+        if k in act_str:
+            return v
     try:
         return int(act_str)
     except ValueError:

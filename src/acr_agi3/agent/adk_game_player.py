@@ -167,8 +167,8 @@ class ADKGamePlayer:
             "Your objective is to execute the immediate subgoal from Node 2 using available tools.\n"
             "1. You have access to the skill: 'game-controller'. Call `load_skill(skill_name='game-controller')` if you need to review its operational instructions and rules.\n"
             "2. To execute your action, you MUST call one of the execution tools:\n"
-            "   - `step_action(action='...', reasoning='...')`: Execute a directional move ('UP', 'DOWN', 'LEFT', 'RIGHT') or physical button ('ACTION1'-'ACTION7').\n"
-            "   - `click_at(x=col, y=row, reasoning='...')`: Click at coordinate (ACTION6) or auto-snap to interactive element.\n"
+            "   - `step_action(action='...', reasoning='...')`: Execute a move using D-Pad directions ('UP', 'DOWN', 'LEFT', 'RIGHT') or physical button ('ACTION1'-'ACTION7').\n"
+            "   - `click_at(x=col, y=row, object_id=..., reasoning='...')`: Click at coordinate or auto-snap to detected object.\n"
             "   - `reset_game(reasoning='...')`: Reset level when deadlocked.\n"
             "DO NOT call load_skill with action names (e.g. do NOT call load_skill('ACTION1')). Always use `step_action` or `click_at` to execute actions."
         )
@@ -334,7 +334,6 @@ class ADKGamePlayer:
 
         # 利用可能アクションの更新
         avail_ids = available_actions or [1, 2, 3, 4]
-        avail_names = [f"ACTION{i}" for i in avail_ids]
         self.action_tools.set_available_actions(avail_ids)
         self.action_tools.set_dynamics_map(self.dynamics_map)
         self.action_tools.set_grid(arr)
@@ -361,6 +360,9 @@ class ADKGamePlayer:
                     summary=f"Mapped {len(self.dynamics_map)} controller actions",
                     tags="causality,dynamics",
                 )
+
+        # 十字キー (D-Pad: UP/DOWN/LEFT/RIGHT) およびアクションボタン名付きの直感的ラベル生成
+        avail_names = self._format_available_action_labels(avail_ids)
 
         # ---------------------------------------------------------------------
         # 認知的ステートマシン: 失敗・計画逸脱（壁衝突・空振り・0ピクセル変化）検知と黒板記録
@@ -1009,3 +1011,21 @@ class ADKGamePlayer:
                         if hasattr(p, "inline_data") and p.inline_data:
                             p.inline_data = None
                             p.text = "[Previous Visual Frame archived]"
+
+    def _format_available_action_labels(self, avail_ids: List[int]) -> List[str]:
+        """利用可能アクションIDを十字キー方向名・ボタン名付きの直感的な表現へ整形."""
+        rev_map = {v: k for k, v in self.dynamics_map.items() if k in ("UP", "DOWN", "LEFT", "RIGHT")}
+        default_dir_map = {1: "UP", 2: "DOWN", 3: "LEFT", 4: "RIGHT"}
+        labels: List[str] = []
+        for aid in avail_ids:
+            if aid in rev_map:
+                labels.append(f"{rev_map[aid]} (ACTION{aid})")
+            elif aid in default_dir_map:
+                labels.append(f"{default_dir_map[aid]} (ACTION{aid})")
+            elif aid == 6:
+                labels.append("CLICK (ACTION6)")
+            elif aid == 0:
+                labels.append("RESET (ACTION0)")
+            else:
+                labels.append(f"ACTION{aid}")
+        return labels

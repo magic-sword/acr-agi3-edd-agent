@@ -80,10 +80,11 @@ class GameActionTools:
             self.controller.set_dynamics_map(self.dynamics_map)
 
     def step_action(self, action: str, reasoning: str = "") -> str:
-        """ゲーム環境で指定された方向キーまたはボタンのアクションを実行します。
+        """ゲーム環境で十字キー（方向キー: UP, DOWN, LEFT, RIGHT）またはボタンアクションを実行します。
 
         Args:
-            action: 移動方向 ("UP", "DOWN", "LEFT", "RIGHT") またはアクション名 ("ACTION1"〜"ACTION7")。
+            action: 十字キーの移動方向 ("UP", "DOWN", "LEFT", "RIGHT") またはボタン名 ("ACTION1"〜"ACTION7")。
+                    方向キーを指定すると、環境のボタン割り当て（操作力学）に応じて自動的に適切なアクションへ解決されます。
             reasoning: この行動を選択した戦略的理由。
         """
         if self.controller is not None:
