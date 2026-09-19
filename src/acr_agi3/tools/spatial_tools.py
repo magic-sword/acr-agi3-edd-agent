@@ -34,6 +34,11 @@ class SpatialTools:
         self.current_grid: Optional[np.ndarray] = None
         self.step_index: int = 0
         self.cached_anchors: List[Dict[str, Any]] = []
+        self.taboo_coords: List[Tuple[int, int]] = []
+
+    def set_taboo_coords(self, coords: List[Tuple[int, int]]) -> None:
+        """空振り等で禁忌となったクリック座標リストを更新."""
+        self.taboo_coords = list(coords)
 
     def set_context(self, grid: Optional[np.ndarray], step_index: int = 0) -> None:
         """現在のフレームとステップ番号を更新し、アンカーを抽出."""
@@ -49,10 +54,18 @@ class SpatialTools:
         if self.current_grid is None or self.grounder is None:
             return json.dumps({"error": "No observation grid currently set"}, ensure_ascii=False)
 
+        # 禁忌座標に近いアンカーにはフラグを付与
+        visible_anchors = []
+        for a in self.cached_anchors:
+            is_taboo = any(np.hypot(a["x"] - tx, a["y"] - ty) <= 3.0 for tx, ty in self.taboo_coords)
+            a_copy = dict(a)
+            a_copy["is_taboo"] = is_taboo
+            visible_anchors.append(a_copy)
+
         res = {
-            "total_anchors": len(self.cached_anchors),
-            "anchors": self.cached_anchors,
-            "prompt_summary": self.grounder.format_anchors_prompt(self.cached_anchors),
+            "total_anchors": len(visible_anchors),
+            "anchors": visible_anchors,
+            "prompt_summary": self.grounder.format_anchors_prompt([a for a in visible_anchors if not a.get("is_taboo")]),
         }
         return json.dumps(res, ensure_ascii=False)
 
@@ -61,7 +74,9 @@ class SpatialTools:
         if not self.cached_anchors or self.grounder is None:
             return json.dumps({"x": x, "y": y, "snapped": False, "anchor_id": None})
 
-        sx, sy, aid = self.grounder.snap_to_anchor(x, y, self.cached_anchors)
+        sx, sy, aid = self.grounder.snap_to_anchor(
+            x, y, self.cached_anchors, taboo_coords=self.taboo_coords
+        )
         return json.dumps({
             "x": sx,
             "y": sy,

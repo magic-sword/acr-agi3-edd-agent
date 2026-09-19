@@ -148,16 +148,25 @@ class SpatialGrounder:
         y: int,
         anchors: List[Dict[str, Any]],
         max_dist: float = 12.0,
+        taboo_coords: Optional[List[Tuple[int, int]]] = None,
+        taboo_dist: float = 3.0,
     ) -> Tuple[int, int, Optional[int]]:
-        """Snaps an arbitrary coordinate (x, y) to the closest anchor centroid if within max_dist."""
+        """Snaps an arbitrary coordinate (x, y) to the closest anchor centroid if within max_dist.
+
+        Avoids anchors that are within taboo_dist of any coordinate in taboo_coords.
+        """
         if not anchors:
             return x, y, None
 
         best_dist = float("inf")
         best_anchor = None
+        taboos = taboo_coords or []
 
         for a in anchors:
             ax, ay = a["x"], a["y"]
+            # 禁忌座標に近いアンカーは除外
+            if any(np.hypot(ax - tx, ay - ty) <= taboo_dist for tx, ty in taboos):
+                continue
             dist = np.hypot(ax - x, ay - y)
             if dist < best_dist:
                 best_dist = dist

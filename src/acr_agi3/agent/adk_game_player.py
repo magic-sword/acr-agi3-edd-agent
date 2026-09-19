@@ -218,6 +218,7 @@ class ADKGamePlayer:
         self.last_expected_action: Optional[str] = None
         self.current_game_id: str = "default"
         self.game_dynamics: Dict[str, Dict[str, int]] = {}
+        self.taboo_click_coords: List[Tuple[int, int]] = []
 
     def switch_game(self, game_id: str) -> None:
         """指定されたゲーム環境 (game_id) に切り替え、環境ごとのノートと力学を復元."""
@@ -260,6 +261,7 @@ class ADKGamePlayer:
             self.memory_tools.clear()
             self.dynamics_map.clear()
             self.action_tools.set_dynamics_map({})
+            self.taboo_click_coords.clear()
             if self.planning_tools.prober is not None:
                 self.planning_tools.prober.dynamics_map.clear()
                 self.planning_tools.prober.tested_actions.clear()
@@ -361,24 +363,51 @@ class ADKGamePlayer:
                 )
 
         # ---------------------------------------------------------------------
-        # 認知的ステートマシン: 計画逸脱（壁衝突・0ピクセル変化）検知
+        # 認知的ステートマシン: 失敗・計画逸脱（壁衝突・空振り・0ピクセル変化）検知と黒板記録
         # ---------------------------------------------------------------------
-        if self.cognitive_state == CognitiveState.EXECUTING:
-            if pixels_changed == 0 and self.last_action_info is not None:
-                logger.warning(
-                    "Step %d [State Machine: EXECUTING -> RECOVERY] Planned action %s caused 0 pixel change. Halting queue.",
-                    self.step_index, self.last_expected_action
-                )
-                self.cognitive_state = CognitiveState.RECOVERY
+        if pixels_changed == 0 and self.last_action_info is not None:
+            last_act_name = self.last_action_info.get("action_name") or self.last_expected_action or "UNKNOWN"
+            last_act_id = self.last_action_info.get("action_id", 0)
+            last_coords = self.last_action_info.get("coordinates") or {}
+
+            logger.warning(
+                "Step %d [Failure Detected] Action %s (ID: %s) coords=%s caused 0 pixel changes. Transitioning to RECOVERY.",
+                self.step_index, last_act_name, last_act_id, last_coords
+            )
+            self.cognitive_state = CognitiveState.RECOVERY
+            if self.plan_queue:
                 self.plan_queue.clear()
-                # 破綻した計画を消去 (消しゴム) し、手詰まり禁忌を共有黒板に記録
-                self.memory_tools.memory_delete("plan.active")
+            self.memory_tools.memory_delete("plan.active")
+
+            # クリック失敗の場合: 禁忌座標として記録し、SpatialTools にも伝播
+            if last_act_id == 6 or last_act_name == "ACTION6" or "x" in last_coords:
+                cx = last_coords.get("x", 0)
+                cy = last_coords.get("y", 0)
+                if (cx, cy) not in self.taboo_click_coords:
+                    self.taboo_click_coords.append((cx, cy))
+                self.spatial_tools.set_taboo_coords(self.taboo_click_coords)
+                self.memory_tools.memory_write(
+                    section_id=f"taboo.click_{cx}_{cy}",
+                    title=f"Failed Click at ({cx}, {cy})",
+                    content=f"Click at coordinate (col={cx}, row={cy}) caused 0 pixel changes (inactive or missed object). Do not repeat this coordinate.",
+                    summary=f"Inactive click coordinate ({cx}, {cy})",
+                    tags="taboo,click,constraint",
+                )
+            else:
+                # 移動・ボタン失敗の場合: 禁忌アクションとして記録 (互換性のために taboo.step_{step} も同期)
                 self.memory_tools.memory_write(
                     section_id=f"taboo.step_{self.step_index}",
                     title=f"Taboo Barrier at Step {self.step_index}",
-                    content=f"Action '{self.last_expected_action}' caused 0 pixel change.",
+                    content=f"Action '{last_act_name}' (ID: {last_act_id}) caused 0 pixel change.",
                     summary="Wall bump or obstacle collision",
                     tags="taboo,constraint",
+                )
+                self.memory_tools.memory_write(
+                    section_id=f"taboo.action_{last_act_id}",
+                    title=f"Taboo Action {last_act_name} at Step {self.step_index}",
+                    content=f"Action '{last_act_name}' (ID: {last_act_id}) caused 0 pixel change (wall bump or deadlocked position). Avoid repeating without state change.",
+                    summary=f"Wall bump with {last_act_name}",
+                    tags="taboo,movement,constraint",
                 )
 
         # ---------------------------------------------------------------------
@@ -628,12 +657,29 @@ class ADKGamePlayer:
         mode_instructions = []
 
         if self.current_cognitive_mode == CognitiveMode.TABOO_RECOVERY:
-            mode_instructions.append(
-                "🚨 [Mode: TABOO RECOVERY / DEADLOCK ESCAPE]\n"
-                "The previous action caused 0 pixel changes (wall bump or deadlocked position).\n"
-                f"{taboo_warning}\n"
-                "Goal: Immediately select an orthogonal alternative direction or unblock action. Avoid repeating the failed action."
-            )
+            if 6 in available_action_ids and len(available_action_ids) == 1:
+                taboo_str = f"Recorded Taboo Clicks: {self.taboo_click_coords}" if self.taboo_click_coords else ""
+                mode_instructions.append(
+                    "🚨 [Mode: TABOO RECOVERY / INTERACTION RE-PLANNING]\n"
+                    "The previous click action caused 0 pixel changes (target was inactive or missed).\n"
+                    f"{taboo_str}\n"
+                    "Goal: Re-plan your target! Choose a DIFFERENT clickable object/anchor from the visual clusters and call `click_at(x=col, y=row)`. "
+                    "CRITICAL: Only ACTION6 (click_at) is available. Do NOT output movement directions (UP/DOWN/LEFT/RIGHT) or repeat taboo coordinates."
+                )
+            elif 6 in available_action_ids and any(a in [1, 2, 3, 4] for a in available_action_ids):
+                mode_instructions.append(
+                    "🚨 [Mode: TABOO RECOVERY / CAUSAL RE-PLANNING]\n"
+                    "The previous action caused 0 pixel changes.\n"
+                    f"{taboo_warning}\n"
+                    f"Goal: Re-evaluate causal constraints and re-plan. Choose an orthogonal movement direction or test an alternative interactive switch/anchor from available actions: {available_action_names}. Avoid repeating the failed action."
+                )
+            else:
+                mode_instructions.append(
+                    "🚨 [Mode: TABOO RECOVERY / DEADLOCK ESCAPE]\n"
+                    "The previous action caused 0 pixel changes (wall bump or deadlocked position).\n"
+                    f"{taboo_warning}\n"
+                    f"Goal: Re-plan movement route! Select an alternative valid direction or unblock action from available actions: {available_action_names}. Avoid repeating the failed action."
+                )
         elif self.current_cognitive_mode == CognitiveMode.PROBING_SCIENTIST:
             mode_instructions.append(
                 "🎯 [Mode: PROBING SCIENTIST / ONSET EXPLORATION]\n"
@@ -701,12 +747,18 @@ class ADKGamePlayer:
         # ---------------------------------------------------------------------
         self.action_tools.pending_decision = None
 
+        act_guidance = "calling `step_action` or `click_at` tool."
+        if 6 in available_action_ids and len(available_action_ids) == 1:
+            act_guidance = "calling `click_at(x=col, y=row, reasoning='...')`. (CRITICAL: Only ACTION6 is available; do NOT call step_action)."
+        elif 6 not in available_action_ids:
+            act_guidance = "calling `step_action(direction=..., reasoning='...')`. (CRITICAL: Only directional buttons are available; do NOT call click_at)."
+
         act_prompt = (
             f"=== IMMEDIATE SUBGOAL & STRATEGY (Phase 2) ===\n"
             f"{plan_summary}\n\n"
             f"Step: {self.step_index}, Game State: {state_str}, Available Action Buttons: {available_action_names}\n"
             f"{workflow_guidance}\n\n"
-            f"Execute your 1-step action aligned with Cognitive Mode {self.current_cognitive_mode.value} by calling `step_action` or `click_at` tool."
+            f"Execute your 1-step action aligned with Cognitive Mode {self.current_cognitive_mode.value} by {act_guidance}"
         )
         act_content = Content(role="user", parts=[Part.from_text(text=act_prompt)])
         act_events = self.act_runner.run_async(
@@ -817,20 +869,31 @@ class ADKGamePlayer:
             )
             decision.action_id = default_id
             decision.action_name = f"ACTION{default_id}"
-            decision.action_type = "STEP"
+            decision.action_type = "CLICK" if default_id == 6 else "STEP"
             decision.reasoning += f" [Safety fail-safe after {retry_count} re-thinks: {decision.metadata.get('error')}]"
 
-        # クリック座標の幾何接地 (Spatial Grounding: 空振りクリックの自動吸着)
+        # クリック座標の幾何接地 (Spatial Grounding: 空振りクリックの自動吸着 & 禁忌除外)
         if decision.action_id == 6 or decision.action_name == "ACTION6":
             coords = decision.coordinates or {}
             cx, cy = coords.get("x", 0), coords.get("y", 0)
             if (cx == 0 and cy == 0) or not coords:
-                if self.spatial_tools.cached_anchors:
+                # 禁忌でないアンカーを優先探索
+                valid_anchors = [
+                    a for a in self.spatial_tools.cached_anchors
+                    if not any(np.hypot(a["x"] - tx, a["y"] - ty) <= 3.0 for tx, ty in self.taboo_click_coords)
+                ]
+                if valid_anchors:
+                    best = valid_anchors[0]
+                    decision.coordinates = {"x": best["x"], "y": best["y"]}
+                    decision.reasoning += f" [SpatialGrounder: Auto-snapped click to valid Anchor {best['id']} at ({best['x']}, {best['y']})]"
+                elif self.spatial_tools.cached_anchors:
                     best = self.spatial_tools.cached_anchors[0]
                     decision.coordinates = {"x": best["x"], "y": best["y"]}
-                    decision.reasoning += f" [SpatialGrounder: Auto-snapped click to Anchor {best['id']} at ({best['x']}, {best['y']})]"
+                    decision.reasoning += f" [SpatialGrounder: Fallback click to Anchor {best['id']} at ({best['x']}, {best['y']})]"
             elif self.spatial_tools.cached_anchors and self.spatial_tools.grounder is not None:
-                sx, sy, aid = self.spatial_tools.grounder.snap_to_anchor(cx, cy, self.spatial_tools.cached_anchors)
+                sx, sy, aid = self.spatial_tools.grounder.snap_to_anchor(
+                    cx, cy, self.spatial_tools.cached_anchors, taboo_coords=self.taboo_click_coords
+                )
                 if aid is not None:
                     decision.coordinates = {"x": sx, "y": sy}
 
