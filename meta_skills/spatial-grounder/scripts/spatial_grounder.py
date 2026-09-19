@@ -124,7 +124,7 @@ class SpatialGrounder:
                     confidence = "MEDIUM"
 
                 objects.append({
-                    "id": idx,
+                    "id": len(objects),
                     "type": obj_type,
                     "center": {"x": cx, "y": cy},
                     "x": cx,
@@ -159,7 +159,7 @@ class SpatialGrounder:
                 obj_type = "DYNAMIC_ENTITY" if is_dynamic else ("BUTTON_CANDIDATE" if 4 <= size <= 64 and 0.4 <= aspect <= 2.5 else "SPRITE_CANDIDATE")
 
                 objects.append({
-                    "id": idx - 1,
+                    "id": len(objects),
                     "type": obj_type,
                     "center": {"x": cx, "y": cy},
                     "x": cx,

@@ -50,18 +50,26 @@ def test_positive_click_auto_snaps_unspecified_coordinates():
     assert decision.coordinates == {"x": 7, "y": 4}
 
 
-def test_positive_click_snaps_empty_cell_to_nearest_object():
-    """正例 3: 空セルをクリックしようとした場合、近傍の前景ピクセルへ自動吸着すること."""
+def test_positive_click_respects_ground_coordinates_and_snaps_with_object_id():
+    """正例 3: 明示的座標指定時は地面生座標を尊重し、object_id 指定時はオブジェクト重心へ自動吸着すること."""
     grid = np.zeros((12, 12), dtype=np.uint8)
     grid[3, 3] = 2  # 前景オブジェクト
 
     tools = GameActionTools(available_actions=[1, 2, 3, 4, 6])
-    tools.click_at(x=4, y=3, grid=grid, reasoning="Clicking near object")
 
+    # 1. 明示的に地面タイル (4, 3) を指定した場合 -> 生座標がそのまま採用されること
+    tools.click_at(x=4, y=3, grid=grid, reasoning="Walking to open tile")
     decision = tools.pending_decision
     assert decision is not None
     assert decision.action_type == "CLICK"
-    assert decision.coordinates == {"x": 3, "y": 3}
+    assert decision.coordinates == {"x": 4, "y": 3}
+
+    # 2. object_id=0 を指定した場合 -> 前景オブジェクト重心 (3, 3) へ自動吸着すること
+    tools.click_at(object_id=0, grid=grid, reasoning="Interacting with object 0")
+    decision_obj = tools.pending_decision
+    assert decision_obj is not None
+    assert decision_obj.action_type == "CLICK"
+    assert decision_obj.coordinates == {"x": 3, "y": 3}
 
 
 def test_positive_active_reset():

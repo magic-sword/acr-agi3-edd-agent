@@ -22,6 +22,18 @@ try:
 except ImportError:
     detect_interactable_objects = None
 
+from pathlib import Path
+import sys
+
+_SG_DIR = Path(__file__).resolve().parents[2] / "spatial-grounder" / "scripts"
+if str(_SG_DIR) not in sys.path and _SG_DIR.exists():
+    sys.path.insert(0, str(_SG_DIR))
+
+try:
+    from spatial_grounder import SpatialGrounder
+except ImportError:
+    SpatialGrounder = None
+
 
 class GameController:
     """ARC-AGI-3 ゲーム操作プロトコル検証・決定論的実行エンジン."""
@@ -110,9 +122,19 @@ class GameController:
         h: int,
         w: int,
         grid: Optional[Any] = None,
-        max_snap_dist: int = 15,
+        object_id: Optional[int] = None,
     ) -> Tuple[int, int, str]:
-        """指定座標 (x, y) または空セルから、近傍の前景オブジェクト重心へ自動吸着."""
+        """指定座標 (x, y) または物体ID (object_id) からクリック座標を決定.
+
+        仕様:
+        1. object_id が指定された場合:
+           検出された該当物体の重心へ正確に自動スナップする。
+        2. 明示的に x, y 座標が両方指定された場合 (object_id is None):
+           背景色（地面・空きマス）かどうかにかかわらず、指定された生の座標をそのまま尊重する。
+           （近隣物体への強制吸着は行わず、地面への移動や任意クリックを保証する）
+        3. x, y が未指定 (None) の場合:
+           最優先の検出オブジェクト（または盤面中央）へ自動スナップする。
+        """
         if grid is None:
             safe_x = x if x is not None else w // 2
             safe_y = y if y is not None else h // 2
@@ -132,45 +154,59 @@ class GameController:
             safe_y = y if y is not None else h // 2
             return safe_x, safe_y, ""
 
-        # 座標が未指定 (None) の場合: detect_interactable_objects で最優先オブジェクトへスナップ
-        if x is None or y is None:
-            if detect_interactable_objects is not None:
+        # --- Case 1: 物体 ID (object_id) が指定された場合 ---
+        if object_id is not None:
+            objs = []
+            if SpatialGrounder is not None:
+                objs = SpatialGrounder.detect_composite_objects(arr)
+            if not objs and detect_interactable_objects is not None:
                 objs = detect_interactable_objects(arr)
-                if objs:
-                    best = objs[0]
-                    bx, by = int(best["center"]["x"]), int(best["center"]["y"])
-                    return bx, by, f" [auto-snapped unspecified click to detected object at ({bx}, {by})]"
-            # オブジェクトが見つからない場合はグリッド中心
-            return w // 2, h // 2, " [defaulted to grid center]"
 
-        # 最頻色（背景色）
-        counts = np.bincount(arr.ravel(), minlength=10)
-        bg = int(np.argmax(counts))
+            target_obj = next((o for o in objs if o.get("id") == object_id), None)
+            if target_obj is None and objs:
+                # 0-indexed インデックス指定（例: object_id=0 -> 先頭オブジェクト）
+                if 0 <= object_id < len(objs):
+                    target_obj = objs[object_id]
+                # 1-indexed インデックス指定（例: object_id=1 -> 先頭オブジェクト）
+                elif 0 <= object_id - 1 < len(objs):
+                    target_obj = objs[object_id - 1]
 
-        # 1. 既に有色ピクセル上にあればそのまま採用
-        if 0 <= y < h and 0 <= x < w and arr[y, x] != bg:
+            if target_obj is not None:
+                cx = int(target_obj["center"]["x"])
+                cy = int(target_obj["center"]["y"])
+                obj_type = target_obj.get("type", "OBJECT")
+                return cx, cy, f" [auto-snapped to object #{object_id} ({obj_type}) at ({cx}, {cy})]"
+
+            # 指定IDが見つからなかった場合、明示的座標があればそれを使用、なければ最優先物体
+            if x is not None and y is not None:
+                return x, y, f" [object #{object_id} not found, using specified coords ({x}, {y})]"
+            if objs:
+                best = objs[0]
+                bx, by = int(best["center"]["x"]), int(best["center"]["y"])
+                return bx, by, f" [object #{object_id} not found, snapped to object #{best.get('id', 0)} at ({bx}, {by})]"
+            return w // 2, h // 2, f" [object #{object_id} not found, defaulted to grid center]"
+
+        # --- Case 2: 明示的に座標 (x, y) が両方指定された場合 ---
+        # ユーザー指示: エージェントが明示的に座標を指定した場合はその場所（地面・空セル含む）をクリック可能にする
+        if x is not None and y is not None:
             return x, y, ""
 
-        orig_x, orig_y = x, y
+        # --- Case 3: 座標が未指定 (None) の場合 ---
+        # 最優先の検出オブジェクトへ自動スナップ
+        objs = []
+        if SpatialGrounder is not None:
+            objs = SpatialGrounder.detect_composite_objects(arr)
+        if not objs and detect_interactable_objects is not None:
+            objs = detect_interactable_objects(arr)
 
-        # 2. row/col 反転テスト (LLM が x と y を逆に出力したケース)
-        if 0 <= x < h and 0 <= y < w and arr[x, y] != bg:
-            return y, x, f" [auto-transposed coords from ({orig_x}, {orig_y}) to ({y}, {x})]"
+        if objs:
+            best = objs[0]
+            bx, by = int(best["center"]["x"]), int(best["center"]["y"])
+            best_id = best.get("id", 0)
+            return bx, by, f" [auto-snapped unspecified click to detected object #{best_id} at ({bx}, {by})]"
 
-        # 3. 近傍有色ピクセル群の探索
-        fg_indices = np.argwhere(arr != bg)  # [[r, c], ...]
-        if len(fg_indices) == 0:
-            return x, y, ""
-
-        dists = np.abs(fg_indices[:, 0] - orig_y) + np.abs(fg_indices[:, 1] - orig_x)
-        min_idx = int(np.argmin(dists))
-        min_dist = dists[min_idx]
-
-        if min_dist <= max_snap_dist:
-            snapped_r, snapped_c = fg_indices[min_idx]
-            return int(snapped_c), int(snapped_r), f" [snapped click from ({orig_x}, {orig_y}) to nearest object at ({snapped_c}, {snapped_r})]"
-
-        return x, y, ""
+        # オブジェクトが見つからない場合はグリッド中心
+        return w // 2, h // 2, " [defaulted to grid center]"
 
     # -------------------------------------------------------------------------
     # ADK 2.0 ツール関数群 (Tool Function Interface)
@@ -209,16 +245,18 @@ class GameController:
         self,
         x: Optional[int] = None,
         y: Optional[int] = None,
+        object_id: Optional[int] = None,
         grid: Optional[Any] = None,
         grid_shape: Optional[Tuple[int, int]] = None,
         reasoning: str = "",
     ) -> Dict[str, Any]:
-        """盤面上の指定座標またはオブジェクトをクリック (ACTION6).
+        """盤面上の指定座標または特定の検出オブジェクトをクリック (ACTION6).
 
         Args:
-            x: 列インデックス (Column, 0-indexed)。省略時は自動検出オブジェクトへスナップ。
-            y: 行インデックス (Row, 0-indexed)。省略時は自動検出オブジェクトへスナップ。
-            grid: 盤面グリッド配列 (幾何アフォーダンス吸着に使用)。
+            x: 列インデックス (Column, 0-indexed)。任意座標（地面・空セル含む）をクリックする場合に指定。
+            y: 行インデックス (Row, 0-indexed)。任意座標（地面・空セル含む）をクリックする場合に指定。
+            object_id: 検出されたオブジェクトのID (0, 1, ...)。特定物体をクリックする場合に指定（重心へ自動スナップ）。
+            grid: 盤面グリッド配列。
             grid_shape: 盤面サイズ (h, w)。
             reasoning: このクリックを選択した理由。
         """
@@ -226,7 +264,9 @@ class GameController:
         if grid is not None and hasattr(grid, "shape"):
             h, w = grid.shape[:2]
 
-        snap_x, snap_y, note = self.snap_coordinates_to_affordance(x, y, h, w, grid=grid)
+        snap_x, snap_y, note = self.snap_coordinates_to_affordance(
+            x=x, y=y, h=h, w=w, grid=grid, object_id=object_id
+        )
         reasoning_full = f"{reasoning}{note}".strip()
 
         if not (0 <= snap_x < w and 0 <= snap_y < h):
@@ -338,9 +378,9 @@ class GameController:
             return self.reset_game(reasoning=reasoning)
 
         # クリック要求判定:
-        # 明示的に CLICK/ACTION6 が指定されているか、または act が明示的ステップでなく座標情報がある場合
+        # 明示的に CLICK/ACTION6 が指定されているか、または act が明示的ステップでなく座標/物体指定情報がある場合
         is_explicit_click = act in ("CLICK", "CLICK_AT", "ACTION6")
-        has_coords = "x" in data or "coordinates" in data or "y" in data
+        has_coords = "x" in data or "coordinates" in data or "y" in data or "object_id" in data or "target_id" in data
         is_explicit_step = False
         if act:
             step_id, _, _ = self.resolve_action_id(act)
@@ -351,7 +391,15 @@ class GameController:
             coords = data.get("coordinates") if isinstance(data.get("coordinates"), dict) else None
             x = data.get("x", coords.get("x") if coords else None)
             y = data.get("y", coords.get("y") if coords else None)
-            return self.click_at(x=x, y=y, grid=grid, grid_shape=(h, w), reasoning=reasoning)
+            object_id = data.get("object_id", data.get("target_id"))
+            if object_id is not None:
+                try:
+                    object_id = int(object_id)
+                except (ValueError, TypeError):
+                    object_id = None
+            return self.click_at(
+                x=x, y=y, object_id=object_id, grid=grid, grid_shape=(h, w), reasoning=reasoning
+            )
 
         # 通常ステップ要求
         return self.step_action(direction=act, reasoning=reasoning)

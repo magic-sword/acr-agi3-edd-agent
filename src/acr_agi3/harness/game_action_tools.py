@@ -122,20 +122,24 @@ class GameActionTools:
         self,
         x: Optional[int] = None,
         y: Optional[int] = None,
+        object_id: Optional[int] = None,
         grid: Optional[Any] = None,
         reasoning: str = "",
     ) -> str:
-        """指定された盤面座標または自動検出オブジェクトをクリックします (ACTION6).
+        """指定された盤面座標または検出された特定オブジェクトをクリックします (ACTION6).
 
         Args:
-            x: クリック対象の列インデックス (0-indexed)。省略時はオブジェクト重心へスナップ。
-            y: クリック対象の行インデックス (0-indexed)。省略時はオブジェクト重心へスナップ。
-            grid: 盤面グリッド配列 (重心吸着に使用)。
+            x: クリック対象の列インデックス (0-indexed)。地面や特定位置をクリックする場合に指定。
+            y: クリック対象の行インデックス (0-indexed)。地面や特定位置をクリックする場合に指定。
+            object_id: 検出されたオブジェクトのID (0, 1, ...)。特定物体・ボタンを確実にクリックする場合に指定（重心へ自動スナップ）。
+            grid: 盤面グリッド配列。
             reasoning: このクリックを選択した戦略的理由。
         """
         target_grid = grid if grid is not None else self.grid
         if self.controller is not None:
-            res = self.controller.click_at(x=x, y=y, grid=target_grid, reasoning=reasoning)
+            res = self.controller.click_at(
+                x=x, y=y, object_id=object_id, grid=target_grid, reasoning=reasoning
+            )
             if not res.get("success", False):
                 return f"Error from game-controller: {res.get('error', 'Invalid click action')}"
             self.pending_decision = ActionDecision(

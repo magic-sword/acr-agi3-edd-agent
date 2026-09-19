@@ -50,7 +50,8 @@ metadata:
 ## When to use
 - Every single turn when deciding, validating, and executing your next dynamic game action.
 - When executing directional navigation (`UP`, `DOWN`, `LEFT`, `RIGHT`) without needing to remember physical button IDs.
-- When targeting an interactive element or button using coordinate clicks (`click_at(x, y)` / `ACTION6`).
+- When targeting an interactive element or button using coordinate clicks (`click_at(x, y)` / `click_at(object_id=...)` / `ACTION6`).
+- When navigating via point-and-click to open ground tiles or empty spaces using explicit coordinates (`click_at(x=col, y=row)`).
 - When deadlocked or trapped in an irreversible state and requiring an active reset (`reset_game()` / `RESET`).
 
 ## When NOT to use
@@ -63,7 +64,10 @@ metadata:
    - The engine automatically resolves `UP`, `DOWN`, `LEFT`, `RIGHT` to the correct physical button via the online dynamics map.
 2. **Formulate High-Level 1-Step Decision**:
    - For movement: Choose `UP`, `DOWN`, `LEFT`, `RIGHT`, `ACTION5`, or `ACTION7`.
-   - For interactive click: Choose `ACTION6` (coordinates `x, y` can be specified or auto-snapped to the nearest object center).
+   - For interactive click: Choose `ACTION6` via `click_at`:
+     - **Specific Object Target**: Specify `object_id=N` to automatically and precisely snap to the center of the detected object cluster.
+     - **Explicit Tile / Ground Target**: Specify `x=col, y=row` to click exact board coordinates (such as open ground tiles for character movement or placement).
+     - **Unspecified Click**: Leave coordinates empty to snap to the highest priority interactive affordance.
    - For reset: Choose `RESET` (0).
 3. **Execute via Deterministic Tool**:
    - Execute CLI tool or function tool to output valid environment action:
@@ -75,18 +79,21 @@ metadata:
 - Example 1 (Directional step with dynamic mapping):
   - Input: `{"action": "step_action", "direction": "UP", "reasoning": "Advancing to goal"}` with dynamics `{"UP": 3}`
   - Output: `{"success": true, "action_name": "ACTION3", "action_id": 3, "action_type": "STEP"}`
-- Example 2 (Coordinate click with auto-snap):
-  - Input: `{"action": "click_at", "x": null, "y": null, "reasoning": "Toggling switch"}`
-  - Output: `{"success": true, "action_name": "ACTION6", "action_id": 6, "coordinates": {"x": 5, "y": 3}, "action_type": "CLICK"}`
+- Example 2 (Object-targeted click with auto-snap):
+  - Input: `{"action": "click_at", "object_id": 0, "reasoning": "Pressing detected HUD button 0"}`
+  - Output: `{"success": true, "action_name": "ACTION6", "action_id": 6, "coordinates": {"x": 22, "y": 54}, "action_type": "CLICK"}`
+- Example 3 (Explicit ground coordinate click):
+  - Input: `{"action": "click_at", "x": 10, "y": 15, "reasoning": "Walking character to open tile at (10, 15)"}`
+  - Output: `{"success": true, "action_name": "ACTION6", "action_id": 6, "coordinates": {"x": 10, "y": 15}, "action_type": "CLICK"}`
 
 ## Anti-patterns to avoid
 - Do not output ambiguous free-form sentences without stating a concrete action identifier (`UP`, `DOWN`, `ACTION1`〜`ACTION7`).
 - Do not worry about physical button permutations; trust `game-controller` to map semantic directions (`UP`) to physical actions.
-- Do not guess pixel coordinates blindly; leave coordinates empty or approximate and let `game-controller` snap to affordance centers.
+- Do not guess pixel coordinates blindly when targeting objects; use `object_id` to let `game-controller` snap to the exact object center.
 
 ## Requirements & Prerequisites
 - Python: >= 3.10
-- Dependencies: standard library (json, re, argparse), numpy, acr_agi3
+- Dependencies: standard library (json, re, argparse), numpy, spatial_grounder, acr_agi3
 
 ## Bundled Resources
 ### `scripts/` (Executable Tools)
