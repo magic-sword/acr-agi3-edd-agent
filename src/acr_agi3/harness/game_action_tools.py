@@ -60,6 +60,11 @@ class GameActionTools:
             self.controller = None
         self.pending_decision: Optional[ActionDecision] = None
         self.history: List[ActionDecision] = []
+        self.grid: Optional[Any] = None
+
+    def set_grid(self, grid: Any) -> None:
+        """現在の観測グリッド配列を保存."""
+        self.grid = grid
 
     def set_available_actions(self, available_actions: List[int]) -> None:
         """現在のターンで利用可能なアクション ID を更新."""
@@ -128,8 +133,9 @@ class GameActionTools:
             grid: 盤面グリッド配列 (重心吸着に使用)。
             reasoning: このクリックを選択した戦略的理由。
         """
+        target_grid = grid if grid is not None else self.grid
         if self.controller is not None:
-            res = self.controller.click_at(x=x, y=y, grid=grid, reasoning=reasoning)
+            res = self.controller.click_at(x=x, y=y, grid=target_grid, reasoning=reasoning)
             if not res.get("success", False):
                 return f"Error from game-controller: {res.get('error', 'Invalid click action')}"
             self.pending_decision = ActionDecision(

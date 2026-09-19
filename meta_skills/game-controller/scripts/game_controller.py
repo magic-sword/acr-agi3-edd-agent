@@ -193,7 +193,7 @@ class GameController:
                 "action_id": act_id,
                 "coordinates": None,
                 "reasoning": f"{reasoning}{note}".strip(),
-                "error": f"Action '{direction}' (resolved to {act_name}/ID:{act_id}) is disabled in this environment. Available actions: {self.available_actions}. Please choose from available actions.",
+                "error": f"Action '{direction}' (resolved to {act_name}/ID:{act_id}) is disabled and not in available actions: {self.available_actions}. Please choose from available actions.",
             }
         return {
             "success": True,
@@ -382,13 +382,13 @@ class GameController:
                     return self.click_at(grid=grid, grid_shape=(h, w), reasoning="Extracted click from text")
                 return self.step_action(direction=name, reasoning=f"Extracted {name} from text")
 
-        # フォールバック
+        # フォールバック (パース失敗時は action_id: -1)
         fb_id = self.available_actions[0] if self.available_actions else 1
         return {
             "success": False,
             "action_type": "STEP",
             "action_name": self.ACTION_NAMES.get(fb_id, f"ACTION{fb_id}"),
-            "action_id": fb_id,
+            "action_id": -1,
             "coordinates": None,
             "reasoning": "Fallback from unparseable text",
             "error": "No valid action pattern found in text",

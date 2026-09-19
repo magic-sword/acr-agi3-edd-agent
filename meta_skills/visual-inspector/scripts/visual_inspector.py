@@ -53,7 +53,11 @@ class DynamicAffordanceReport:
 
     def __post_init__(self) -> None:
         if self.goal_pos is None and self.target_candidates:
-            t = self.target_candidates[0]
+            valid_targets = [
+                t for t in self.target_candidates
+                if self.agent_pos is None or (int(round(t.center_r)), int(round(t.center_c))) != self.agent_pos
+            ]
+            t = valid_targets[0] if valid_targets else self.target_candidates[0]
             self.goal_pos = (int(round(t.center_r)), int(round(t.center_c)))
 
     @property
@@ -254,6 +258,9 @@ class VisualInspector:
                 small_objs = [o for o in objects if o.size <= 4 and o.color != 1]
             if small_objs:
                 agent_obj = min(small_objs, key=lambda o: o.size)
+
+        if agent_obj is not None:
+            targets = [t for t in targets if t.obj_id != agent_obj.obj_id]
 
         agent_pos = (int(round(agent_obj.center_r)), int(round(agent_obj.center_c))) if agent_obj else None
 

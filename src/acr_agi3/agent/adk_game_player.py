@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+from enum import Enum
 import json
 import logging
 import re
@@ -47,6 +48,23 @@ except ImportError:
     GameController = None
 
 
+class CognitiveState(str, Enum):
+    """Google ADK 2.0 認知的ステートマシン (Cognitive State Machine) の主要状態."""
+    PROBING = "PROBING"          # [探索期] 操作力学・オブジェクト因果の能動解明
+    PLANNING = "PLANNING"        # [計画期] 逆算A*・サブゴール策定・アクションキュー構築
+    EXECUTING = "EXECUTING"      # [実行期] 計画追従・LLMバイパスの超高速サクサク実行
+    RECOVERY = "RECOVERY"        # [回復期] 計画逸脱（壁衝突・0変化・罠）の診断・再計画
+
+
+class CognitiveMode(str, Enum):
+    """人間プレイスタイル (VCGT) に基づく 5段階認知的モード."""
+    PROBING_SCIENTIST = "PROBING_SCIENTIST"      # [探索期] 操作力学の仮説検証・プロービング
+    CAUSAL_PROGRAMMER = "CAUSAL_PROGRAMMER"      # [因果同定期] 鍵・扉・スイッチ等の前提条件規則発見
+    BACKWARD_ARCHITECT = "BACKWARD_ARCHITECT"    # [逆算期] ゴールからの A* 最短経路・トポロジカル計画
+    RISK_NAVIGATOR = "RISK_NAVIGATOR"            # [実行期] 局所障害物・トラップ回避ナビゲーション
+    TABOO_RECOVERY = "TABOO_RECOVERY"            # [例外対処] 壁衝突・振動・停滞からの脱出・リセット
+
+
 class ADKGamePlayer:
     """Google ADK 2.0 準拠・自律ゲームプレイエージェント (3フェーズワークフロー版)."""
 
@@ -74,10 +92,10 @@ class ADKGamePlayer:
         self.memory_tools = MemoryTools()
         self.skill_harness = SkillHarness()
 
-        # 2. 各ノード専用の最小限スキルセット（最小権限の原則 ＋ Level 3 実行ツールの動的解放）
-        self.perceive_additional_tools = self.vision_tools.get_tools() + self.spatial_tools.get_tools()
+        # 2. 各ノード専用の最小限スキルセット（共有黒板 memory-notebook を全ノードへ解放）
+        self.perceive_additional_tools = self.vision_tools.get_tools() + self.spatial_tools.get_tools() + self.memory_tools.get_tools()
         self.perceive_toolset = self.skill_harness.get_scoped_toolset(
-            ["visual-inspector", "spatial-grounder"],
+            ["visual-inspector", "spatial-grounder", "memory-notebook"],
             additional_tools=self.perceive_additional_tools,
         )
 
@@ -87,9 +105,14 @@ class ADKGamePlayer:
             additional_tools=self.plan_additional_tools,
         )
 
-        self.act_additional_tools = self.action_tools.get_tools() + self.spatial_tools.get_tools() + self.planning_tools.get_tools()
+        self.act_additional_tools = (
+            self.action_tools.get_tools()
+            + self.spatial_tools.get_tools()
+            + self.planning_tools.get_tools()
+            + self.memory_tools.get_tools()
+        )
         self.act_toolset = self.skill_harness.get_scoped_toolset(
-            ["game-controller", "taboo-reset-guard", "epistemic-prober"],
+            ["game-controller", "taboo-reset-guard", "epistemic-prober", "memory-notebook"],
             additional_tools=self.act_additional_tools,
         )
         self.skill_toolset = self.skill_harness.get_toolset(
@@ -189,6 +212,10 @@ class ADKGamePlayer:
         self.plan_session_id: Optional[str] = None
         self.act_session_id: Optional[str] = None
         self.planner_session_id: Optional[str] = None
+        self.current_cognitive_mode: CognitiveMode = CognitiveMode.PROBING_SCIENTIST
+        self.cognitive_state: CognitiveState = CognitiveState.PROBING
+        self.plan_queue: List[Dict[str, Any]] = []
+        self.last_expected_action: Optional[str] = None
 
     def reset(self) -> None:
         """エージェントの状態とセッションを初期化."""
@@ -202,6 +229,45 @@ class ADKGamePlayer:
         self.plan_session_id = None
         self.act_session_id = None
         self.planner_session_id = None
+        self.current_cognitive_mode = CognitiveMode.PROBING_SCIENTIST
+        self.cognitive_state = CognitiveState.PROBING
+        self.plan_queue.clear()
+        self.last_expected_action = None
+        self.memory_tools.clear()
+
+    def determine_cognitive_mode(
+        self,
+        step_index: int,
+        stagnation_count: int,
+        available_action_ids: List[int],
+        has_probe_rec: bool,
+        has_nav_path: bool,
+        has_anchors: bool = False,
+        has_preconditions: bool = False,
+    ) -> CognitiveMode:
+        """決定論的状態判定による認知的モード (Cognitive Mode) の決定.
+
+        人間プレイスタイル (VCGT: 探針科学者 -> 因果プログラマー -> 逆算建築家 -> 動的ナビゲーター -> 禁忌ガード)
+        の思考遷移をワークフロー層で自律制御する。
+
+        優先順位:
+        1. TABOO_RECOVERY: 停滞・壁衝突・デッドロック検知時は最優先で回避行動をとる
+        2. PROBING_SCIENTIST: 初動 (step_index <= 4) で未検証アクションが存在する場合
+        3. CAUSAL_PROGRAMMER: 鍵・扉・スイッチ等の前提条件が存在、またはクリックアンカーが存在する場合
+        4. BACKWARD_ARCHITECT: ゴールまでの A* 最短幾何経路が同定できている場合
+        5. RISK_NAVIGATOR: 通常の障害物・トラップ回避ナビゲーション
+        """
+        if stagnation_count >= 1:
+            return CognitiveMode.TABOO_RECOVERY
+        if step_index <= 4 and has_probe_rec:
+            return CognitiveMode.PROBING_SCIENTIST
+        if has_preconditions:
+            return CognitiveMode.CAUSAL_PROGRAMMER
+        if has_nav_path:
+            return CognitiveMode.BACKWARD_ARCHITECT
+        if has_anchors and 6 in available_action_ids:
+            return CognitiveMode.CAUSAL_PROGRAMMER
+        return CognitiveMode.RISK_NAVIGATOR
 
     def decide_next_action(
         self,
@@ -235,6 +301,7 @@ class ADKGamePlayer:
         avail_names = [f"ACTION{i}" for i in avail_ids]
         self.action_tools.set_available_actions(avail_ids)
         self.action_tools.set_dynamics_map(self.dynamics_map)
+        self.action_tools.set_grid(arr)
         self.vision_tools.set_context(arr, step_index=self.step_index)
         self.spatial_tools.set_context(arr, step_index=self.step_index)
         self.planning_tools.set_context(arr, step_index=self.step_index, available_actions=avail_ids)
@@ -249,6 +316,92 @@ class ADKGamePlayer:
             )
             self.dynamics_map.update(self.planning_tools.prober.get_dynamics_map())
             self.action_tools.set_dynamics_map(self.dynamics_map)
+            # 共有黒板 (memory-notebook) に同定済み力学を自動同期
+            if self.dynamics_map:
+                self.memory_tools.memory_write(
+                    section_id="causality.dynamics",
+                    title="Controller Mechanics Map",
+                    content=json.dumps(self.dynamics_map, ensure_ascii=False),
+                    summary=f"Mapped {len(self.dynamics_map)} controller actions",
+                    tags="causality,dynamics",
+                )
+
+        # ---------------------------------------------------------------------
+        # 認知的ステートマシン: 計画逸脱（壁衝突・0ピクセル変化）検知
+        # ---------------------------------------------------------------------
+        if self.cognitive_state == CognitiveState.EXECUTING:
+            if pixels_changed == 0 and self.last_action_info is not None:
+                logger.warning(
+                    "Step %d [State Machine: EXECUTING -> RECOVERY] Planned action %s caused 0 pixel change. Halting queue.",
+                    self.step_index, self.last_expected_action
+                )
+                self.cognitive_state = CognitiveState.RECOVERY
+                self.plan_queue.clear()
+                # 破綻した計画を消去 (消しゴム) し、手詰まり禁忌を共有黒板に記録
+                self.memory_tools.memory_delete("plan.active")
+                self.memory_tools.memory_write(
+                    section_id=f"taboo.step_{self.step_index}",
+                    title=f"Taboo Barrier at Step {self.step_index}",
+                    content=f"Action '{self.last_expected_action}' caused 0 pixel change.",
+                    summary="Wall bump or obstacle collision",
+                    tags="taboo,constraint",
+                )
+
+        # ---------------------------------------------------------------------
+        # 認知的ステートマシン: 計画追従・高速サクサク実行 (Fast Path: LLMバイパス)
+        # ---------------------------------------------------------------------
+        if self.cognitive_state == CognitiveState.EXECUTING and len(self.plan_queue) > 0:
+            self.current_cognitive_mode = CognitiveMode.BACKWARD_ARCHITECT
+            next_plan = self.plan_queue.pop(0)
+            action_str = next_plan.get("action", "")
+            coords = next_plan.get("coordinates")
+            reasoning = next_plan.get("reasoning", f"Fast execution along planned route ({len(self.plan_queue)} remaining in queue)")
+
+            decision = self._convert_to_decision(
+                action_str=action_str,
+                coordinates=coords,
+                reasoning=reasoning,
+                available_action_ids=avail_ids,
+                grid_shape=arr.shape[:2],
+                grid=arr,
+                metadata={"fast_path": True, "remaining_plan_steps": len(self.plan_queue)},
+            )
+
+            # Taboo Guard チェック (予期せぬ壁衝突の即時安全刈り込み)
+            if self.planning_tools.guard is not None:
+                last_aid = self.last_action_info.get("action_id") if self.last_action_info else None
+                is_allowed, sanitized, reason = self.planning_tools.guard.filter_taboo_actions(
+                    proposed_action=decision.action_id,
+                    last_action_effective=True,
+                    last_action_id=last_aid,
+                    available_actions=avail_ids,
+                    stagnation_count=self.stagnation_count,
+                )
+                if not is_allowed:
+                    self.cognitive_state = CognitiveState.RECOVERY
+                    self.plan_queue.clear()
+                    decision.action_id = sanitized
+                    decision.action_name = f"ACTION{sanitized}"
+                    decision.reasoning += f" [TabooGuard: {reason}]"
+
+            self.last_grid = arr.copy()
+            self.last_expected_action = decision.action_name
+            self.last_action_info = {
+                "action": decision.action_name,
+                "action_id": decision.action_id,
+                "reasoning": decision.reasoning,
+                "state_before": state_str,
+                "pixels_changed": pixels_changed,
+                "is_effective": is_effective,
+            }
+            logger.info(
+                "Step %d [Cognitive State: EXECUTING (Fast Path)] %s (ID: %d), Queue remaining: %d",
+                self.step_index, decision.action_name, decision.action_id, len(self.plan_queue)
+            )
+            if len(self.plan_queue) == 0:
+                self.cognitive_state = CognitiveState.PLANNING
+                self.memory_tools.memory_delete("plan.active")
+            return decision
 
         # 視覚観測 Parts の生成 (統合コンソール画面 + 客観的事実)
         parts = self.vision_harness.create_observation_parts(
@@ -258,7 +411,7 @@ class ADKGamePlayer:
             last_action_info=self.last_action_info,
         )
 
-        # 非同期 Runner を実行
+        # 非同期 Runner を実行 (Slow Path: 計画策定または能動プロービング)
         try:
             loop = asyncio.get_event_loop_policy().get_event_loop()
         except RuntimeError:
@@ -281,6 +434,7 @@ class ADKGamePlayer:
         )
 
         self.last_grid = arr.copy()
+        self.last_expected_action = decision.action_name
         self.last_action_info = {
             "action": decision.action_name,
             "action_id": decision.action_id,
@@ -353,13 +507,141 @@ class ADKGamePlayer:
         logger.info("Step %d [Phase 1: Perceive Complete] Summary: %s...", self.step_index, perceive_summary[:120].strip())
 
         # ---------------------------------------------------------------------
+        # Python ワークフロー層: 認知的コンテキストの自動解析 (Cognitive Context Analysis)
+        # ---------------------------------------------------------------------
+        probe_rec = None
+        if self.planning_tools.prober is not None and self.planning_tools.prober.is_probing_needed(self.step_index, available_action_ids):
+            probe_rec = self.planning_tools.prober.recommend_probe_action(available_action_ids)
+
+        nav_rec_dir = None
+        nav_path_len = 0
+        if grid is not None and self.vision_tools.inspector is not None and self.planning_tools.planner is not None:
+            try:
+                report = self.vision_tools.inspector.analyze_frame(grid, step_index=self.step_index)
+                if report.agent_pos and report.goal_pos:
+                    sc, sr = report.agent_pos[1], report.agent_pos[0]
+                    gc, gr = report.goal_pos[1], report.goal_pos[0]
+                    actions = self.planning_tools.plan_action_sequence(
+                        start_col=sc,
+                        start_row=sr,
+                        goal_col=gc,
+                        goal_row=gr,
+                        impassable_colors=[1],
+                    )
+                    if actions:
+                        nav_rec_dir = actions[0]
+                        nav_path_len = len(actions)
+                        if len(actions) > 1 and self.stagnation_count == 0 and self.cognitive_state != CognitiveState.RECOVERY:
+                            self.plan_queue = [{"action": a} for a in actions[1:]]
+                            self.cognitive_state = CognitiveState.EXECUTING
+                            self.memory_tools.memory_write(
+                                section_id="plan.active",
+                                title="Active Shortest Path Plan",
+                                content=json.dumps({"planned_actions": actions, "next_steps": [a["action"] for a in self.plan_queue]}, ensure_ascii=False),
+                                summary=f"A* route with {len(actions)} steps",
+                                tags="plan,active",
+                            )
+                            logger.info(
+                                "Step %d [Plan Formulated] Enqueued %d future actions: %s. State -> EXECUTING.",
+                                self.step_index, len(self.plan_queue), [a["action"] for a in self.plan_queue]
+                            )
+            except Exception as e:
+                logger.debug("Automatic pathfinding notice: %s", e)
+
+        anchors_hint = ""
+        if 6 in available_action_ids and self.spatial_tools.cached_anchors and self.spatial_tools.grounder is not None:
+            anchors_hint = self.spatial_tools.grounder.format_anchors_prompt(self.spatial_tools.cached_anchors)
+
+        taboo_warning = ""
+        if self.stagnation_count >= 1 and self.last_action_info:
+            taboo_act = self.last_action_info.get("action")
+            taboo_warning = f"NOTE: Last action {taboo_act} produced 0 pixel change (wall bump/stuck). Avoid repeating {taboo_act}."
+
+        # 認知的モードの決定 (Cognitive Mode Selection)
+        has_probe = (probe_rec is not None)
+        has_nav = (nav_rec_dir is not None)
+        has_anchors = bool(self.spatial_tools.cached_anchors)
+        has_preconditions = False
+
+        self.current_cognitive_mode = self.determine_cognitive_mode(
+            step_index=self.step_index,
+            stagnation_count=self.stagnation_count,
+            available_action_ids=available_action_ids,
+            has_probe_rec=has_probe,
+            has_nav_path=has_nav,
+            has_anchors=has_anchors,
+            has_preconditions=has_preconditions,
+        )
+        if self.stagnation_count >= 1:
+            self.cognitive_state = CognitiveState.RECOVERY
+        elif len(self.plan_queue) > 0:
+            self.cognitive_state = CognitiveState.EXECUTING
+        elif probe_rec is not None:
+            self.cognitive_state = CognitiveState.PROBING
+        else:
+            self.cognitive_state = CognitiveState.PLANNING
+
+        logger.info(
+            "Step %d [Cognitive Mode: %s] Stagnation: %d, PathLen: %d, Probe: %s",
+            self.step_index,
+            self.current_cognitive_mode.value,
+            self.stagnation_count,
+            nav_path_len,
+            probe_rec,
+        )
+
+        mode_header = f"=== CURRENT COGNITIVE MODE: {self.current_cognitive_mode.value} ==="
+        mode_instructions = []
+
+        if self.current_cognitive_mode == CognitiveMode.TABOO_RECOVERY:
+            mode_instructions.append(
+                "🚨 [Mode: TABOO RECOVERY / DEADLOCK ESCAPE]\n"
+                "The previous action caused 0 pixel changes (wall bump or deadlocked position).\n"
+                f"{taboo_warning}\n"
+                "Goal: Immediately select an orthogonal alternative direction or unblock action. Avoid repeating the failed action."
+            )
+        elif self.current_cognitive_mode == CognitiveMode.PROBING_SCIENTIST:
+            mode_instructions.append(
+                "🎯 [Mode: PROBING SCIENTIST / ONSET EXPLORATION]\n"
+                "Controller physics/mappings are unmapped in this initial phase.\n"
+                f"Recommended probe: Test ACTION{probe_rec} to observe board response and identify its movement vector."
+            )
+        elif self.current_cognitive_mode == CognitiveMode.BACKWARD_ARCHITECT:
+            mode_instructions.append(
+                "🧭 [Mode: BACKWARD ARCHITECT / GEOMETRIC SHORTEST PATH]\n"
+                f"A* shortest path to goal identified ({nav_path_len} steps).\n"
+                f"Recommended next movement: `{nav_rec_dir}`. Execute `{nav_rec_dir}` directly to advance along optimal path."
+            )
+        elif self.current_cognitive_mode == CognitiveMode.CAUSAL_PROGRAMMER:
+            mode_instructions.append(
+                "🖱️ [Mode: CAUSAL PROGRAMMER / DISCRETE INTERACTION]\n"
+                "Interactive elements or buttons detected on the board.\n"
+                f"{anchors_hint}\n"
+                "Choose an anchor's (x=col, y=row) and call `click_at(x=..., y=...)` or test interactive switches."
+            )
+        else:  # RISK_NAVIGATOR
+            mode_instructions.append(
+                "🛡️ [Mode: RISK NAVIGATOR / ADAPTIVE NAVIGATION]\n"
+                "Observe obstacles and boundaries carefully. Advance towards unexplored or promising regions while avoiding dead ends."
+            )
+
+        workflow_guidance = f"\n\n{mode_header}\n" + "\n\n".join(mode_instructions)
+
+        # ---------------------------------------------------------------------
         # Phase 2: Cognitive Planning (Plan Node) - 最小限ツール: memory-notebook
         # ---------------------------------------------------------------------
+        blackboard_toc = self.memory_tools.memory_toc(as_markdown=True)
+        blackboard_section = ""
+        if blackboard_toc and "*(Notebook is currently empty)*" not in blackboard_toc:
+            blackboard_section = f"\n\n=== SHARED BLACKBOARD (Memory Notebook TOC) ===\n{blackboard_toc}\n(Use `memory_read(section_id=...)` to inspect details or `memory_write` to update knowledge.)"
+
         plan_prompt = (
             f"=== VISUAL PERCEPTION SUMMARY (Phase 1) ===\n"
             f"{perceive_summary}\n\n"
             f"Step: {self.step_index}, Game State: {state_str}, Available Action Buttons: {available_action_names}\n"
-            f"Formulate your backward-chaining strategy and immediate subgoal. (Do not call any action tools like step_action)."
+            f"{workflow_guidance}"
+            f"{blackboard_section}\n\n"
+            f"According to Cognitive Mode {self.current_cognitive_mode.value}, formulate your immediate subgoal and strategy. (Do not call any action tools like step_action)."
         )
         plan_content = Content(role="user", parts=[Part.from_text(text=plan_prompt)])
         plan_events = self.plan_runner.run_async(
@@ -385,16 +667,12 @@ class ADKGamePlayer:
         # ---------------------------------------------------------------------
         self.action_tools.pending_decision = None
 
-        anchors_hint = ""
-        if 6 in available_action_ids and self.spatial_tools.cached_anchors and self.spatial_tools.grounder is not None:
-            anchors_hint = f"\n\n{self.spatial_tools.grounder.format_anchors_prompt(self.spatial_tools.cached_anchors)}\nWhen calling click_at, choose an anchor's (col, row) coordinates."
-
         act_prompt = (
             f"=== IMMEDIATE SUBGOAL & STRATEGY (Phase 2) ===\n"
             f"{plan_summary}\n\n"
-            f"Step: {self.step_index}, Game State: {state_str}, Available Action Buttons: {available_action_names}"
-            f"{anchors_hint}\n"
-            f"Execute your 1-step action by calling `step_action` or `click_at` tool."
+            f"Step: {self.step_index}, Game State: {state_str}, Available Action Buttons: {available_action_names}\n"
+            f"{workflow_guidance}\n\n"
+            f"Execute your 1-step action aligned with Cognitive Mode {self.current_cognitive_mode.value} by calling `step_action` or `click_at` tool."
         )
         act_content = Content(role="user", parts=[Part.from_text(text=act_prompt)])
         act_events = self.act_runner.run_async(
@@ -426,6 +704,17 @@ class ADKGamePlayer:
             if not proposal.action and (perceive_summary or plan_summary):
                 # モックモデル等のフォールバック抽出
                 proposal = PlanProposal.from_text(f"{act_raw_text}\n{plan_summary}\n{perceive_summary}")
+
+            # ワークフローによる認知的推論補完 (決定論的パスまたはプローブ手の適用)
+            if not proposal.action:
+                if self.current_cognitive_mode == CognitiveMode.BACKWARD_ARCHITECT and nav_rec_dir is not None:
+                    proposal.action = nav_rec_dir
+                elif self.current_cognitive_mode == CognitiveMode.PROBING_SCIENTIST and probe_rec is not None:
+                    proposal.action = f"ACTION{probe_rec}"
+                elif nav_rec_dir is not None:
+                    proposal.action = nav_rec_dir
+                elif probe_rec is not None:
+                    proposal.action = f"ACTION{probe_rec}"
 
             decision = self._convert_to_decision(
                 action_str=proposal.action,
@@ -527,7 +816,7 @@ class ADKGamePlayer:
                 decision.action_name = f"ACTION{sanitized}"
                 decision.reasoning += f" [TabooGuard: {reason}]"
 
-            if self.planning_tools.guard.should_active_reset(self.stagnation_count):
+            if self.planning_tools.guard.should_active_reset(self.stagnation_count) and 0 in available_action_ids:
                 decision.action_id = 0
                 decision.action_name = "RESET"
                 decision.action_type = "RESET"

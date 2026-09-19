@@ -15,6 +15,7 @@ metadata:
     - memory_read
     - memory_toc
     - memory_search
+    - memory_delete
   inputs:
     - name: command
       type: str

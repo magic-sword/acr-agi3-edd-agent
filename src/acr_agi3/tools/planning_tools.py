@@ -87,6 +87,41 @@ class PlanningTools:
             "reachable": len(path) > 0,
         }, ensure_ascii=False)
 
+    def plan_action_sequence(
+        self,
+        start_col: int,
+        start_row: int,
+        goal_col: int,
+        goal_row: int,
+        impassable_colors: Optional[List[int]] = None,
+    ) -> List[str]:
+        """A* 最短経路から、実行可能な方向アクションのリスト (例: ['RIGHT', 'RIGHT', 'UP']) を生成."""
+        if self.current_grid is None or self.planner is None:
+            return []
+        path, _ = self.planner.plan_path(
+            grid=self.current_grid,
+            start_pos=(start_col, start_row),
+            goal_pos=(goal_col, goal_row),
+            impassable_colors=impassable_colors,
+        )
+        if len(path) < 2:
+            return []
+        actions: List[str] = []
+        for i in range(len(path) - 1):
+            c0, r0 = path[i]
+            c1, r1 = path[i + 1]
+            dc = c1 - c0
+            dr = r1 - r0
+            if dr < 0:
+                actions.append("UP")
+            elif dr > 0:
+                actions.append("DOWN")
+            elif dc < 0:
+                actions.append("LEFT")
+            elif dc > 0:
+                actions.append("RIGHT")
+        return actions
+
     def probe_action_dynamics(self) -> str:
         """未確定のコントローラー操作力学（UP/DOWN/LEFT/RIGHT/CLICK）の同定状況と次の推奨プローブ手を取得します。"""
         if self.prober is None:

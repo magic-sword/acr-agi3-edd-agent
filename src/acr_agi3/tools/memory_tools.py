@@ -76,31 +76,43 @@ class MemoryTools:
         """
         try:
             node = self.notebook.read(section_id)
+            sec_id = node.get("id") if isinstance(node, dict) else getattr(node, "id", str(section_id))
+            title = node.get("title") if isinstance(node, dict) else getattr(node, "title", sec_id)
+            content = node.get("content") if isinstance(node, dict) else getattr(node, "content", "")
+            summary = node.get("summary") if isinstance(node, dict) else getattr(node, "summary", "")
+            tags = node.get("tags") if isinstance(node, dict) else getattr(node, "tags", [])
             return json.dumps(
                 {
                     "status": "ok",
-                    "section_id": node.id,
-                    "title": node.title,
-                    "content": node.content,
-                    "summary": node.summary,
-                    "tags": node.tags,
+                    "section_id": sec_id,
+                    "title": title,
+                    "content": content,
+                    "summary": summary,
+                    "tags": tags,
                 },
                 ensure_ascii=False,
             )
         except Exception as e:
             return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
-    def memory_toc(self, tag: str = "") -> str:
+    def memory_toc(self, tag: str = "", as_markdown: bool = False) -> str:
         """記憶ノートの目次（TOC）を取得し、どのような情報が保存されているか一覧します（しおり）。
 
         Args:
             tag: タグでフィルタリングする場合のタグ名（省略時は全件）。
+            as_markdown: True の場合、Markdown 形式の目次文字列を返します。
         """
         try:
-            toc = self.notebook.get_toc(tag_filter=tag if tag else None)
+            toc = self.notebook.get_toc(tag=tag if tag else None, as_markdown=as_markdown)
+            if as_markdown:
+                return str(toc)
             return json.dumps({"status": "ok", "entries": toc}, ensure_ascii=False)
         except Exception as e:
             return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
+
+    def clear(self, tag: Optional[str] = None) -> int:
+        """記憶ノートを全消去または指定タグを一括削除します（消しゴム）."""
+        return self.notebook.clear(tag=tag)
 
     def memory_search(self, query: str) -> str:
         """記憶ノート内をキーワード検索します。
@@ -114,6 +126,18 @@ class MemoryTools:
         except Exception as e:
             return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
+    def memory_delete(self, section_id: str) -> str:
+        """誤った仮説や完了・破棄された古い計画を記憶ノートから削除します（消しゴム）。
+
+        Args:
+            section_id: 削除したいセクションIDまたはしおり名。
+        """
+        try:
+            self.notebook.delete(section_id)
+            return json.dumps({"status": "ok", "message": f"Successfully deleted section '{section_id}'"}, ensure_ascii=False)
+        except Exception as e:
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
+
     def get_tools(self) -> List[Any]:
         """ADK Agent に渡すための関数ツール一覧を返却."""
-        return [self.memory_write, self.memory_read, self.memory_toc, self.memory_search]
+        return [self.memory_write, self.memory_read, self.memory_toc, self.memory_search, self.memory_delete]
