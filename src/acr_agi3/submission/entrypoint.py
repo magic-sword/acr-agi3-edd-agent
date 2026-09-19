@@ -151,12 +151,16 @@ class KaggleSubmissionPipeline:
             obs = env.reset()
             is_solved = False
 
+            if hasattr(self.agent, "player"):
+                self.agent.player.reset(full_wipe=False)
+
             for step_i in range(self.max_steps_per_task):
                 if hasattr(self.agent, "player"):
                     decision = self.agent.player.decide_next_action(
                         grid=obs.tolist() if isinstance(obs, np.ndarray) else obs,
                         available_actions=[1, 2, 3, 4],
                         state_str="NOT_FINISHED",
+                        game_id=task_id,
                     )
                     act_id = decision.action_id
                 else:

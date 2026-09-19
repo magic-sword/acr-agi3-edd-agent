@@ -135,6 +135,7 @@ class MyAgent(Agent):
             grid=grid,
             available_actions=avail_ids,
             state_str=str(state),
+            game_id=self.game_id,
         )
 
         # 決定されたアクション ID から GameAction を生成

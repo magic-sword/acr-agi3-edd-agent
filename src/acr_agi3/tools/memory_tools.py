@@ -27,8 +27,40 @@ class MemoryTools:
     """Plan Agent 向け Level 3 実行ツールセット."""
 
     def __init__(self, notebook_path: Optional[Path] = None) -> None:
-        self.notebook = MemoryNotebook(notebook_path=notebook_path, auto_save=True)
+        self.notebook_base_path = notebook_path
+        self.notebooks: Dict[str, MemoryNotebook] = {}
+        self.current_game_id: str = "default"
+        self.notebook = self._get_or_create_notebook(self.current_game_id)
         self.step_index: int = 0
+
+    def _get_or_create_notebook(self, game_id: str) -> MemoryNotebook:
+        if game_id not in self.notebooks:
+            path = None
+            if self.notebook_base_path:
+                path = self.notebook_base_path.parent / f"{self.notebook_base_path.stem}_{game_id}{self.notebook_base_path.suffix}"
+            self.notebooks[game_id] = MemoryNotebook(notebook_path=path, auto_save=True)
+        return self.notebooks[game_id]
+
+    def switch_game(self, game_id: str) -> None:
+        """指定されたゲーム環境 (game_id) の記憶ノートに切り替えます."""
+        if not game_id:
+            game_id = "default"
+        self.current_game_id = game_id
+        self.notebook = self._get_or_create_notebook(game_id)
+        self.step_index = 0
+
+    def reset_episode(self) -> None:
+        """同一ゲーム内でのリトライ（RESET）用の選択的リセット.
+
+        causality.* (操作力学), rules.* (ゲームルール), taboo.* (進入禁止制約) などの
+        不変な永続知識は保持し、破綻した一時的計画 (plan.*) のみを消しゴムで消去します。
+        """
+        self.notebook.clear(tag="plan")
+        try:
+            self.notebook.delete("plan.active")
+        except Exception:
+            pass
+        self.step_index = 0
 
     def set_step(self, step_index: int) -> None:
         """現在のステップ番号を更新."""

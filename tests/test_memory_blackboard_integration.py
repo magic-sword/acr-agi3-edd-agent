@@ -143,8 +143,13 @@ def test_blackboard_toc_and_reset():
     assert "rule.movement" in toc_md
     assert "hypo.switch" in toc_md
 
-    # Reset
+    # Episode Reset (同一ゲームリトライ): 永続ルールは保持される
     player.reset()
     assert player.step_index == 0
-    toc_after_reset = player.memory_tools.memory_toc(as_markdown=True)
-    assert "*(Notebook is currently empty)*" in toc_after_reset
+    toc_after_ep_reset = player.memory_tools.memory_toc(as_markdown=True)
+    assert "rule.movement" in toc_after_ep_reset
+
+    # Full Wipe Reset (環境初期化): ノートが完全に初期化される
+    player.reset(full_wipe=True)
+    toc_after_full_reset = player.memory_tools.memory_toc(as_markdown=True)
+    assert "*(Notebook is currently empty)*" in toc_after_full_reset

@@ -216,9 +216,31 @@ class ADKGamePlayer:
         self.cognitive_state: CognitiveState = CognitiveState.PROBING
         self.plan_queue: List[Dict[str, Any]] = []
         self.last_expected_action: Optional[str] = None
+        self.current_game_id: str = "default"
+        self.game_dynamics: Dict[str, Dict[str, int]] = {}
 
-    def reset(self) -> None:
-        """エージェントの状態とセッションを初期化."""
+    def switch_game(self, game_id: str) -> None:
+        """指定されたゲーム環境 (game_id) に切り替え、環境ごとのノートと力学を復元."""
+        if not game_id or game_id == self.current_game_id:
+            return
+        logger.info("Switching game environment from %s to %s", self.current_game_id, game_id)
+        self.current_game_id = game_id
+        self.memory_tools.switch_game(game_id)
+        self.dynamics_map = self.game_dynamics.setdefault(game_id, {})
+        self.action_tools.set_dynamics_map(self.dynamics_map)
+        if self.planning_tools.prober is not None:
+            self.planning_tools.prober.dynamics_map = dict(self.dynamics_map)
+        self.reset(full_wipe=False)
+
+    def reset(self, full_wipe: bool = False) -> None:
+        """エージェントの状態とセッションを初期化.
+
+        Args:
+            full_wipe: True の場合、ノートブックと操作力学マップを全消去します。
+                       False（デフォルト）の場合、同一ゲームのリトライとして
+                       causality.*, rules.*, taboo.* などの永続知識を保持し、
+                       破綻した一時的計画 (plan.active, plan_queue) のみをリフレッシュします。
+        """
         self.step_index = 0
         self.stagnation_count = 0
         self.last_grid = None
@@ -233,7 +255,16 @@ class ADKGamePlayer:
         self.cognitive_state = CognitiveState.PROBING
         self.plan_queue.clear()
         self.last_expected_action = None
-        self.memory_tools.clear()
+
+        if full_wipe:
+            self.memory_tools.clear()
+            self.dynamics_map.clear()
+            self.action_tools.set_dynamics_map({})
+            if self.planning_tools.prober is not None:
+                self.planning_tools.prober.dynamics_map.clear()
+                self.planning_tools.prober.tested_actions.clear()
+        else:
+            self.memory_tools.reset_episode()
 
     def determine_cognitive_mode(
         self,
@@ -274,8 +305,11 @@ class ADKGamePlayer:
         grid: Any,
         available_actions: Optional[List[int]] = None,
         state_str: str = "NOT_FINISHED",
+        game_id: Optional[str] = None,
     ) -> ActionDecision:
         """最新観測から 3フェーズ (Perceive -> Plan -> Act) を経て game-controller で 1 手を実行."""
+        if game_id and game_id != self.current_game_id:
+            self.switch_game(game_id)
         self.step_index += 1
         arr = normalize_grid(grid)
 
