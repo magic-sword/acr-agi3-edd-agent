@@ -48,7 +48,7 @@ class PlanProposal:
         return data
 
     @classmethod
-    def from_text(cls, text: str) -> PlanProposal:
+    def from_text(cls, text: str, available_action_ids: Optional[List[int]] = None) -> PlanProposal:
         """LLM の出力テキストから JSON ブロックを抽出して PlanProposal を生成."""
         clean_text = text.strip()
         json_blocks = re.findall(r"```(?:json)?\s*([\s\S]*?)\s*```", clean_text)
@@ -134,18 +134,31 @@ class PlanProposal:
                 raw_text=clean_text,
             )
 
-        # 2. 移動・基本アクションの検出 (ACTION1..7, UP, DOWN, LEFT, RIGHT, RESET)
+        # 2. 移動・基本アクションの検出 (available_action_ids を優先)
         action_patterns = [
-            (r"\b(?:ACTION1|UP)\b", "ACTION1"),
-            (r"\b(?:ACTION2|DOWN)\b", "ACTION2"),
-            (r"\b(?:ACTION3|LEFT)\b", "ACTION3"),
-            (r"\b(?:ACTION4|RIGHT)\b", "ACTION4"),
-            (r"\bACTION5\b", "ACTION5"),
-            (r"\bACTION6\b", "ACTION6"),
-            (r"\bACTION7\b", "ACTION7"),
-            (r"\bRESET\b", "RESET"),
+            (r"\b(?:ACTION1|UP)\b", "ACTION1", 1),
+            (r"\b(?:ACTION2|DOWN)\b", "ACTION2", 2),
+            (r"\b(?:ACTION3|LEFT)\b", "ACTION3", 3),
+            (r"\b(?:ACTION4|RIGHT)\b", "ACTION4", 4),
+            (r"\bACTION5\b", "ACTION5", 5),
+            (r"\b(?:ACTION6|CLICK)\b", "ACTION6", 6),
+            (r"\bACTION7\b", "ACTION7", 7),
+            (r"\bRESET\b", "RESET", 0),
         ]
-        for pat, act in action_patterns:
+        
+        # 利用可能なアクションがある場合は、利用可能なものを優先してマッチング
+        if available_action_ids:
+            for pat, act, aid in action_patterns:
+                if aid in available_action_ids and re.search(pat, upper_text):
+                    return cls(
+                        hypothesis="Direct visual observation",
+                        goal=f"Execute {act}",
+                        action=act,
+                        reasoning=clean_text[:200],
+                        raw_text=clean_text,
+                    )
+
+        for pat, act, _ in action_patterns:
             if re.search(pat, upper_text):
                 return cls(
                     hypothesis="Direct visual observation",
@@ -155,10 +168,11 @@ class PlanProposal:
                     raw_text=clean_text,
                 )
 
+        default_act = f"ACTION{available_action_ids[0]}" if available_action_ids else "ACTION1"
         return cls(
             hypothesis="Direct visual observation",
             goal="Explore environment",
-            action="ACTION1",
+            action=default_act,
             reasoning=clean_text[:200],
             raw_text=clean_text,
         )

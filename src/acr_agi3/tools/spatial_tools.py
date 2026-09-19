@@ -32,22 +32,76 @@ class SpatialTools:
     def __init__(self) -> None:
         self.grounder = SpatialGrounder() if SpatialGrounder is not None else None
         self.current_grid: Optional[np.ndarray] = None
+        self.last_grid: Optional[np.ndarray] = None
         self.step_index: int = 0
         self.cached_anchors: List[Dict[str, Any]] = []
+        self.cached_objects: List[Dict[str, Any]] = []
         self.taboo_coords: List[Tuple[int, int]] = []
 
     def set_taboo_coords(self, coords: List[Tuple[int, int]]) -> None:
         """空振り等で禁忌となったクリック座標リストを更新."""
         self.taboo_coords = list(coords)
 
-    def set_context(self, grid: Optional[np.ndarray], step_index: int = 0) -> None:
-        """現在のフレームとステップ番号を更新し、アンカーを抽出."""
+    def set_context(
+        self,
+        grid: Optional[np.ndarray],
+        step_index: int = 0,
+        last_grid: Optional[np.ndarray] = None,
+    ) -> None:
+        """現在のフレームと直前フレームを更新し、複合オブジェクトとアンカーを抽出."""
+        self.last_grid = last_grid
         self.current_grid = grid
         self.step_index = step_index
         if grid is not None and self.grounder is not None:
-            self.cached_anchors = self.grounder.extract_clickable_anchors(grid)
+            self.cached_objects = self.grounder.detect_composite_objects(grid, last_grid=last_grid)
+            self.cached_anchors = self.grounder.extract_clickable_anchors(grid, last_grid=last_grid)
         else:
+            self.cached_objects = []
             self.cached_anchors = []
+
+    def inspect_detected_objects(self, filter_mode: str = "interactive") -> str:
+        """階層的CVと動的差分によって検出された複合オブジェクト（ボタン、スプライト、キャラ）一覧を取得します。
+
+        Args:
+            filter_mode: "all"（全検出オブジェクト）, "interactive"（ボタン・動的候補を優先）, "dynamic"（変化した動的オブジェクトのみ）
+        """
+        if self.current_grid is None or self.grounder is None:
+            return json.dumps({"error": "No observation grid currently set"}, ensure_ascii=False)
+
+        objs = self.cached_objects
+        if filter_mode == "dynamic":
+            objs = [o for o in objs if o.get("is_dynamic")]
+        elif filter_mode == "interactive":
+            objs = [o for o in objs if o.get("type") in ["BUTTON_CANDIDATE", "DYNAMIC_ENTITY", "SPRITE_CANDIDATE"]]
+
+        res = {
+            "total_objects": len(objs),
+            "filter_mode": filter_mode,
+            "objects": objs,
+            "summary": self.grounder.format_detected_objects_prompt(objs),
+        }
+        return json.dumps(res, ensure_ascii=False)
+
+    def get_object_coordinates(self, object_id: int) -> str:
+        """指定されたオブジェクト ID のクリック推奨座標 (x=col, y=row) を取得します。
+
+        Args:
+            object_id: inspect_detected_objects で取得したオブジェクトの ID 番号。
+        """
+        for obj in self.cached_objects:
+            if obj["id"] == object_id:
+                return json.dumps({
+                    "object_id": object_id,
+                    "type": obj["type"],
+                    "x": obj["x"],
+                    "y": obj["y"],
+                    "colors": obj["colors"],
+                    "area": obj["area"],
+                    "is_dynamic": obj.get("is_dynamic", False),
+                    "success": True,
+                }, ensure_ascii=False)
+
+        return json.dumps({"error": f"Object #{object_id} not found", "success": False}, ensure_ascii=False)
 
     def inspect_clickable_anchors(self) -> str:
         """盤面上のクリック可能な有色要素・ボタンの重心座標アンカー一覧を取得します。"""
@@ -86,4 +140,9 @@ class SpatialTools:
 
     def get_tools(self) -> List[Any]:
         """ADK Agent に渡すための関数ツール一覧を返却."""
-        return [self.inspect_clickable_anchors, self.snap_to_anchor]
+        return [
+            self.inspect_detected_objects,
+            self.get_object_coordinates,
+            self.inspect_clickable_anchors,
+            self.snap_to_anchor,
+        ]

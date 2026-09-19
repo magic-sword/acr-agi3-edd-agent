@@ -27,19 +27,50 @@ def normalize_grid(grid_data: Any) -> np.ndarray:
 
 
 def detect_interactable_objects(grid: np.ndarray, max_objects: int = 15) -> List[Dict[str, Any]]:
-    """グリッド内の前景オブジェクト（連結成分・スプライト）を検出し、重心や BBox を抽出."""
+    """グリッド内の前景オブジェクト（複合スプライト・ボタン）を検出し、重心や BBox を抽出."""
     if grid.ndim != 2:
         return []
     h, w = grid.shape
     if h == 0 or w == 0:
         return []
 
-    # 最頻色を背景色とする
+    try:
+        from pathlib import Path
+        import sys
+        _sg_dir = Path(__file__).resolve().parents[3] / "meta_skills" / "spatial-grounder" / "scripts"
+        if str(_sg_dir) not in sys.path and _sg_dir.exists():
+            sys.path.insert(0, str(_sg_dir))
+        from spatial_grounder import SpatialGrounder
+
+        comp_objs = SpatialGrounder.detect_composite_objects(grid, min_size=1, max_area_ratio=0.12)
+        if comp_objs:
+            results = []
+            for obj in comp_objs[:max_objects]:
+                min_x = obj["bbox"][0]
+                min_y = obj["bbox"][1]
+                max_x = max(min_x, obj["bbox"][2] - 1)
+                max_y = max(min_y, obj["bbox"][3] - 1)
+                results.append({
+                    "id": obj["id"],
+                    "color": obj["color_ids"][0] if obj.get("color_ids") else 0,
+                    "color_name": "/".join(obj.get("colors", [])) or "Mixed",
+                    "size": obj["area"],
+                    "center": obj["center"],
+                    "bbox": {"min_x": min_x, "min_y": min_y, "max_x": max_x, "max_y": max_y},
+                    "type": obj.get("type", "SPRITE_CANDIDATE"),
+                    "is_dynamic": obj.get("is_dynamic", False),
+                })
+            return results
+    except Exception:
+        pass
+
+    # フォールバック (連結成分探索)
     counts = np.bincount(grid.ravel(), minlength=10)
     bg_color = int(np.argmax(counts))
 
     visited = np.zeros((h, w), dtype=bool)
     objects: List[Dict[str, Any]] = []
+    max_size = int(h * w * 0.12)
 
     for r in range(h):
         for c in range(w):
@@ -47,11 +78,9 @@ def detect_interactable_objects(grid: np.ndarray, max_objects: int = 15) -> List
             if color == bg_color or visited[r, c]:
                 continue
 
-            # BFS による同一色の連結成分探索
             q = [(r, c)]
             visited[r, c] = True
             pixels = [(r, c)]
-
             head = 0
             while head < len(q):
                 curr_r, curr_c = q[head]
@@ -64,6 +93,9 @@ def detect_interactable_objects(grid: np.ndarray, max_objects: int = 15) -> List
                             q.append((nr, nc))
                             pixels.append((nr, nc))
 
+            if len(pixels) < 2 or len(pixels) > max_size:
+                continue
+
             rows = [p[0] for p in pixels]
             cols = [p[1] for p in pixels]
             min_r, max_r = min(rows), max(rows)
@@ -71,22 +103,18 @@ def detect_interactable_objects(grid: np.ndarray, max_objects: int = 15) -> List
             mean_r = sum(rows) / len(rows)
             mean_c = sum(cols) / len(cols)
 
-            # 重心に最も近いオブジェクト内ピクセルを代表座標 (center) とする
             best_p = min(pixels, key=lambda p: (p[0] - mean_r) ** 2 + (p[1] - mean_c) ** 2)
-            center_x = best_p[1]
-            center_y = best_p[0]
-
             objects.append({
                 "id": len(objects) + 1,
                 "color": color,
                 "size": len(pixels),
-                "center": {"x": center_x, "y": center_y},
+                "center": {"x": best_p[1], "y": best_p[0]},
                 "bbox": {"min_x": min_c, "min_y": min_r, "max_x": max_c, "max_y": max_r},
                 "pixels": pixels,
             })
 
-    # サイズ順（大きい塊から順）にソートして客観的なオブジェクト群を返却
-    objects.sort(key=lambda o: o["size"], reverse=True)
+    # 適正サイズ（ボタン状）を好むスコアでソート
+    objects.sort(key=lambda o: -abs(o["size"] - 25))
     return objects[:max_objects]
 
 

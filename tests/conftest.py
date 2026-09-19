@@ -9,6 +9,11 @@ src_dir = str(Path(__file__).resolve().parent.parent / "src")
 if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
 
+root_dir = Path(__file__).resolve().parent.parent
+for scripts_dir in (root_dir / "meta_skills").glob("*/scripts"):
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+
 from acr_agi3.game.vcgt_game import GridWorldGameEnv
 
 

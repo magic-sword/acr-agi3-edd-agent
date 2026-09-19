@@ -339,7 +339,7 @@ class ADKGamePlayer:
         self.action_tools.set_dynamics_map(self.dynamics_map)
         self.action_tools.set_grid(arr)
         self.vision_tools.set_context(arr, step_index=self.step_index)
-        self.spatial_tools.set_context(arr, step_index=self.step_index)
+        self.spatial_tools.set_context(arr, step_index=self.step_index, last_grid=self.last_grid)
         self.planning_tools.set_context(arr, step_index=self.step_index, available_actions=avail_ids)
         self.memory_tools.set_step(self.step_index)
 
@@ -786,10 +786,10 @@ class ADKGamePlayer:
                 self.step_index, decision.action_name, decision.action_id, decision.reasoning
             )
         else:
-            proposal = PlanProposal.from_text(act_raw_text)
+            proposal = PlanProposal.from_text(act_raw_text, available_action_ids=available_action_ids)
             if not proposal.action and (perceive_summary or plan_summary):
                 # モックモデル等のフォールバック抽出
-                proposal = PlanProposal.from_text(f"{act_raw_text}\n{plan_summary}\n{perceive_summary}")
+                proposal = PlanProposal.from_text(f"{act_raw_text}\n{plan_summary}\n{perceive_summary}", available_action_ids=available_action_ids)
 
             # ワークフローによる認知的推論補完 (決定論的パスまたはプローブ手の適用)
             if not proposal.action:
@@ -842,7 +842,7 @@ class ADKGamePlayer:
                         if hasattr(p, "text") and p.text:
                             retry_raw_text += p.text
 
-            proposal = PlanProposal.from_text(retry_raw_text)
+            proposal = PlanProposal.from_text(retry_raw_text, available_action_ids=available_action_ids)
             decision = self._convert_to_decision(
                 action_str=proposal.action,
                 coordinates=proposal.coordinates,
