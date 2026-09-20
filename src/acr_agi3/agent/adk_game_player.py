@@ -99,9 +99,9 @@ class ADKGamePlayer:
             additional_tools=self.perceive_additional_tools,
         )
 
-        self.plan_additional_tools = self.memory_tools.get_tools() + self.planning_tools.get_tools()
+        self.plan_additional_tools = self.memory_tools.get_tools() + self.planning_tools.get_tools() + self.spatial_tools.get_tools()
         self.plan_toolset = self.skill_harness.get_scoped_toolset(
-            ["memory-notebook", "backward-planner"],
+            ["memory-notebook", "backward-planner", "spatial-grounder"],
             additional_tools=self.plan_additional_tools,
         )
 
@@ -112,7 +112,7 @@ class ADKGamePlayer:
             + self.memory_tools.get_tools()
         )
         self.act_toolset = self.skill_harness.get_scoped_toolset(
-            ["game-controller", "taboo-reset-guard", "epistemic-prober", "memory-notebook"],
+            ["game-controller", "spatial-grounder", "taboo-reset-guard", "epistemic-prober", "memory-notebook"],
             additional_tools=self.act_additional_tools,
         )
         self.skill_toolset = self.skill_harness.get_toolset(
@@ -127,11 +127,11 @@ class ADKGamePlayer:
         perceive_instruction = (
             "You are the Visual Inspection Specialist for ARC-AGI-3 dynamic games.\n"
             "Your objective is to observe the visual console screen (game board and controller HUD) and extract objective spatial layout, active colors, player candidates, targets, and affordances.\n"
-            "1. You have access to the skill: 'visual-inspector'. You may call `load_skill(skill_name='visual-inspector')` if you need detailed inspection guides or scripts.\n"
-            "2. You may also call inspection tools directly if needed: `inspect_affordances(mode='deep')` or `inspect_board_summary()`.\n"
+            "1. You have access to the skills: 'visual-inspector', 'spatial-grounder'. You may call `load_skill(skill_name='visual-inspector')` if you need detailed inspection guides or scripts.\n"
+            "2. You may also call inspection tools directly if needed: `inspect_board_summary()`, `inspect_affordances(mode='deep')`, `inspect_detected_objects()`, or `inspect_clickable_anchors()`.\n"
             "Output a concise visual observation summary:\n"
             "- Board layout geometry, active colors, and spatial symmetry\n"
-            "- Discovered entities (player, goal, obstacles, movable blocks)\n"
+            "- Discovered entities (player, goal, obstacles, movable blocks, clickable buttons)\n"
             "- Visual displacement or state changes from the previous action"
         )
         self.perceive_agent = Agent(
@@ -147,8 +147,9 @@ class ADKGamePlayer:
             "Your objective is to review the visual observation summary from Node 1 and formulate a backward-chaining strategy and immediate subgoal.\n"
             "CRITICAL CONSTRAINT: You are ONLY a planner. You MUST NOT execute actions or call step_action or click_at.\n"
             "Node 3 will execute the action based on your plan.\n"
-            "1. You have access to the skill: 'memory-notebook'. You may call `load_skill(skill_name='memory-notebook')` if you need memory recall or state-tracking guides.\n"
-            "2. You may use memory tools to recall or store findings: `memory_write(section_id=..., content=...)`, `memory_read(section_id=...)`, `memory_toc()`, `memory_search(query=...)`.\n"
+            "1. You have access to the skills: 'memory-notebook', 'backward-planner', 'spatial-grounder'. You may call `load_skill(skill_name=...)` if needed.\n"
+            "2. You may use memory tools: `memory_write(section_id=..., content=...)`, `memory_read(section_id=...)`, `memory_toc()`, `memory_search(query=...)`.\n"
+            "3. If planning an interaction or click, you can query candidate targets and coordinates using `inspect_clickable_anchors()` or `inspect_detected_objects()`.\n"
             "Output your planning strategy as plain text:\n"
             "- Immediate subgoal (e.g. advance towards target, stage piece in buffer, test unexplored button, avoid trap)\n"
             "- Keystone piece or dependency ordering (Backward Chaining)\n"
@@ -165,8 +166,9 @@ class ADKGamePlayer:
         act_instruction = (
             "You are the Action Decision Specialist for ARC-AGI-3 dynamic games.\n"
             "Your objective is to execute the immediate subgoal from Node 2 using available tools.\n"
-            "1. You have access to the skill: 'game-controller'. Call `load_skill(skill_name='game-controller')` if you need to review its operational instructions and rules.\n"
-            "2. To execute your action, you MUST call one of the execution tools:\n"
+            "1. You have access to the skills: 'game-controller', 'spatial-grounder'. Call `load_skill(skill_name='game-controller')` if you need to review its operational instructions.\n"
+            "2. To inspect click targets or objects on-demand, call `inspect_clickable_anchors()` or `inspect_detected_objects()`.\n"
+            "3. To execute your action, you MUST call one of the execution tools:\n"
             "   - `step_action(action='...', reasoning='...')`: Execute a move using D-Pad directions ('UP', 'DOWN', 'LEFT', 'RIGHT') or physical button ('ACTION1'-'ACTION7').\n"
             "   - `click_at(x=col, y=row, object_id=..., reasoning='...')`: Click at coordinate or auto-snap to detected object.\n"
             "   - `reset_game(reasoning='...')`: Reset level when deadlocked.\n"
@@ -454,6 +456,7 @@ class ADKGamePlayer:
             self.last_action_info = {
                 "action": decision.action_name,
                 "action_id": decision.action_id,
+                "coordinates": decision.coordinates,
                 "reasoning": decision.reasoning,
                 "state_before": state_str,
                 "pixels_changed": pixels_changed,
@@ -503,6 +506,7 @@ class ADKGamePlayer:
         self.last_action_info = {
             "action": decision.action_name,
             "action_id": decision.action_id,
+            "coordinates": decision.coordinates,
             "reasoning": decision.reasoning,
             "state_before": state_str,
             "pixels_changed": pixels_changed,
@@ -614,8 +618,12 @@ class ADKGamePlayer:
                 logger.debug("Automatic pathfinding notice: %s", e)
 
         anchors_hint = ""
-        if 6 in available_action_ids and self.spatial_tools.cached_anchors and self.spatial_tools.grounder is not None:
-            anchors_hint = self.spatial_tools.grounder.format_anchors_prompt(self.spatial_tools.cached_anchors)
+        if 6 in available_action_ids and self.spatial_tools.cached_anchors:
+            total_anchors = len(self.spatial_tools.cached_anchors)
+            anchors_hint = (
+                f"Interactive Elements Detected: {total_anchors} clickable candidate objects/anchors found on board.\n"
+                "Query candidate coordinates, colors, and object IDs using `inspect_clickable_anchors()` or `inspect_detected_objects()`."
+            )
 
         taboo_warning = ""
         if self.stagnation_count >= 1 and self.last_action_info:
@@ -665,7 +673,7 @@ class ADKGamePlayer:
                     "🚨 [Mode: TABOO RECOVERY / INTERACTION RE-PLANNING]\n"
                     "The previous click action caused 0 pixel changes (target was inactive or missed).\n"
                     f"{taboo_str}\n"
-                    "Goal: Re-plan your target! Choose a DIFFERENT clickable object/anchor from the visual clusters and call `click_at(x=col, y=row)`. "
+                    "Goal: Re-plan your target! Call `inspect_clickable_anchors()` to check candidate targets, or choose a DIFFERENT clickable object/anchor and call `click_at(x=col, y=row)` or `click_at(object_id=...)`. "
                     "CRITICAL: Only ACTION6 (click_at) is available. Do NOT output movement directions (UP/DOWN/LEFT/RIGHT) or repeat taboo coordinates."
                 )
             elif 6 in available_action_ids and any(a in [1, 2, 3, 4] for a in available_action_ids):
@@ -697,9 +705,8 @@ class ADKGamePlayer:
         elif self.current_cognitive_mode == CognitiveMode.CAUSAL_PROGRAMMER:
             mode_instructions.append(
                 "🖱️ [Mode: CAUSAL PROGRAMMER / DISCRETE INTERACTION]\n"
-                "Interactive elements or buttons detected on the board.\n"
                 f"{anchors_hint}\n"
-                "Choose an anchor's (x=col, y=row) and call `click_at(x=..., y=...)` or test interactive switches."
+                "Call `inspect_clickable_anchors()` or `inspect_detected_objects()` to inspect candidate targets, then call `click_at(x=col, y=row)` or `click_at(object_id=...)`."
             )
         else:  # RISK_NAVIGATOR
             mode_instructions.append(
@@ -874,12 +881,12 @@ class ADKGamePlayer:
             decision.action_type = "CLICK" if default_id == 6 else "STEP"
             decision.reasoning += f" [Safety fail-safe after {retry_count} re-thinks: {decision.metadata.get('error')}]"
 
-        # クリック座標の幾何接地 (Spatial Grounding: 空振りクリックの自動吸着 & 禁忌除外)
+        # クリック座標の幾何接地 (Spatial Grounding: 座標未指定時の自動吸着 & 禁忌除外)
         if decision.action_id == 6 or decision.action_name == "ACTION6":
             coords = decision.coordinates or {}
-            cx, cy = coords.get("x", 0), coords.get("y", 0)
-            if (cx == 0 and cy == 0) or not coords:
-                # 禁忌でないアンカーを優先探索
+            # エージェントが明示的に (x, y) を指定している場合はその生座標を尊重
+            # 座標が未指定の場合のみ、禁忌でないアンカーへ自動フォールバック吸着
+            if not coords or ("x" not in coords and "y" not in coords):
                 valid_anchors = [
                     a for a in self.spatial_tools.cached_anchors
                     if not any(np.hypot(a["x"] - tx, a["y"] - ty) <= 3.0 for tx, ty in self.taboo_click_coords)
@@ -892,12 +899,6 @@ class ADKGamePlayer:
                     best = self.spatial_tools.cached_anchors[0]
                     decision.coordinates = {"x": best["x"], "y": best["y"]}
                     decision.reasoning += f" [SpatialGrounder: Fallback click to Anchor {best['id']} at ({best['x']}, {best['y']})]"
-            elif self.spatial_tools.cached_anchors and self.spatial_tools.grounder is not None:
-                sx, sy, aid = self.spatial_tools.grounder.snap_to_anchor(
-                    cx, cy, self.spatial_tools.cached_anchors, taboo_coords=self.taboo_click_coords
-                )
-                if aid is not None:
-                    decision.coordinates = {"x": sx, "y": sy}
 
         # 禁忌アクション刈り込み＆能動的リセット (Taboo Reset Guard)
         if self.planning_tools.guard is not None:

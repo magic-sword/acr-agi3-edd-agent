@@ -77,9 +77,30 @@ class SpatialGrounder:
             import cv2
             contours, _ = cv2.findContours(fg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-            for idx, cnt in enumerate(contours):
+            candidate_contours = []
+            for cnt in contours:
                 bx, by, bw, bh = cv2.boundingRect(cnt)
-                # 輪郭内マスク
+                roi_mask = np.zeros((bh, bw), dtype=np.uint8)
+                roi_cnt = cnt - np.array([bx, by])
+                cv2.drawContours(roi_mask, [roi_cnt], -1, 1, thickness=-1)
+                size = int(np.sum(roi_mask))
+
+                if size > max_size:
+                    # 巨大領域（台座・サブパネル枠・背景壁）の場合:
+                    # その内部の局所背景（台座色）を除外し、台座の上に乗っている子要素（ボタン等）を救出
+                    sub_roi = arr[by:by+bh, bx:bx+bw]
+                    sub_counts = np.bincount(sub_roi.ravel(), minlength=10)
+                    sub_bg = int(np.argmax(sub_counts))
+                    sub_fg_mask = ((sub_roi != bg_color) & (sub_roi != sub_bg) & (roi_mask == 1)).astype(np.uint8)
+                    sub_cnts, _ = cv2.findContours(sub_fg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    for scnt in sub_cnts:
+                        scnt_shifted = scnt + np.array([bx, by])
+                        candidate_contours.append(scnt_shifted)
+                elif size >= min_size:
+                    candidate_contours.append(cnt)
+
+            for cnt in candidate_contours:
+                bx, by, bw, bh = cv2.boundingRect(cnt)
                 roi_mask = np.zeros((bh, bw), dtype=np.uint8)
                 roi_cnt = cnt - np.array([bx, by])
                 cv2.drawContours(roi_mask, [roi_cnt], -1, 1, thickness=-1)

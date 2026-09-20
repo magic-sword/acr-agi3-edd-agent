@@ -96,3 +96,25 @@ def test_spatial_tools_inspect_and_get_coords():
     bad_res_str = tools.get_object_coordinates(99999)
     bad_res = json.loads(bad_res_str)
     assert bad_res["success"] is False
+
+
+def test_detect_composite_objects_rescues_buttons_inside_large_container():
+    """巨大な台座・サブパネル枠（size > max_size）の内部に配置された子ボタンが正しく救出・検出されること."""
+    grounder = SpatialGrounder()
+    grid = np.zeros((64, 64), dtype=np.int32)
+
+    # 巨大な操作パネル台座: 30x30 = 900px (max_size = 491px を大幅超過)
+    grid[30:60, 30:60] = 4  # 黄色台座
+
+    # 台座の内部に配置された 3x3 のボタン 2 個
+    grid[35:38, 35:38] = 9  # ボタン 1 (Maroon)
+    grid[45:48, 45:48] = 9  # ボタン 2 (Maroon)
+
+    objects = grounder.detect_composite_objects(grid, max_area_ratio=0.12)
+
+    # 900pxの巨大台座自身は除外され、内部の2つのボタンが正しく検出されること
+    assert len(objects) >= 2
+    button_centers = [(o["center"]["x"], o["center"]["y"]) for o in objects if 9 in o["color_ids"]]
+    assert len(button_centers) == 2
+    assert (36, 36) in button_centers
+    assert (46, 46) in button_centers

@@ -133,3 +133,45 @@ def test_negative_click_action_not_available_suppressed():
     res = controller.parse_and_validate(payload, grid_shape=(20, 20), grid=grid)
     assert res["success"] is False
     assert "not in available actions" in res["error"]
+
+
+def test_positive_taboo_click_coordinates_tracked_on_failure():
+    """正例: クリックが失敗（ピクセル変化0）した際、last_action_info の coordinates から正確な座標が taboo_click_coords に追加されること."""
+    from unittest.mock import MagicMock
+    from acr_agi3.agent.adk_game_player import ADKGamePlayer
+
+    player = ADKGamePlayer(model="mock_model")
+    # 前回のアクション情報にクリック座標 (34, 34) が記録されていたとする
+    player.last_action_info = {
+        "action": "ACTION6",
+        "action_id": 6,
+        "coordinates": {"x": 34, "y": 34},
+        "reasoning": "Test click",
+        "state_before": "NOT_FINISHED",
+        "pixels_changed": 0,
+        "is_effective": False,
+    }
+    player.last_grid = np.zeros((64, 64), dtype=int)
+    player.taboo_click_coords = []
+
+    # 次のステップをモック呼び出し（ピクセル変化0でステップが進む）
+    grid = np.zeros((64, 64), dtype=int)
+    from unittest.mock import AsyncMock
+    from acr_agi3.harness.game_action_tools import ActionDecision
+    dummy_decision = ActionDecision(
+        action_type="CLICK",
+        action_name="ACTION6",
+        action_id=6,
+        coordinates={"x": 38, "y": 38},
+        reasoning="Next click",
+    )
+    player._run_plan_act_workflow = AsyncMock(return_value=dummy_decision)
+
+    decision = player.decide_next_action(grid=grid, available_actions=[6], state_str="NOT_FINISHED")
+
+    # (34, 34) が確実に taboo_click_coords に追加されていること
+    assert (34, 34) in player.taboo_click_coords
+    assert (0, 0) not in player.taboo_click_coords
+    # そして今回の決定の coordinates が last_action_info に記録されていること
+    assert player.last_action_info["coordinates"] == {"x": 38, "y": 38}
+
