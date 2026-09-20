@@ -160,6 +160,154 @@ class VisualInspector:
             "invariants_hypothesized": invariants,
         }
 
+    def inspect_cursor_target(
+        self,
+        current_grid: Any,
+        cursor_pos: Optional[Tuple[int, int]] = None,
+        radius: int = 3,
+    ) -> Dict[str, Any]:
+        """現在のマウスカーソル照準位置を検証し、対象オブジェクト・中央/端判定・7x7ゲシュタルトマップを出力.
+
+        Args:
+            current_grid: 2D numpy 配列またはリスト
+            cursor_pos: (col, row) のカーソル座標。None の場合は盤面中心
+            radius: 局所マップの半径 (デフォルト 3 -> 7x7 マップ)
+
+        Returns:
+            検証結果辞書 (status: 'CENTERED' | 'EDGE' | 'OFF_TARGET', object_info, local_ascii_map, guidance)
+        """
+        if current_grid is None:
+            return {"success": False, "error": "No observation grid provided"}
+
+        arr = np.array(current_grid, dtype=int)
+        if arr.ndim == 3:
+            arr = arr[-1]
+        elif arr.ndim == 1:
+            arr = np.array([arr])
+
+        h, w = arr.shape
+        if h == 0 or w == 0:
+            return {"success": False, "error": "Empty observation grid"}
+
+        # カーソル座標の正規化とクランプ
+        if cursor_pos is not None:
+            cx, cy = cursor_pos
+        else:
+            cx, cy = w // 2, h // 2
+
+        safe_c = max(0, min(w - 1, int(cx)))
+        safe_r = max(0, min(h - 1, int(cy)))
+
+        color_names = {
+            0: "Black",
+            1: "Blue",
+            2: "Red",
+            3: "Green",
+            4: "Yellow",
+            5: "Gray",
+            6: "Magenta",
+            7: "Orange",
+            8: "Teal",
+            9: "Brown",
+        }
+
+        cell_color = int(arr[safe_r, safe_c])
+        color_name = color_names.get(cell_color, f"Color{cell_color}")
+
+        # オブジェクト検出 (SpatialGrounder の活用)
+        objs = []
+        try:
+            from pathlib import Path
+            _sg_dir = Path(__file__).resolve().parents[2] / "spatial-grounder" / "scripts"
+            if str(_sg_dir) not in sys.path and _sg_dir.exists():
+                sys.path.insert(0, str(_sg_dir))
+            from spatial_grounder import SpatialGrounder
+            objs = SpatialGrounder.detect_composite_objects(arr, min_size=1)
+        except Exception:
+            pass
+
+        # カーソルが含まれるオブジェクトの同定
+        hit_obj = None
+        for o in objs:
+            bx, by, bw, bh = o.get("bbox", (0, 0, 0, 0))
+            if bx <= safe_c < bx + bw and by <= safe_r < by + bh:
+                hit_obj = o
+                break
+
+        status = "OFF_TARGET"
+        obj_info = None
+        guidance = ""
+
+        if hit_obj is not None:
+            obj_cx = int(round(hit_obj["center"]["x"]))
+            obj_cy = int(round(hit_obj["center"]["y"]))
+            dx = safe_c - obj_cx
+            dy = safe_r - obj_cy
+            dist = float(np.hypot(dx, dy))
+
+            is_centered = (dist <= 1.0)
+            status = "CENTERED" if is_centered else "EDGE"
+            obj_id = hit_obj.get("id", 0)
+            obj_type = hit_obj.get("type", "OBJECT")
+
+            obj_info = {
+                "id": obj_id,
+                "type": obj_type,
+                "color": cell_color,
+                "color_name": color_name,
+                "center": {"x": obj_cx, "y": obj_cy},
+                "offset_from_center": {"dx": dx, "dy": dy},
+                "distance_to_center": round(dist, 2),
+                "bbox": list(hit_obj.get("bbox", [])),
+            }
+
+            if status == "CENTERED":
+                guidance = f"Reticle is well-centered on {obj_type} #{obj_id} (Color {cell_color}: {color_name}). Ready to click via `click_at_cursor()`."
+            else:
+                guidance = (
+                    f"Reticle is near the edge of {obj_type} #{obj_id} (offset dx={dx}, dy={dy}). "
+                    f"Recommended center: (col={obj_cx}, row={obj_cy}). Call `move_cursor({obj_cx}, {obj_cy})` to center if needed, or click now."
+                )
+        else:
+            guidance = f"Reticle is on background/open space (Color {cell_color}: {color_name}). Aim at an interactable button or element before clicking."
+
+        # カーソル周辺の局所ゲシュタルトマップ生成 (2*radius + 1 x 2*radius + 1)
+        map_lines = []
+        r_start = safe_r - radius
+        r_end = safe_r + radius
+        c_start = safe_c - radius
+        c_end = safe_c + radius
+
+        # 列ヘッダー
+        col_header = "     " + " ".join(f"{c%100:2d}" for c in range(c_start, c_end + 1))
+        map_lines.append(col_header)
+
+        for r in range(r_start, r_end + 1):
+            row_cells = []
+            for c in range(c_start, c_end + 1):
+                if 0 <= r < h and 0 <= c < w:
+                    val = int(arr[r, c])
+                    if r == safe_r and c == safe_c:
+                        row_cells.append(f"[{val}]")
+                    else:
+                        row_cells.append(f" {val} ")
+                else:
+                    row_cells.append(" . ")
+            indicator = " <--" if r == safe_r else ""
+            map_lines.append(f"r{r%100:2d}: " + "".join(row_cells) + indicator)
+
+        local_ascii_map = "\n".join(map_lines)
+
+        return {
+            "success": True,
+            "cursor": {"col": safe_c, "row": safe_r},
+            "target_pixel": {"color": cell_color, "color_name": color_name},
+            "status": status,
+            "object_info": obj_info,
+            "local_ascii_map": local_ascii_map,
+            "guidance": guidance,
+        }
+
     def analyze_frame(
         self,
         grid: Any,

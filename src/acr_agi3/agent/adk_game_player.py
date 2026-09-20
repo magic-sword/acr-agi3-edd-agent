@@ -86,7 +86,7 @@ class ADKGamePlayer:
         # 1. ハーネスおよび Level 3 実行ツールの初期化
         self.vision_harness = VisionObservationHarness(cell_size=cell_size)
         self.action_tools = GameActionTools()
-        self.vision_tools = VisionTools()
+        self.vision_tools = VisionTools(controller=self.action_tools.controller)
         self.spatial_tools = SpatialTools()
         self.planning_tools = PlanningTools()
         self.memory_tools = MemoryTools()
@@ -107,12 +107,13 @@ class ADKGamePlayer:
 
         self.act_additional_tools = (
             self.action_tools.get_tools()
+            + self.vision_tools.get_tools()
             + self.spatial_tools.get_tools()
             + self.planning_tools.get_tools()
             + self.memory_tools.get_tools()
         )
         self.act_toolset = self.skill_harness.get_scoped_toolset(
-            ["game-controller", "spatial-grounder", "taboo-reset-guard", "epistemic-prober", "memory-notebook"],
+            ["game-controller", "visual-inspector", "spatial-grounder", "taboo-reset-guard", "epistemic-prober", "memory-notebook"],
             additional_tools=self.act_additional_tools,
         )
         self.skill_toolset = self.skill_harness.get_toolset(
@@ -166,14 +167,13 @@ class ADKGamePlayer:
         act_instruction = (
             "You are the Action Decision Specialist for ARC-AGI-3 dynamic games.\n"
             "Your objective is to execute the immediate subgoal from Node 2 using available tools.\n"
-            "1. You have access to the skills: 'game-controller', 'spatial-grounder'. Call `load_skill(skill_name='game-controller')` if needed.\n"
-            "2. To inspect click targets on-demand, call `inspect_clickable_anchors()`, `inspect_detected_objects()`, or `inspect_cursor()`.\n"
-            "3. Mouse Cursor & Clicking (Two-Stage Safe Aiming):\n"
-            "   - Current cursor position is shown on the game board image with reticle `[ + ]` and in the HUD as CURSOR: (col, row).\n"
+            "1. You have access to the skills: 'game-controller', 'visual-inspector', 'spatial-grounder'. Call `load_skill(skill_name=...)` if needed.\n"
+            "2. Mouse Cursor Aiming & Visual Inspection Workflow (Aim -> Inspect -> Fire):\n"
             "   - `move_cursor(x=col, y=row, reasoning='...')`: Move cursor to aim at target without consuming environment turns.\n"
+            "   - `inspect_cursor_target()`: Call visual-inspector to verify whether the reticle is centered on an interactable button and inspect the local 7x7 map.\n"
             "   - `click_at_cursor(reasoning='...')`: Fire click at current cursor position (consumes turn).\n"
             "   - `click_at(x=col, y=row, reasoning='...')`: Direct click (moves cursor and fires click).\n"
-            "4. Directional Steps & Reset:\n"
+            "3. Directional Steps & Reset:\n"
             "   - `step_action(action='...', reasoning='...')`: Execute move using D-Pad ('UP', 'DOWN', 'LEFT', 'RIGHT') or button ('ACTION1'-'ACTION7').\n"
             "   - `reset_game(reasoning='...')`: Reset level when deadlocked.\n"
             "DO NOT call load_skill with action names (e.g. do NOT call load_skill('ACTION1')). Always use execution tools."
@@ -241,6 +241,7 @@ class ADKGamePlayer:
         self.cursor_pos = (32, 32)
         if self.action_tools.controller is not None:
             self.action_tools.controller.set_cursor(32, 32)
+        self.vision_tools.set_cursor(32, 32)
         self.reset(full_wipe=False)
 
     def reset(self, full_wipe: bool = False) -> None:
@@ -350,7 +351,7 @@ class ADKGamePlayer:
         self.action_tools.set_available_actions(avail_ids)
         self.action_tools.set_dynamics_map(self.dynamics_map)
         self.action_tools.set_grid(arr)
-        self.vision_tools.set_context(arr, step_index=self.step_index)
+        self.vision_tools.set_context(arr, step_index=self.step_index, cursor_pos=self.cursor_pos)
         self.spatial_tools.set_context(arr, step_index=self.step_index, last_grid=self.last_grid)
         self.planning_tools.set_context(arr, step_index=self.step_index, available_actions=avail_ids)
         self.memory_tools.set_step(self.step_index)
@@ -490,6 +491,7 @@ class ADKGamePlayer:
         # コントローラーのカーソル位置と同期
         if self.action_tools.controller is not None:
             self.cursor_pos = self.action_tools.controller.cursor
+            self.vision_tools.set_cursor(self.cursor_pos[0], self.cursor_pos[1])
 
         # 視覚観測 Parts の生成 (統合コンソール画面 + 客観的事実 + マウスカーソル照準)
         parts = self.vision_harness.create_observation_parts(
@@ -527,8 +529,10 @@ class ADKGamePlayer:
             self.cursor_pos = (int(decision.coordinates["x"]), int(decision.coordinates["y"]))
             if self.action_tools.controller is not None:
                 self.action_tools.controller.set_cursor(self.cursor_pos[0], self.cursor_pos[1])
+            self.vision_tools.set_cursor(self.cursor_pos[0], self.cursor_pos[1])
         elif self.action_tools.controller is not None:
             self.cursor_pos = self.action_tools.controller.cursor
+            self.vision_tools.set_cursor(self.cursor_pos[0], self.cursor_pos[1])
 
         self.last_grid = arr.copy()
         self.last_expected_action = decision.action_name
@@ -789,9 +793,10 @@ class ADKGamePlayer:
         act_guidance = "calling `step_action` or `click_at` tool."
         if 6 in available_action_ids and len(available_action_ids) == 1:
             act_guidance = (
-                "using the 2-step mouse cursor workflow:\n"
-                "  1. Call `move_cursor(x=col, y=row, reasoning='...')` to aim your reticle at the target element.\n"
-                "  2. Check the reticle feedback (cell color & coords), then call `click_at_cursor(reasoning='...')` to fire.\n"
+                "using the Aim -> Inspect -> Fire workflow:\n"
+                "  1. Call `move_cursor(x=col, y=row, reasoning='...')` to position the reticle.\n"
+                "  2. (Recommended) Call `inspect_cursor_target()` to verify whether the reticle is centered on an interactable button and view the local 7x7 map.\n"
+                "  3. Call `click_at_cursor(reasoning='...')` to fire the click.\n"
                 "  (You may also call `click_at(x=col, y=row)` directly). CRITICAL: Only ACTION6 is available; do NOT call step_action."
             )
         elif 6 not in available_action_ids:
