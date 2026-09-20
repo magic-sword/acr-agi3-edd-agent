@@ -166,13 +166,17 @@ class ADKGamePlayer:
         act_instruction = (
             "You are the Action Decision Specialist for ARC-AGI-3 dynamic games.\n"
             "Your objective is to execute the immediate subgoal from Node 2 using available tools.\n"
-            "1. You have access to the skills: 'game-controller', 'spatial-grounder'. Call `load_skill(skill_name='game-controller')` if you need to review its operational instructions.\n"
-            "2. To inspect click targets or objects on-demand, call `inspect_clickable_anchors()` or `inspect_detected_objects()`.\n"
-            "3. To execute your action, you MUST call one of the execution tools:\n"
-            "   - `step_action(action='...', reasoning='...')`: Execute a move using D-Pad directions ('UP', 'DOWN', 'LEFT', 'RIGHT') or physical button ('ACTION1'-'ACTION7').\n"
-            "   - `click_at(x=col, y=row, object_id=..., reasoning='...')`: Click at coordinate or auto-snap to detected object.\n"
+            "1. You have access to the skills: 'game-controller', 'spatial-grounder'. Call `load_skill(skill_name='game-controller')` if needed.\n"
+            "2. To inspect click targets on-demand, call `inspect_clickable_anchors()`, `inspect_detected_objects()`, or `inspect_cursor()`.\n"
+            "3. Mouse Cursor & Clicking (Two-Stage Safe Aiming):\n"
+            "   - Current cursor position is shown on the game board image with reticle `[ + ]` and in the HUD as CURSOR: (col, row).\n"
+            "   - `move_cursor(x=col, y=row, reasoning='...')`: Move cursor to aim at target without consuming environment turns.\n"
+            "   - `click_at_cursor(reasoning='...')`: Fire click at current cursor position (consumes turn).\n"
+            "   - `click_at(x=col, y=row, reasoning='...')`: Direct click (moves cursor and fires click).\n"
+            "4. Directional Steps & Reset:\n"
+            "   - `step_action(action='...', reasoning='...')`: Execute move using D-Pad ('UP', 'DOWN', 'LEFT', 'RIGHT') or button ('ACTION1'-'ACTION7').\n"
             "   - `reset_game(reasoning='...')`: Reset level when deadlocked.\n"
-            "DO NOT call load_skill with action names (e.g. do NOT call load_skill('ACTION1')). Always use `step_action` or `click_at` to execute actions."
+            "DO NOT call load_skill with action names (e.g. do NOT call load_skill('ACTION1')). Always use execution tools."
         )
         self.act_agent = Agent(
             name=f"{self.name}_act",
@@ -221,6 +225,7 @@ class ADKGamePlayer:
         self.current_game_id: str = "default"
         self.game_dynamics: Dict[str, Dict[str, int]] = {}
         self.taboo_click_coords: List[Tuple[int, int]] = []
+        self.cursor_pos: Tuple[int, int] = (32, 32)
 
     def switch_game(self, game_id: str) -> None:
         """指定されたゲーム環境 (game_id) に切り替え、環境ごとのノートと力学を復元."""
@@ -233,6 +238,9 @@ class ADKGamePlayer:
         self.action_tools.set_dynamics_map(self.dynamics_map)
         if self.planning_tools.prober is not None:
             self.planning_tools.prober.dynamics_map = dict(self.dynamics_map)
+        self.cursor_pos = (32, 32)
+        if self.action_tools.controller is not None:
+            self.action_tools.controller.set_cursor(32, 32)
         self.reset(full_wipe=False)
 
     def reset(self, full_wipe: bool = False) -> None:
@@ -250,6 +258,9 @@ class ADKGamePlayer:
         self.last_action_info = None
         self.action_tools.pending_decision = None
         self.action_tools.history.clear()
+        self.cursor_pos = (32, 32)
+        if self.action_tools.controller is not None:
+            self.action_tools.controller.set_cursor(32, 32)
         self.perceive_session_id = None
         self.plan_session_id = None
         self.act_session_id = None
@@ -451,6 +462,11 @@ class ADKGamePlayer:
                     decision.action_name = f"ACTION{sanitized}"
                     decision.reasoning += f" [TabooGuard: {reason}]"
 
+            if decision.coordinates and "x" in decision.coordinates and "y" in decision.coordinates:
+                self.cursor_pos = (int(decision.coordinates["x"]), int(decision.coordinates["y"]))
+                if self.action_tools.controller is not None:
+                    self.action_tools.controller.set_cursor(self.cursor_pos[0], self.cursor_pos[1])
+
             self.last_grid = arr.copy()
             self.last_expected_action = decision.action_name
             self.last_action_info = {
@@ -471,12 +487,17 @@ class ADKGamePlayer:
                 self.memory_tools.memory_delete("plan.active")
             return decision
 
-        # 視覚観測 Parts の生成 (統合コンソール画面 + 客観的事実)
+        # コントローラーのカーソル位置と同期
+        if self.action_tools.controller is not None:
+            self.cursor_pos = self.action_tools.controller.cursor
+
+        # 視覚観測 Parts の生成 (統合コンソール画面 + 客観的事実 + マウスカーソル照準)
         parts = self.vision_harness.create_observation_parts(
             grid_data=arr,
             step_index=self.step_index,
             available_actions=avail_names,
             last_action_info=self.last_action_info,
+            cursor_pos=self.cursor_pos,
         )
 
         # 非同期 Runner を実行 (Slow Path: 計画策定または能動プロービング)
@@ -500,6 +521,14 @@ class ADKGamePlayer:
                 state_str=state_str,
             )
         )
+
+        # アクション決定後のカーソル位置同期
+        if decision.coordinates and "x" in decision.coordinates and "y" in decision.coordinates:
+            self.cursor_pos = (int(decision.coordinates["x"]), int(decision.coordinates["y"]))
+            if self.action_tools.controller is not None:
+                self.action_tools.controller.set_cursor(self.cursor_pos[0], self.cursor_pos[1])
+        elif self.action_tools.controller is not None:
+            self.cursor_pos = self.action_tools.controller.cursor
 
         self.last_grid = arr.copy()
         self.last_expected_action = decision.action_name
@@ -673,8 +702,9 @@ class ADKGamePlayer:
                     "🚨 [Mode: TABOO RECOVERY / INTERACTION RE-PLANNING]\n"
                     "The previous click action caused 0 pixel changes (target was inactive or missed).\n"
                     f"{taboo_str}\n"
-                    "Goal: Re-plan your target! Call `inspect_clickable_anchors()` to check candidate targets, or choose a DIFFERENT clickable object/anchor and call `click_at(x=col, y=row)` or `click_at(object_id=...)`. "
-                    "CRITICAL: Only ACTION6 (click_at) is available. Do NOT output movement directions (UP/DOWN/LEFT/RIGHT) or repeat taboo coordinates."
+                    "Goal: Re-plan your target! Choose a DIFFERENT target from taboo coordinates.\n"
+                    "Aim safely: Use `move_cursor(x=col, y=row)` to align reticle, then `click_at_cursor()` to execute.\n"
+                    "CRITICAL: Only ACTION6 (click) is available. Do NOT output movement directions (UP/DOWN/LEFT/RIGHT) or repeat taboo coordinates."
                 )
             elif 6 in available_action_ids and any(a in [1, 2, 3, 4] for a in available_action_ids):
                 mode_instructions.append(
@@ -758,9 +788,14 @@ class ADKGamePlayer:
 
         act_guidance = "calling `step_action` or `click_at` tool."
         if 6 in available_action_ids and len(available_action_ids) == 1:
-            act_guidance = "calling `click_at(x=col, y=row, reasoning='...')`. (CRITICAL: Only ACTION6 is available; do NOT call step_action)."
+            act_guidance = (
+                "using the 2-step mouse cursor workflow:\n"
+                "  1. Call `move_cursor(x=col, y=row, reasoning='...')` to aim your reticle at the target element.\n"
+                "  2. Check the reticle feedback (cell color & coords), then call `click_at_cursor(reasoning='...')` to fire.\n"
+                "  (You may also call `click_at(x=col, y=row)` directly). CRITICAL: Only ACTION6 is available; do NOT call step_action."
+            )
         elif 6 not in available_action_ids:
-            act_guidance = "calling `step_action(direction=..., reasoning='...')`. (CRITICAL: Only directional buttons are available; do NOT call click_at)."
+            act_guidance = "calling `step_action(direction=..., reasoning='...')`. (CRITICAL: Only directional buttons are available; do NOT call click_at or move_cursor)."
 
         act_prompt = (
             f"=== IMMEDIATE SUBGOAL & STRATEGY (Phase 2) ===\n"

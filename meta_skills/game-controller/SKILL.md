@@ -9,15 +9,18 @@ license: MIT
 allowed-tools: run_skill_script load_skill_resource
 metadata:
   pattern: workflow
-  version: "1.2.0"
+  version: "1.3.0"
   adk_additional_tools:
     - step_action
     - click_at
+    - move_cursor
+    - click_at_cursor
+    - inspect_cursor
     - reset_game
   inputs:
     - name: action_call
       type: dict | str
-      description: Action specification such as step_action, click_at, or structured JSON
+      description: Action specification such as step_action, click_at, move_cursor, or click_at_cursor
     - name: available_actions
       type: list[int]
       description: List of action IDs valid in current state
@@ -50,8 +53,10 @@ metadata:
 ## When to use
 - Every single turn when deciding, validating, and executing your next dynamic game action.
 - When executing directional navigation (`UP`, `DOWN`, `LEFT`, `RIGHT`) without needing to remember physical button IDs.
-- When targeting an interactive element or button using coordinate clicks (`click_at(x, y)` / `click_at(object_id=...)` / `ACTION6`).
-- When navigating via point-and-click to open ground tiles or empty spaces using explicit coordinates (`click_at(x=col, y=row)`).
+- When targeting an interactive element or button:
+  - **Safe Two-Stage Aim & Click**: Move the mouse cursor reticle via `move_cursor(x, y)` to aim, visually verify reticle placement on screen, then fire via `click_at_cursor()`.
+  - **Direct Click**: Use `click_at(x, y)` or `click_at(object_id=...)` to position and click in one step.
+- When inspecting current cursor coordinates via `inspect_cursor()`.
 - When deadlocked or trapped in an irreversible state and requiring an active reset (`reset_game()` / `RESET`).
 
 ## When NOT to use
@@ -60,14 +65,14 @@ metadata:
 
 ## Workflow
 1. **Identify Available Actions & Dynamics**:
-   - Check `available_actions` provided in the observation text (e.g. `[1, 2, 3, 4]` or `[1, 2, 3, 4, 6]`).
+   - Check `available_actions` provided in the observation text (e.g. `[1, 2, 3, 4]` or `[6]`).
    - The engine automatically resolves `UP`, `DOWN`, `LEFT`, `RIGHT` to the correct physical button via the online dynamics map.
 2. **Formulate High-Level 1-Step Decision**:
    - For movement: Choose `UP`, `DOWN`, `LEFT`, `RIGHT`, `ACTION5`, or `ACTION7`.
-   - For interactive click: Choose `ACTION6` via `click_at`:
-     - **Specific Object Target**: Specify `object_id=N` to automatically and precisely snap to the center of the detected object cluster.
-     - **Explicit Tile / Ground Target**: Specify `x=col, y=row` to click exact board coordinates (such as open ground tiles for character movement or placement).
-     - **Unspecified Click**: Leave coordinates empty to snap to the highest priority interactive affordance.
+   - For interactive click (Two-Stage Safe Aiming):
+     - **Stage 1 (Aim)**: Call `move_cursor(x=col, y=row)` to align the reticle over target without consuming environment turns.
+     - **Stage 2 (Fire)**: Call `click_at_cursor()` to fire `ACTION6` at current reticle coordinates.
+     - **Object Target**: Specify `object_id=N` with `click_at` to snap to detected object center.
    - For reset: Choose `RESET` (0).
 3. **Execute via Deterministic Tool**:
    - Execute CLI tool or function tool to output valid environment action:

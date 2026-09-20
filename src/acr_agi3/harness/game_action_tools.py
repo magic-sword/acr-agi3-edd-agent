@@ -21,10 +21,20 @@ _SKILL_DIR = Path(__file__).resolve().parents[3] / "meta_skills" / "game-control
 if str(_SKILL_DIR) not in sys.path:
     sys.path.insert(0, str(_SKILL_DIR))
 
+def _get_game_controller_cls():
+    global GameController
+    if GameController is not None:
+        return GameController
+    try:
+        from game_controller import GameController as _GC
+        GameController = _GC
+        return GameController
+    except ImportError:
+        return None
+
 try:
     from game_controller import GameController
 except ImportError:
-    # パスが異なる場合のフォールバックインポート
     GameController = None
 
 
@@ -48,11 +58,15 @@ class GameActionTools:
         self,
         available_actions: Optional[List[int]] = None,
         dynamics_map: Optional[Dict[str, int]] = None,
+        controller: Optional[Any] = None,
     ) -> None:
         self.available_action_ids: List[int] = available_actions or [1, 2, 3, 4]
         self.dynamics_map: Dict[str, int] = dict(dynamics_map or {})
-        if GameController is not None:
-            self.controller = GameController(
+        ctrl_cls = _get_game_controller_cls()
+        if controller is not None:
+            self.controller = controller
+        elif ctrl_cls is not None:
+            self.controller = ctrl_cls(
                 available_actions=self.available_action_ids,
                 dynamics_map=self.dynamics_map,
             )
@@ -169,6 +183,83 @@ class GameActionTools:
         coords = self.pending_decision.coordinates
         return f"Click scheduled at coordinate {coords}. Reason: {self.pending_decision.reasoning}"
 
+    def move_cursor(self, x: int, y: int, reasoning: str = "") -> str:
+        """マウスカーソル（照準レティクル）を指定された座標 (x, y) へ移動します（環境ターンは消費しません）.
+
+        Args:
+            x: 移動先の列インデックス (0-indexed)。
+            y: 移動先の行インデックス (0-indexed)。
+            reasoning: カーソルをこの位置へ移動した理由。
+        """
+        shape = self.grid.shape[:2] if self.grid is not None and hasattr(self.grid, "shape") else (64, 64)
+        h, w = shape
+        safe_x = max(0, min(w - 1, x))
+        safe_y = max(0, min(h - 1, y))
+
+        if self.controller is not None:
+            self.controller.move_cursor(x=safe_x, y=safe_y, grid_shape=shape, reasoning=reasoning)
+
+        # ターゲット位置のセルの色情報を取得
+        cell_info = ""
+        if self.grid is not None and hasattr(self.grid, "__getitem__"):
+            try:
+                c_val = int(self.grid[safe_y, safe_x])
+                from acr_agi3.dsl.renderer import ARC_COLOR_NAMES
+                c_name = ARC_COLOR_NAMES.get(c_val, f"Color{c_val}")
+                cell_info = f" Target pixel is color {c_val} ({c_name})."
+            except Exception:
+                pass
+
+        return (
+            f"🎯 Mouse cursor moved to (col={safe_x}, row={safe_y}). Reticle is now aimed at target.{cell_info} "
+            f"If this matches your desired target, call `click_at_cursor(reasoning='...')` to fire the click. "
+            f"Otherwise, call `move_cursor(x=..., y=...)` to adjust your aim."
+        )
+
+    def click_at_cursor(self, reasoning: str = "") -> str:
+        """現在マウスカーソルが置かれている座標に対してクリック (ACTION6) を発火します.
+
+        Args:
+            reasoning: このクリックを発火した戦略的理由。
+        """
+        target_grid = self.grid
+        shape = self.grid.shape[:2] if self.grid is not None and hasattr(self.grid, "shape") else (64, 64)
+        if self.controller is not None:
+            res = self.controller.click_at_cursor(grid=target_grid, grid_shape=shape, reasoning=reasoning)
+            if not res.get("success", False):
+                return f"Error from game-controller: {res.get('error', 'Invalid click action')}"
+            self.pending_decision = ActionDecision(
+                action_type=res["action_type"],
+                action_name=res["action_name"],
+                action_id=res["action_id"],
+                coordinates=res["coordinates"],
+                reasoning=res["reasoning"],
+                loaded_skill="game-controller",
+            )
+        else:
+            if 6 not in self.available_action_ids:
+                return f"Error from game-controller: Click action is disabled. Available actions: {self.available_action_ids}."
+            self.pending_decision = ActionDecision(
+                action_type="CLICK",
+                action_name="ACTION6",
+                action_id=6,
+                coordinates={"x": 32, "y": 32},
+                reasoning=reasoning,
+                loaded_skill="game-controller",
+            )
+
+        self.history.append(self.pending_decision)
+        coords = self.pending_decision.coordinates
+        return f"Click fired at mouse cursor coordinate {coords}. Reason: {self.pending_decision.reasoning}"
+
+    def inspect_cursor(self) -> str:
+        """現在のマウスカーソル位置を取得します."""
+        import json
+        if self.controller is not None:
+            res = self.controller.inspect_cursor()
+            return json.dumps(res, ensure_ascii=False)
+        return json.dumps({"cursor": {"x": 32, "y": 32}}, ensure_ascii=False)
+
     def reset_game(self, reasoning: str = "") -> str:
         """現在のレベルをリセットして初期状態に戻します（手詰まり時の能動的リセット）.
 
@@ -200,4 +291,11 @@ class GameActionTools:
 
     def get_tools(self) -> List[Any]:
         """ADK Agent に渡すためのツール関数一覧を返却."""
-        return [self.step_action, self.click_at, self.reset_game]
+        return [
+            self.step_action,
+            self.click_at,
+            self.move_cursor,
+            self.click_at_cursor,
+            self.inspect_cursor,
+            self.reset_game,
+        ]

@@ -17,10 +17,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-try:
-    from acr_agi3.harness.vision_observation import detect_interactable_objects
-except ImportError:
-    detect_interactable_objects = None
+# acr_agi3.harness へのトップレベル循環インポートを防止（必要時に関数内で遅延ロード）
+detect_interactable_objects = None
 
 from pathlib import Path
 import sys
@@ -71,9 +69,15 @@ class GameController:
         self,
         available_actions: Optional[List[int]] = None,
         dynamics_map: Optional[Dict[str, int]] = None,
+        cursor: Optional[Tuple[int, int]] = None,
     ) -> None:
         self.available_actions: List[int] = available_actions or [1, 2, 3, 4]
         self.dynamics_map: Dict[str, int] = dict(dynamics_map or {})
+        self.cursor: Tuple[int, int] = cursor if cursor is not None else (15, 15)
+
+    def set_cursor(self, x: int, y: int) -> None:
+        """マウスカーソル位置を更新."""
+        self.cursor = (x, y)
 
     def set_available_actions(self, available_actions: List[int]) -> None:
         """現在のターンで利用可能なアクション ID を更新."""
@@ -123,19 +127,23 @@ class GameController:
         w: int,
         grid: Optional[Any] = None,
         object_id: Optional[int] = None,
+        cursor: Optional[Tuple[int, int]] = None,
     ) -> Tuple[int, int, str]:
-        """指定座標 (x, y) または物体ID (object_id) からクリック座標を決定.
+        """指定座標 (x, y)、物体ID (object_id)、またはマウスカーソル (cursor) からクリック座標を決定.
 
         仕様:
         1. object_id が指定された場合:
            検出された該当物体の重心へ正確に自動スナップする。
         2. 明示的に x, y 座標が両方指定された場合 (object_id is None):
            背景色（地面・空きマス）かどうかにかかわらず、指定された生の座標をそのまま尊重する。
-           （近隣物体への強制吸着は行わず、地面への移動や任意クリックを保証する）
         3. x, y が未指定 (None) の場合:
-           最優先の検出オブジェクト（または盤面中央）へ自動スナップする。
+           現在のマウスカーソル位置 (cursor) を採用する。
         """
         if grid is None:
+            if x is not None and y is not None:
+                return x, y, ""
+            if cursor is not None:
+                return cursor[0], cursor[1], f" [using mouse cursor at ({cursor[0]}, {cursor[1]})]"
             safe_x = x if x is not None else w // 2
             safe_y = y if y is not None else h // 2
             return safe_x, safe_y, ""
@@ -150,6 +158,10 @@ class GameController:
             if arr.shape != (h, w):
                 h, w = arr.shape
         except Exception:
+            if x is not None and y is not None:
+                return x, y, ""
+            if cursor is not None:
+                return cursor[0], cursor[1], f" [using mouse cursor at ({cursor[0]}, {cursor[1]})]"
             safe_x = x if x is not None else w // 2
             safe_y = y if y is not None else h // 2
             return safe_x, safe_y, ""
@@ -158,9 +170,14 @@ class GameController:
         if object_id is not None:
             objs = []
             if SpatialGrounder is not None:
-                objs = SpatialGrounder.detect_composite_objects(arr)
-            if not objs and detect_interactable_objects is not None:
-                objs = detect_interactable_objects(arr)
+                objs = SpatialGrounder.detect_composite_objects(arr, min_size=1)
+            if not objs:
+                try:
+                    from acr_agi3.harness.vision_observation import detect_interactable_objects as _dio
+                    if _dio is not None:
+                        objs = _dio(arr)
+                except Exception:
+                    pass
 
             target_obj = next((o for o in objs if o.get("id") == object_id), None)
             if target_obj is None and objs:
@@ -184,20 +201,25 @@ class GameController:
                 best = objs[0]
                 bx, by = int(best["center"]["x"]), int(best["center"]["y"])
                 return bx, by, f" [object #{object_id} not found, snapped to object #{best.get('id', 0)} at ({bx}, {by})]"
+            if cursor is not None:
+                return cursor[0], cursor[1], f" [object #{object_id} not found, using cursor at ({cursor[0]}, {cursor[1]})]"
             return w // 2, h // 2, f" [object #{object_id} not found, defaulted to grid center]"
 
         # --- Case 2: 明示的に座標 (x, y) が両方指定された場合 ---
-        # ユーザー指示: エージェントが明示的に座標を指定した場合はその場所（地面・空セル含む）をクリック可能にする
         if x is not None and y is not None:
             return x, y, ""
 
         # --- Case 3: 座標が未指定 (None) の場合 ---
-        # 最優先の検出オブジェクトへ自動スナップ
         objs = []
         if SpatialGrounder is not None:
-            objs = SpatialGrounder.detect_composite_objects(arr)
-        if not objs and detect_interactable_objects is not None:
-            objs = detect_interactable_objects(arr)
+            objs = SpatialGrounder.detect_composite_objects(arr, min_size=1)
+        if not objs:
+            try:
+                from acr_agi3.harness.vision_observation import detect_interactable_objects as _dio
+                if _dio is not None:
+                    objs = _dio(arr)
+            except Exception:
+                pass
 
         if objs:
             best = objs[0]
@@ -205,7 +227,14 @@ class GameController:
             best_id = best.get("id", 0)
             return bx, by, f" [auto-snapped unspecified click to detected object #{best_id} at ({bx}, {by})]"
 
-        # オブジェクトが見つからない場合はグリッド中心
+        # 検出オブジェクトがない場合は現在のマウスカーソル位置を採用
+        if cursor is not None:
+            cx, cy = cursor
+            cx = max(0, min(w - 1, cx))
+            cy = max(0, min(h - 1, cy))
+            return cx, cy, f" [using current mouse cursor at ({cx}, {cy})]"
+
+        # カーソル情報もない場合はグリッド中心
         return w // 2, h // 2, " [defaulted to grid center]"
 
     # -------------------------------------------------------------------------
@@ -265,7 +294,7 @@ class GameController:
             h, w = grid.shape[:2]
 
         snap_x, snap_y, note = self.snap_coordinates_to_affordance(
-            x=x, y=y, h=h, w=w, grid=grid, object_id=object_id
+            x=x, y=y, h=h, w=w, grid=grid, object_id=object_id, cursor=self.cursor
         )
         reasoning_full = f"{reasoning}{note}".strip()
 
@@ -291,6 +320,9 @@ class GameController:
                 "error": f"Click action (ACTION6 / click_at) is disabled and not in available actions: {self.available_actions}. Do NOT use click_at; choose an action from available actions.",
             }
 
+        # カーソル位置をクリック座標へ同期
+        self.cursor = (snap_x, snap_y)
+
         return {
             "success": True,
             "action_type": "CLICK",
@@ -299,6 +331,66 @@ class GameController:
             "coordinates": {"x": snap_x, "y": snap_y},
             "reasoning": reasoning_full,
             "error": None,
+        }
+
+    def move_cursor(
+        self,
+        x: int,
+        y: int,
+        grid_shape: Optional[Tuple[int, int]] = None,
+        reasoning: str = "",
+    ) -> Dict[str, Any]:
+        """マウスカーソル（照準レティクル）を目的の座標 (x, y) へ移動します（環境ターンは消費しません）.
+
+        Args:
+            x: 移動先の列インデックス (Column, 0-indexed)。
+            y: 移動先の行インデックス (Row, 0-indexed)。
+            grid_shape: 盤面サイズ (h, w)。
+            reasoning: カーソルをこの位置へ移動した戦略的理由。
+        """
+        h, w = grid_shape if grid_shape else (64, 64)
+        safe_x = max(0, min(w - 1, x))
+        safe_y = max(0, min(h - 1, y))
+        self.cursor = (safe_x, safe_y)
+
+        return {
+            "success": True,
+            "action_type": "MOVE_CURSOR",
+            "action_name": "MOVE_CURSOR",
+            "action_id": -1,
+            "coordinates": {"x": safe_x, "y": safe_y},
+            "cursor": {"x": safe_x, "y": safe_y},
+            "reasoning": reasoning or f"Moved mouse cursor to ({safe_x}, {safe_y})",
+            "error": None,
+        }
+
+    def click_at_cursor(
+        self,
+        grid: Optional[Any] = None,
+        grid_shape: Optional[Tuple[int, int]] = None,
+        reasoning: str = "",
+    ) -> Dict[str, Any]:
+        """現在マウスカーソルが置かれている座標に対してクリック (ACTION6) を発火します.
+
+        Args:
+            grid: 盤面グリッド配列。
+            grid_shape: 盤面サイズ (h, w)。
+            reasoning: この位置でクリックを発火した戦略的理由。
+        """
+        cx, cy = self.cursor
+        return self.click_at(
+            x=cx,
+            y=cy,
+            grid=grid,
+            grid_shape=grid_shape,
+            reasoning=reasoning or f"Fired click at current mouse cursor ({cx}, {cy})",
+        )
+
+    def inspect_cursor(self) -> Dict[str, Any]:
+        """現在のマウスカーソル位置を取得します."""
+        return {
+            "success": True,
+            "cursor": {"x": self.cursor[0], "y": self.cursor[1]},
         }
 
     def reset_game(self, reasoning: str = "") -> Dict[str, Any]:

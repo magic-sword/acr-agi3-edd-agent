@@ -145,6 +145,7 @@ class VisionObservationHarness:
         available_actions: Optional[List[str]] = None,
         last_action_info: Optional[Dict[str, Any]] = None,
         additional_hint: Optional[str] = None,
+        cursor_pos: Optional[Tuple[int, int]] = None,
     ) -> List[Part]:
         """観測グリッドを画像 Part および状態テキスト Part に変換して返却."""
         arr = normalize_grid(grid_data)
@@ -164,9 +165,10 @@ class VisionObservationHarness:
                     last_action=last_act,
                     step_index=step_index,
                     cell_size=self.cell_size,
+                    cursor_pos=cursor_pos,
                 )
             else:
-                pil_img = render_grid_to_image(arr, cell_size=self.cell_size)
+                pil_img = render_grid_to_image(arr, cell_size=self.cell_size, cursor_pos=cursor_pos)
 
             buf = io.BytesIO()
             pil_img.save(buf, format="PNG")
@@ -191,6 +193,13 @@ class VisionObservationHarness:
             f"- Active Colors: {', '.join(color_desc)}",
         ]
 
+        if cursor_pos is not None:
+            text_lines.append(
+                f"- Current Mouse Cursor: Position at (col={cursor_pos[0]}, row={cursor_pos[1]}). "
+                f"Marked with target reticle `[ + ]` on the game board image. "
+                f"Use `click_at_cursor()` to fire click here, or `move_cursor(x, y)` to re-aim."
+            )
+
         if self.use_console_ui:
             text_lines.append(
                 "- Controller Visual HUD: The lower section of the observation image displays the physical controller. "
@@ -208,25 +217,13 @@ class VisionObservationHarness:
         if available_actions:
             text_lines.append(f"- Available Actions: {', '.join(available_actions)}")
 
-        # 3. クリック操作が可能な場合の客観的座標リファレンス
-        if available_actions and any("ACTION6" in a or "CLICK" in a for a in available_actions):
-            detected_objects = detect_interactable_objects(arr)
-            if detected_objects:
-                text_lines.append("\n=== [VISIBLE OBJECT CLUSTERS (Reference Coordinates for ACTION6 / click_at)] ===")
-                for idx, obj in enumerate(detected_objects[:8], 1):
-                    c_name = self.COLOR_NAMES.get(obj["color"], f"Color {obj['color']}")
-                    cx, cy = obj["center"]["x"], obj["center"]["y"]
-                    sz = obj["size"]
-                    text_lines.append(f"  * Cluster #{idx}: {c_name} at Center (x={cx}, y={cy}), size={sz}px")
-
         if additional_hint:
             text_lines.append(f"- Strategic Note: {additional_hint}")
 
         text_lines.append(
-            "\nAnalyze the game console image carefully. Observe the game board and the controller HUD "
-            "(the highlighted button indicates your last executed action). "
-            "Use your visual recognition to determine what changed on screen, what objects exist, "
-            "and decide your next 1-step action (`step_action` or `click_at`)."
+            "\nAnalyze the game console image carefully. Observe the game board, mouse cursor reticle `[ + ]`, and the controller HUD. "
+            "Use your visual recognition to observe positions, entities, and colors. "
+            "Execute your action using available tools (`step_action`, `move_cursor`, `click_at_cursor`, or `click_at`)."
         )
 
         parts.append(Part.from_text(text="\n".join(text_lines)))

@@ -25,6 +25,20 @@ ARC_COLORS = {
     9: (135, 12, 37),  # Maroon / Brown
 }
 
+ARC_COLOR_NAMES = {
+    0: "Black",
+    1: "Blue",
+    2: "Red",
+    3: "Green",
+    4: "Yellow",
+    5: "Gray",
+    6: "Magenta",
+    7: "Orange",
+    8: "Teal",
+    9: "Brown",
+}
+
+
 # グリッド線の色 (薄いグレー)
 GRID_LINE_COLOR = (60, 60, 60)
 
@@ -34,6 +48,7 @@ def render_grid_to_image(
     cell_size: int = 24,
     grid_line_width: int = 1,
     scale: Optional[int] = None,
+    cursor_pos: Optional[Tuple[int, int]] = None,
 ) -> Image.Image:
     """2次元グリッド配列をカラー画像 (PIL.Image) に変換する.
 
@@ -42,6 +57,7 @@ def render_grid_to_image(
         cell_size: 1 セルあたりのピクセル幅・高さ
         grid_line_width: セル間の境界線の太さ (ピクセル)
         scale: cell_size のエイリアス
+        cursor_pos: (col, row) のマウスカーソル表示座標
 
     Returns:
         RGB 形式の PIL Image
@@ -71,6 +87,41 @@ def render_grid_to_image(
             y1 = y0 + cell_size - grid_line_width
 
             draw.rectangle([x0, y0, x1, y1], fill=color)
+
+    # マウスカーソル (照準レティクル [ + ]) の重畳描画
+    if cursor_pos is not None:
+        cx, cy = cursor_pos
+        if 0 <= cx < width and 0 <= cy < height:
+            x0 = cx * cell_size
+            y0 = cy * cell_size
+            x1 = x0 + cell_size - 1
+            y1 = y0 + cell_size - 1
+
+            bracket_len = max(3, cell_size // 3)
+            reticle_color = (255, 255, 255)
+            shadow_color = (0, 0, 0)
+
+            # 四隅のブラケット [ ] (外枠シャドウ付きで下地色問わず視認可能)
+            for offset, col in [((1, 1), shadow_color), ((0, 0), reticle_color)]:
+                dx, dy = offset
+                # Top-Left
+                draw.line([(x0 + dx, y0 + dy), (x0 + bracket_len + dx, y0 + dy)], fill=col, width=2)
+                draw.line([(x0 + dx, y0 + dy), (x0 + dx, y0 + bracket_len + dy)], fill=col, width=2)
+                # Top-Right
+                draw.line([(x1 + dx, y0 + dy), (x1 - bracket_len + dx, y0 + dy)], fill=col, width=2)
+                draw.line([(x1 + dx, y0 + dy), (x1 + dx, y0 + bracket_len + dy)], fill=col, width=2)
+                # Bottom-Left
+                draw.line([(x0 + dx, y1 + dy), (x0 + bracket_len + dx, y1 + dy)], fill=col, width=2)
+                draw.line([(x0 + dx, y1 + dy), (x0 + dx, y1 - bracket_len + dy)], fill=col, width=2)
+                # Bottom-Right
+                draw.line([(x1 + dx, y1 + dy), (x1 - bracket_len + dx, y1 + dy)], fill=col, width=2)
+                draw.line([(x1 + dx, y1 + dy), (x1 + dx, y1 - bracket_len + dy)], fill=col, width=2)
+
+            # セル中央のターゲットドット/小さなクロスヘア (黄色 #FFFF00)
+            mid_x = (x0 + x1) // 2
+            mid_y = (y0 + y1) // 2
+            draw.line([(mid_x - 3, mid_y), (mid_x + 3, mid_y)], fill=(255, 255, 0), width=1)
+            draw.line([(mid_x, mid_y - 3), (mid_x, mid_y + 3)], fill=(255, 255, 0), width=1)
 
     return image
 
@@ -327,6 +378,7 @@ def render_console_observation(
     cell_size: int = 16,
     min_console_width: int = 380,
     padding: int = 12,
+    cursor_pos: Optional[Tuple[int, int]] = None,
 ) -> Image.Image:
     """ゲーム盤面とレトロコントローラー・HUDを一体化した統合コンソール画像を生成する.
 
@@ -339,11 +391,12 @@ def render_console_observation(
         cell_size: グリッドのセルサイズ (ピクセル)
         min_console_width: コンソール画像の最小幅
         padding: 盤面周囲の余白 (ピクセル)
+        cursor_pos: (col, row) のマウスカーソル位置
 
     Returns:
         上部にゲーム画面、下部にコントローラーが配置された統合 PIL Image
     """
-    game_img = render_grid_to_image(grid, cell_size=cell_size)
+    game_img = render_grid_to_image(grid, cell_size=cell_size, cursor_pos=cursor_pos)
 
     # コンソール幅の決定（ゲーム画面または最小幅の大きい方）
     content_w = game_img.width
@@ -362,6 +415,11 @@ def render_console_observation(
     draw.rectangle([0, 0, console_w, header_h], fill=(28, 32, 42))
     header_title = "=== ARC-AGI-3 GAME CONSOLE ==="
     draw.text((12, 6), header_title, fill=(210, 220, 235), font=font)
+
+    # マウスカーソル座標のヘッダー表示
+    if cursor_pos is not None:
+        cursor_txt = f"CURSOR: ({cursor_pos[0]}, {cursor_pos[1]})"
+        draw.text((console_w - 130, 6), cursor_txt, fill=(255, 230, 80), font=font)
 
     # ゲーム画面の中央配置
     game_x = (console_w - game_img.width) // 2

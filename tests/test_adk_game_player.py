@@ -98,13 +98,13 @@ def test_adk_game_player_end_to_end_decision():
 def test_my_agent_integration_with_adk_player():
     """MyAgent が ADKGamePlayer を通じて arcengine の choose_action を正常に実行できるかを検証."""
     def mock_click_generation_fn(prompt: str) -> str:
-        return "I see an interactive tile at (5, 8). Let's click (5, 8) to activate the switch."
+        return "I see an interactive tile at col=8, row=5. Let's click (8, 5) to activate the switch."
 
     mock_llm = LocalTransformersLlm(model_name_or_path="mock", generation_fn=mock_click_generation_fn)
     agent = MyAgent(model=mock_llm)
 
     grid = np.zeros((10, 10), dtype=int)
-    grid[5, 8] = 4  # Switch
+    grid[5, 8] = 4  # Switch (row=5, col=8)
 
     frame = FrameData(
         levels_completed=0,
@@ -117,7 +117,7 @@ def test_my_agent_integration_with_adk_player():
     assert action == GameAction.ACTION6
     assert hasattr(action, "action_data")
     data = action.action_data.model_dump()
-    # grid[5, 8] は row=5, col=8 のため、正しい画面クリック座標は x=8, y=5 (自動反転・スナップ補正)
+    # 画面クリック座標は x=col=8, y=row=5
     assert data.get("x") == 8
     assert data.get("y") == 5
 
