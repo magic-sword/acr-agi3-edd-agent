@@ -33,7 +33,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
 
 def resolve_model_path(custom_path: Optional[str] = None) -> Optional[Path]:
     """Qwen2.5-VL モデル重みディレクトリを自動解決."""
-    if custom_path and custom_path not in ("auto", "default", "mock"):
+    if custom_path == "mock":
+        return None
+    if custom_path and custom_path not in ("auto", "default"):
         p = Path(custom_path)
         if p.exists() and (p / "config.json").exists():
             return p
@@ -71,6 +73,7 @@ class LocalQwenVL(BaseLlm):
         torch_dtype: Any = None,
         load_in_8bit: bool = False,
         load_in_4bit: bool = False,
+        allow_cpu_fallback: bool = False,
         **kwargs: Any,
     ) -> None:
         """初期化.
@@ -82,6 +85,7 @@ class LocalQwenVL(BaseLlm):
             torch_dtype: データ型 (torch.bfloat16, torch.float16等)
             load_in_8bit: 8bit量子化
             load_in_4bit: 4bit量子化
+            allow_cpu_fallback: GPU が使用不能な場合に CPU へのフォールバックを許可するか
         """
         resolved = resolve_model_path(model_name_or_path)
         actual_path = str(resolved) if resolved else (model_name_or_path or "mock")
@@ -95,6 +99,7 @@ class LocalQwenVL(BaseLlm):
                 torch_dtype=torch_dtype,
                 load_in_8bit=load_in_8bit,
                 load_in_4bit=load_in_4bit,
+                allow_cpu_fallback=allow_cpu_fallback,
             )
         elif generate_fn is None and actual_path != "mock":
             logger.info("LocalQwenVL: Model weights not found, operating in safe mock mode.")
@@ -106,6 +111,7 @@ class LocalQwenVL(BaseLlm):
         torch_dtype: Any,
         load_in_8bit: bool,
         load_in_4bit: bool,
+        allow_cpu_fallback: bool = False,
     ) -> None:
         """Qwen2.5-VL モデルとプロセッサをオフライン初期化 (キャッシュ再利用)."""
         if (
@@ -117,8 +123,21 @@ class LocalQwenVL(BaseLlm):
             self._processor = LocalQwenVL._shared_processor
             return
 
+        import torch
+
+        # GPU が要求されているのに利用できない場合、無断フォールバックを防止
+        if device.startswith("cuda") and not torch.cuda.is_available():
+            if not allow_cpu_fallback:
+                raise RuntimeError(
+                    f"GPU (CUDA) が指定されていますが、torch.cuda.is_available() が False です。\n"
+                    f"CPU 推論は 30〜40 倍遅延し、重大な性能低下（評価に10時間以上）を招くため自動フォールバックは無効化されています。\n"
+                    f"NVML エラーや GPU パススルーを確認するか、意図的に CPU で動かす場合は allow_cpu_fallback=True または device='cpu' を指定してください。"
+                )
+            logger.warning(
+                "CUDA requested but unavailable. Falling back to CPU because allow_cpu_fallback=True."
+            )
+
         try:
-            import torch
             from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 
             dtype = torch_dtype or (torch.bfloat16 if torch.cuda.is_available() else torch.float32)
@@ -149,12 +168,14 @@ class LocalQwenVL(BaseLlm):
             LocalQwenVL._shared_model = self._model
             LocalQwenVL._shared_processor = self._processor
             LocalQwenVL._shared_model_path = model_name_or_path
-            logger.info(f"Loaded Qwen2.5-VL model from {model_name_or_path} successfully.")
+            logger.info(f"Loaded Qwen2.5-VL model from {model_name_or_path} successfully on {self._model.device}.")
         except Exception as e:
-            logger.warning(
-                f"Failed to initialize Qwen2.5-VL for '{model_name_or_path}': {e}. "
-                "Fallback to mock/generate_fn mode."
+            logger.error(
+                f"Failed to initialize Qwen2.5-VL for '{model_name_or_path}': {e}."
             )
+            raise RuntimeError(
+                f"Failed to initialize Qwen2.5-VL on device '{device}' for '{model_name_or_path}': {e}"
+            ) from e
 
     @staticmethod
     def _declaration_to_schema(fd: Any) -> Dict[str, Any]:

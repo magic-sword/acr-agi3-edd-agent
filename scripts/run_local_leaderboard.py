@@ -300,6 +300,7 @@ def main():
     parser.add_argument("-s", "--max-steps", type=int, default=None, help="1環境あたりの最大ステップ数")
     parser.add_argument("-g", "--game-id", type=str, default=None, help="特定のゲーム ID (例: tu93, ft09)")
     parser.add_argument("-v", "--verbose", action="store_true", help="ステップごとの詳細ログを表示")
+    parser.add_argument("--allow-cpu", action="store_true", help="GPU 利用不能時の CPU 実行を明示的に許可 (デフォルト: 不可・即時エラー停止)")
     args = parser.parse_args()
     import logging
     if args.verbose:
@@ -307,12 +308,35 @@ def main():
     else:
         logging.basicConfig(level=logging.WARNING)
 
-    envs_dir = resolve_environments_dir()
-    arcade = Arcade(environments_dir=envs_dir)
-
     print("=" * 78)
     print("🏆 [ARC-AGI-3 LOCAL LEADERBOARD] Official Offline Evaluation Pipeline")
     print("=" * 78)
+
+    # ハードウェア加速 (GPU / CUDA) 事前健全性チェック
+    import torch
+    print("🔍 [PREFLIGHT] Hardware Acceleration Check...")
+    if not torch.cuda.is_available():
+        err_msg = (
+            "❌ [FATAL ERROR] GPU (CUDA) が検出されませんでした (torch.cuda.is_available() == False)！\n"
+            "   NVML エラーまたは GPU パススルー未設定の可能性があります。\n"
+            "   CPU 推論では 1 回の評価に 10 時間以上要し、研究・実験サイクルを著しく阻害するため即時中断します。\n"
+            "   【対策】\n"
+            "     1. コンテナを再起動してください: docker restart arc-agi3-dev\n"
+            "     2. ホスト側で nvidia-smi が動作しているか確認してください。\n"
+            "   ※ 意図的に CPU で極小ステップ動作を確認したい場合のみ `--allow-cpu` を指定してください。"
+        )
+        if not args.allow_cpu:
+            print(err_msg, file=sys.stderr)
+            sys.exit(1)
+        else:
+            print("⚠️ [WARNING] GPU 未検出ですが、--allow-cpu が指定されたため CPU で続行します (大幅な遅延にご注意ください)。")
+    else:
+        gpu_name = torch.cuda.get_device_name(0)
+        vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        print(f"✅ [PREFLIGHT] GPU Detected: {gpu_name} (VRAM: {vram_gb:.1f} GB, CUDA {torch.version.cuda})")
+
+    envs_dir = resolve_environments_dir()
+    arcade = Arcade(environments_dir=envs_dir)
 
     all_envs = arcade.get_environments()
     if not all_envs:
