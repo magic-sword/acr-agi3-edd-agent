@@ -52,12 +52,17 @@ class MemoryTools:
     def reset_episode(self) -> None:
         """同一ゲーム内でのリトライ（RESET）用の選択的リセット.
 
-        causality.* (操作力学), rules.* (ゲームルール), taboo.* (進入禁止制約) などの
-        不変な永続知識は保持し、破綻した一時的計画 (plan.*) のみを消しゴムで消去します。
+        causality.* (操作力学), rules.* (ゲームルール), taboo.* (進入禁止制約),
+        hypothesis.refuted.* (反証済み仮説) などの不変な永続知識は保持し、
+        破綻した一時的計画 (plan.*) およびアクティブ仮説 (hypothesis.active) のみを消去します。
         """
         self.notebook.clear(tag="plan")
         try:
             self.notebook.delete("plan.active")
+        except Exception:
+            pass
+        try:
+            self.notebook.delete("hypothesis.active")
         except Exception:
             pass
         self.step_index = 0

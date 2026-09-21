@@ -31,7 +31,7 @@ from acr_agi3.harness.vision_observation import (
     normalize_grid,
 )
 from acr_agi3.meta.skill_harness import SkillHarness
-from acr_agi3.tools import MemoryTools, PlanningTools, SpatialTools, VisionTools
+from acr_agi3.tools import HypothesisTools, MemoryTools, PlanningTools, SpatialTools, VisionTools
 
 logger = logging.getLogger(__name__)
 logging.getLogger("opentelemetry.context").setLevel(logging.CRITICAL)
@@ -90,6 +90,7 @@ class ADKGamePlayer:
         self.spatial_tools = SpatialTools()
         self.planning_tools = PlanningTools()
         self.memory_tools = MemoryTools()
+        self.hypothesis_tools = HypothesisTools(memory_tools=self.memory_tools)
         self.skill_harness = SkillHarness()
 
         # 2. 各ノード専用の最小限スキルセット（共有黒板 memory-notebook を全ノードへ解放）
@@ -99,9 +100,14 @@ class ADKGamePlayer:
             additional_tools=self.perceive_additional_tools,
         )
 
-        self.plan_additional_tools = self.memory_tools.get_tools() + self.planning_tools.get_tools() + self.spatial_tools.get_tools()
+        self.plan_additional_tools = (
+            self.memory_tools.get_tools()
+            + self.planning_tools.get_tools()
+            + self.spatial_tools.get_tools()
+            + self.hypothesis_tools.get_tools()
+        )
         self.plan_toolset = self.skill_harness.get_scoped_toolset(
-            ["memory-notebook", "backward-planner", "spatial-grounder"],
+            ["memory-notebook", "backward-planner", "spatial-grounder", "hypothesis-engine"],
             additional_tools=self.plan_additional_tools,
         )
 
@@ -111,9 +117,10 @@ class ADKGamePlayer:
             + self.spatial_tools.get_tools()
             + self.planning_tools.get_tools()
             + self.memory_tools.get_tools()
+            + self.hypothesis_tools.get_tools()
         )
         self.act_toolset = self.skill_harness.get_scoped_toolset(
-            ["game-controller", "visual-inspector", "spatial-grounder", "taboo-reset-guard", "epistemic-prober", "memory-notebook"],
+            ["game-controller", "visual-inspector", "spatial-grounder", "taboo-reset-guard", "epistemic-prober", "memory-notebook", "hypothesis-engine"],
             additional_tools=self.act_additional_tools,
         )
         self.skill_toolset = self.skill_harness.get_toolset(
@@ -148,8 +155,8 @@ class ADKGamePlayer:
             "Your objective is to review the visual observation summary from Node 1 and formulate a backward-chaining strategy and immediate subgoal.\n"
             "CRITICAL CONSTRAINT: You are ONLY a planner. You MUST NOT execute actions or call step_action or click_at.\n"
             "Node 3 will execute the action based on your plan.\n"
-            "1. You have access to the skills: 'memory-notebook', 'backward-planner', 'spatial-grounder'. You may call `load_skill(skill_name=...)` if needed.\n"
-            "2. You may use memory tools: `memory_write(section_id=..., content=...)`, `memory_read(section_id=...)`, `memory_toc()`, `memory_search(query=...)`.\n"
+            "1. You have access to the skills: 'memory-notebook', 'backward-planner', 'spatial-grounder', 'hypothesis-engine'. You may call `load_skill(skill_name=...)` if needed.\n"
+            "2. You may use memory & hypothesis tools: `formulate_hypothesis(claim=...)`, `get_refuted_bookmarks()`, `propose_alternative_hypothesis()`, `memory_write(section_id=..., content=...)`, `memory_read(section_id=...)`, `memory_toc()`, `memory_search(query=...)`.\n"
             "3. If planning an interaction or click, you can query candidate targets and coordinates using `inspect_clickable_anchors()` or `inspect_detected_objects()`.\n"
             "Output your planning strategy as plain text:\n"
             "- Immediate subgoal (e.g. advance towards target, stage piece in buffer, test unexplored button, avoid trap)\n"
@@ -279,8 +286,11 @@ class ADKGamePlayer:
             if self.planning_tools.prober is not None:
                 self.planning_tools.prober.dynamics_map.clear()
                 self.planning_tools.prober.tested_actions.clear()
+            self.hypothesis_tools.engine = HypothesisEngineCore() if HypothesisEngineCore else None
         else:
             self.memory_tools.reset_episode()
+            self.hypothesis_tools.reset_episode()
+
 
     def determine_cognitive_mode(
         self,
@@ -304,13 +314,16 @@ class ADKGamePlayer:
         4. BACKWARD_ARCHITECT: ゴールまでの A* 最短幾何経路が同定できている場合
         5. RISK_NAVIGATOR: 通常の障害物・トラップ回避ナビゲーション
         """
+        is_click_only = (6 in available_action_ids and len(available_action_ids) == 1)
         if stagnation_count >= 1:
             return CognitiveMode.TABOO_RECOVERY
-        if step_index <= 4 and has_probe_rec:
+        if step_index <= 4 and has_probe_rec and not is_click_only:
             return CognitiveMode.PROBING_SCIENTIST
         if has_preconditions:
             return CognitiveMode.CAUSAL_PROGRAMMER
-        if has_nav_path:
+        if is_click_only:
+            return CognitiveMode.CAUSAL_PROGRAMMER
+        if has_nav_path and not is_click_only:
             return CognitiveMode.BACKWARD_ARCHITECT
         if has_anchors and 6 in available_action_ids:
             return CognitiveMode.CAUSAL_PROGRAMMER
@@ -354,6 +367,7 @@ class ADKGamePlayer:
         self.vision_tools.set_context(arr, step_index=self.step_index, cursor_pos=self.cursor_pos)
         self.spatial_tools.set_context(arr, step_index=self.step_index, last_grid=self.last_grid)
         self.planning_tools.set_context(arr, step_index=self.step_index, available_actions=avail_ids)
+        self.hypothesis_tools.set_context(step_index=self.step_index, available_actions=avail_ids)
         self.memory_tools.set_step(self.step_index)
 
         # 操作力学同定 (Epistemic Prober) のオンライン更新
@@ -385,6 +399,7 @@ class ADKGamePlayer:
             last_act_name = self.last_action_info.get("action_name") or self.last_expected_action or "UNKNOWN"
             last_act_id = self.last_action_info.get("action_id", 0)
             last_coords = self.last_action_info.get("coordinates") or {}
+            last_reason = self.last_action_info.get("reasoning", "")
 
             logger.warning(
                 "Step %d [Failure Detected] Action %s (ID: %s) coords=%s caused 0 pixel changes. Transitioning to RECOVERY.",
@@ -394,6 +409,32 @@ class ADKGamePlayer:
             if self.plan_queue:
                 self.plan_queue.clear()
             self.memory_tools.memory_delete("plan.active")
+
+            # 破綻した仮説を「反証済み知識 (Refuted Hypothesis)」としてノートブックにアーカイブ
+            prev_hypo_content = self.memory_tools.memory_read("hypothesis.active")
+            clean_act_name = str(last_act_name).replace(" ", "_").replace("(", "").replace(")", "")
+            coord_str = f"_{last_coords.get('x')}_{last_coords.get('y')}" if ("x" in last_coords and "y" in last_coords) else ""
+            refuted_id = f"hypothesis.refuted.s{self.step_index}_{clean_act_name}{coord_str}"
+
+            refuted_content = (
+                f"Action Taken: {last_act_name} (ID: {last_act_id}) Coords: {last_coords}\n"
+                f"Prior Strategy/Hypothesis: {prev_hypo_content or last_reason}\n"
+                f"Outcome: 0 pixel changes (Action had no effect or hit collision barrier).\n"
+                f"Causal Lesson: This action/coordinate assumption was refuted in the current state. Avoid repeating without state change."
+            )
+            self.memory_tools.memory_write(
+                section_id=refuted_id,
+                title=f"Refuted: {last_act_name}{coord_str} (0 pixels changed)",
+                content=refuted_content,
+                summary=f"{last_act_name}{coord_str} produced 0 change",
+                tags="hypothesis,refuted,falsified,constraint",
+            )
+            self.memory_tools.memory_delete("hypothesis.active")
+            self.hypothesis_tools.evaluate_hypothesis(
+                pixels_changed=0,
+                is_effective=False,
+                actual_notes=f"Action {last_act_name} at coords {last_coords} caused 0 pixel changes."
+            )
 
             # クリック失敗の場合: 禁忌座標として記録し、SpatialTools にも伝播
             if last_act_id == 6 or last_act_name == "ACTION6" or "x" in last_coords:
@@ -425,6 +466,13 @@ class ADKGamePlayer:
                     summary=f"Wall bump with {last_act_name}",
                     tags="taboo,movement,constraint",
                 )
+        elif pixels_changed > 0 and self.last_action_info is not None:
+            self.hypothesis_tools.evaluate_hypothesis(
+                pixels_changed=pixels_changed,
+                is_effective=True,
+                actual_notes=f"Action {self.last_action_info.get('action_name')} succeeded with {pixels_changed} pixels changed."
+            )
+
 
         # ---------------------------------------------------------------------
         # 認知的ステートマシン: 計画追従・高速サクサク実行 (Fast Path: LLMバイパス)
@@ -617,7 +665,8 @@ class ADKGamePlayer:
 
         nav_rec_dir = None
         nav_path_len = 0
-        if grid is not None and self.vision_tools.inspector is not None and self.planning_tools.planner is not None:
+        is_directional = any(a in [1, 2, 3, 4] for a in available_action_ids)
+        if is_directional and grid is not None and self.vision_tools.inspector is not None and self.planning_tools.planner is not None:
             try:
                 report = self.vision_tools.inspector.analyze_frame(grid, step_index=self.step_index)
                 if report.agent_pos and report.goal_pos:
@@ -784,6 +833,14 @@ class ADKGamePlayer:
             logger.warning("Step %d [Plan Node notice]: %s", self.step_index, e)
 
         logger.info("Step %d [Phase 2: Plan Complete] Strategy: %s...", self.step_index, plan_summary[:120].strip())
+        if plan_summary:
+            self.hypothesis_tools.formulate_hypothesis(
+                claim=plan_summary[:100].strip().replace("\n", " "),
+                action_name=self.last_expected_action or "ACTION_CANDIDATE",
+                action_id=0,
+                reasoning=plan_summary[:200],
+            )
+
 
         # ---------------------------------------------------------------------
         # Phase 3: Action Execution (Act Node) - 最小限ツール: game-controller
@@ -940,6 +997,21 @@ class ADKGamePlayer:
                     decision.coordinates = {"x": best["x"], "y": best["y"]}
                     decision.reasoning += f" [SpatialGrounder: Fallback click to Anchor {best['id']} at ({best['x']}, {best['y']})]"
 
+            # 反証済みクリック座標の自動回避 (HypothesisEngine Refutation Guard)
+            if decision.coordinates and self.hypothesis_tools.is_action_refuted(6, decision.coordinates):
+                cand_anchors = [(a["x"], a["y"]) for a in self.spatial_tools.cached_anchors] if self.spatial_tools.cached_anchors else None
+                alt_str = self.hypothesis_tools.propose_alternative_hypothesis(candidate_coords=cand_anchors)
+                try:
+                    alt_data = json.loads(alt_str)
+                    prop = alt_data.get("proposal")
+                    if prop and "coords" in prop and prop["coords"]:
+                        old_coords = decision.coordinates
+                        decision.coordinates = prop["coords"]
+                        decision.reasoning += f" [HypothesisEngine: Redirected click from refuted {old_coords} to unrefuted {decision.coordinates}]"
+                except Exception:
+                    pass
+
+
         # 禁忌アクション刈り込み＆能動的リセット (Taboo Reset Guard)
         if self.planning_tools.guard is not None:
             last_eff = self.last_action_info.get("is_effective", True) if self.last_action_info else True
@@ -956,11 +1028,11 @@ class ADKGamePlayer:
                 decision.action_name = f"ACTION{sanitized}"
                 decision.reasoning += f" [TabooGuard: {reason}]"
 
-            if self.planning_tools.guard.should_active_reset(self.stagnation_count) and 0 in available_action_ids:
+            if self.planning_tools.guard.should_active_reset(self.stagnation_count) and (0 in available_action_ids or self.stagnation_count >= 5):
                 decision.action_id = 0
                 decision.action_name = "RESET"
                 decision.action_type = "RESET"
-                decision.reasoning += f" [TabooGuard: Active reset triggered after {self.stagnation_count} stagnant steps]"
+                decision.reasoning += f" [TabooGuard: Active reset triggered after {self.stagnation_count} stagnant steps to escape dead end]"
 
             self.planning_tools.guard.record_step(decision.action_id)
 

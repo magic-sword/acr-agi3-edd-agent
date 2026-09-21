@@ -195,3 +195,9 @@ pytest meta_skills/<skill-name>/tests/
 3. Agent の `additional_tools` にバインド
 
 するだけで、コンテキストトークンを消費せずに段階的開示（Level 1 -> Level 2 -> Level 3）される純粋な ADK 2.0 スキルとして自律利用が可能になります。
+
+---
+
+## 8. 関連設計ドキュメント
+
+* [認知リカバリー・反証仮説しおり管理・GPUガード設計書](COGNITIVE_RECOVERY_AND_HYPOTHESIS_REFUTATION_DESIGN.md): 失敗仮説（Refuted Hypotheses）をプロンプトに常時注入せずしおり（TOC）で管理する理由、クリック専用環境における A* 誤作動防止、および Fail-Fast GPU Guard の設計詳細。
