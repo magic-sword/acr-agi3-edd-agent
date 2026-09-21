@@ -1,0 +1,280 @@
+{
+  "eval_set_id": "macro-skill-compiler_edd",
+  "name": "macro-skill-compiler_edd",
+  "description": "Google ADK 2.0 Native EvalSet for macro-skill-compiler",
+  "skill_name": "macro-skill-compiler",
+  "eval_cases": [
+    {
+      "eval_id": "macro-skill-compiler_001",
+      "conversation": [
+        {
+          "invocation_id": "inv_macro-skill-compiler_001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Please execute macro skill compiler workflow with --help parameter"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "usage_help"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "macro-skill-compiler",
+                  "file_path": "scripts/macro_skill_compiler.py",
+                  "args": [
+                    "--help"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_macro-skill-compiler_001_1",
+          "rubric_content": {
+            "text_property": "correctly invokes run_skill_script with macro_skill_compiler.py"
+          },
+          "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_macro-skill-compiler_001_2",
+          "rubric_content": {
+            "text_property": "verifies execution output without cluttering context window"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "macro-skill-compiler_002",
+      "conversation": [
+        {
+          "invocation_id": "inv_macro-skill-compiler_002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Run macro-skill-compiler task for target data"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "execution_confirmation"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "macro-skill-compiler",
+                  "file_path": "scripts/macro_skill_compiler.py",
+                  "positional_args": [
+                    "sample_value"
+                  ],
+                  "args": {}
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_macro-skill-compiler_002_1",
+          "rubric_content": {
+            "text_property": "runs run_skill_script with macro_skill_compiler.py inputs"
+          },
+          "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_macro-skill-compiler_002_2",
+          "rubric_content": {
+            "text_property": "preserves data structure"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "macro-skill-compiler_003",
+      "conversation": [
+        {
+          "invocation_id": "inv_macro-skill-compiler_003",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Process batch operations using macro-skill-compiler"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "batch_summary"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "run_skill_script",
+                "args": {
+                  "skill_name": "macro-skill-compiler",
+                  "file_path": "scripts/macro_skill_compiler.py",
+                  "positional_args": [
+                    "batch_item_1"
+                  ],
+                  "args": {}
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_macro-skill-compiler_003_1",
+          "rubric_content": {
+            "text_property": "handles multiple items properly"
+          },
+          "type": "TOOL_USE_QUALITY"
+        },
+        {
+          "rubric_id": "r_macro-skill-compiler_003_2",
+          "rubric_content": {
+            "text_property": "produces clear structured batch output"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "macro-skill-compiler_neg_001",
+      "conversation": [
+        {
+          "invocation_id": "inv_macro-skill-compiler_neg_001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Summarize the architectural benefits of Google ADK 2.0"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "conceptual_summary"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_macro-skill-compiler_neg_001_1",
+          "rubric_content": {
+            "text_property": "does not trigger macro-skill-compiler"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "macro-skill-compiler_neg_002",
+      "conversation": [
+        {
+          "invocation_id": "inv_macro-skill-compiler_neg_002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "What is the capital of France?"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "factual_answer"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_macro-skill-compiler_neg_002_1",
+          "rubric_content": {
+            "text_property": "does not trigger macro-skill-compiler"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    },
+    {
+      "eval_id": "macro-skill-compiler_neg_003",
+      "conversation": [
+        {
+          "invocation_id": "inv_macro-skill-compiler_neg_003",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Explain the internal implementation of macro-skill-compiler without running tools"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "explanation_text"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ],
+      "rubrics": [
+        {
+          "rubric_id": "r_macro-skill-compiler_neg_003_1",
+          "rubric_content": {
+            "text_property": "does not trigger macro-skill-compiler"
+          },
+          "type": "FINAL_RESPONSE_QUALITY"
+        }
+      ]
+    }
+  ]
+}

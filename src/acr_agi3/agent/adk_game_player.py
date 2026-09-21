@@ -31,7 +31,17 @@ from acr_agi3.harness.vision_observation import (
     normalize_grid,
 )
 from acr_agi3.meta.skill_harness import SkillHarness
-from acr_agi3.tools import HypothesisTools, MemoryTools, PlanningTools, SpatialTools, VisionTools
+from acr_agi3.tools import (
+    HypothesisTools,
+    MacroTools,
+    MemoryTools,
+    PlanningTools,
+    RuleTools,
+    SpatialTools,
+    SubgoalTools,
+    VisionTools,
+)
+
 
 logger = logging.getLogger(__name__)
 logging.getLogger("opentelemetry.context").setLevel(logging.CRITICAL)
@@ -91,12 +101,20 @@ class ADKGamePlayer:
         self.planning_tools = PlanningTools()
         self.memory_tools = MemoryTools()
         self.hypothesis_tools = HypothesisTools(memory_tools=self.memory_tools)
+        self.subgoal_tools = SubgoalTools(memory_tools=self.memory_tools)
+        self.rule_tools = RuleTools(memory_tools=self.memory_tools)
+        self.macro_tools = MacroTools()
         self.skill_harness = SkillHarness()
 
         # 2. 各ノード専用の最小限スキルセット（共有黒板 memory-notebook を全ノードへ解放）
-        self.perceive_additional_tools = self.vision_tools.get_tools() + self.spatial_tools.get_tools() + self.memory_tools.get_tools()
+        self.perceive_additional_tools = (
+            self.vision_tools.get_tools()
+            + self.spatial_tools.get_tools()
+            + self.memory_tools.get_tools()
+            + self.rule_tools.get_tools()
+        )
         self.perceive_toolset = self.skill_harness.get_scoped_toolset(
-            ["visual-inspector", "spatial-grounder", "memory-notebook"],
+            ["visual-inspector", "spatial-grounder", "rule-inducer", "memory-notebook"],
             additional_tools=self.perceive_additional_tools,
         )
 
@@ -105,9 +123,11 @@ class ADKGamePlayer:
             + self.planning_tools.get_tools()
             + self.spatial_tools.get_tools()
             + self.hypothesis_tools.get_tools()
+            + self.subgoal_tools.get_tools()
+            + self.rule_tools.get_tools()
         )
         self.plan_toolset = self.skill_harness.get_scoped_toolset(
-            ["memory-notebook", "backward-planner", "spatial-grounder", "hypothesis-engine"],
+            ["memory-notebook", "backward-planner", "spatial-grounder", "hypothesis-engine", "subgoal-decomposer", "rule-inducer"],
             additional_tools=self.plan_additional_tools,
         )
 
@@ -118,9 +138,10 @@ class ADKGamePlayer:
             + self.planning_tools.get_tools()
             + self.memory_tools.get_tools()
             + self.hypothesis_tools.get_tools()
+            + self.macro_tools.get_tools()
         )
         self.act_toolset = self.skill_harness.get_scoped_toolset(
-            ["game-controller", "visual-inspector", "spatial-grounder", "taboo-reset-guard", "epistemic-prober", "memory-notebook", "hypothesis-engine"],
+            ["game-controller", "visual-inspector", "spatial-grounder", "taboo-reset-guard", "epistemic-prober", "memory-notebook", "hypothesis-engine", "macro-skill-compiler"],
             additional_tools=self.act_additional_tools,
         )
         self.skill_toolset = self.skill_harness.get_toolset(
@@ -155,9 +176,12 @@ class ADKGamePlayer:
             "Your objective is to review the visual observation summary from Node 1 and formulate a backward-chaining strategy and immediate subgoal.\n"
             "CRITICAL CONSTRAINT: You are ONLY a planner. You MUST NOT execute actions or call step_action or click_at.\n"
             "Node 3 will execute the action based on your plan.\n"
-            "1. You have access to the skills: 'memory-notebook', 'backward-planner', 'spatial-grounder', 'hypothesis-engine'. You may call `load_skill(skill_name=...)` if needed.\n"
-            "2. You may use memory & hypothesis tools: `formulate_hypothesis(claim=...)`, `get_refuted_bookmarks()`, `propose_alternative_hypothesis()`, `memory_write(section_id=..., content=...)`, `memory_read(section_id=...)`, `memory_toc()`, `memory_search(query=...)`.\n"
-            "3. If planning an interaction or click, you can query candidate targets and coordinates using `inspect_clickable_anchors()` or `inspect_detected_objects()`.\n"
+            "1. You have access to the skills: 'memory-notebook', 'backward-planner', 'spatial-grounder', 'hypothesis-engine', 'subgoal-decomposer', 'rule-inducer'. You may call `load_skill(skill_name=...)` if needed.\n"
+            "2. You may use planning & reasoning tools:\n"
+            "   - Subgoals & Preconditions: `decompose_hierarchical_subgoals()`, `get_active_subgoal()`, `advance_subgoal()`\n"
+            "   - Hypotheses & Rules: `formulate_hypothesis(claim=...)`, `get_refuted_bookmarks()`, `get_known_rules()`\n"
+            "   - Memory: `memory_write(section_id=..., content=...)`, `memory_read(section_id=...)`, `memory_toc()`, `memory_search(query=...)`.\n"
+            "3. If planning an interaction or click, query candidate targets using `inspect_clickable_anchors()` or `inspect_detected_objects()`.\n"
             "Output your planning strategy as plain text:\n"
             "- Immediate subgoal (e.g. advance towards target, stage piece in buffer, test unexplored button, avoid trap)\n"
             "- Keystone piece or dependency ordering (Backward Chaining)\n"
@@ -174,7 +198,7 @@ class ADKGamePlayer:
         act_instruction = (
             "You are the Action Decision Specialist for ARC-AGI-3 dynamic games.\n"
             "Your objective is to execute the immediate subgoal from Node 2 using available tools.\n"
-            "1. You have access to the skills: 'game-controller', 'visual-inspector', 'spatial-grounder'. Call `load_skill(skill_name=...)` if needed.\n"
+            "1. You have access to the skills: 'game-controller', 'visual-inspector', 'spatial-grounder', 'macro-skill-compiler'. Call `load_skill(skill_name=...)` if needed.\n"
             "2. Mouse Cursor Aiming & Visual Inspection Workflow (Aim -> Inspect -> Fire):\n"
             "   - `move_cursor(x=col, y=row, reasoning='...')`: Move cursor to aim at target without consuming environment turns.\n"
             "   - `inspect_cursor_target()`: Call visual-inspector to verify whether the reticle is centered on an interactable button and inspect the local 7x7 map.\n"
@@ -287,9 +311,18 @@ class ADKGamePlayer:
                 self.planning_tools.prober.dynamics_map.clear()
                 self.planning_tools.prober.tested_actions.clear()
             self.hypothesis_tools.engine = HypothesisEngineCore() if HypothesisEngineCore else None
+            self.rule_tools.core = RuleInducerCore() if RuleInducerCore else None
+            self.subgoal_tools.core = SubgoalDecomposerCore() if SubgoalDecomposerCore else None
+            self.macro_tools.core = MacroSkillCompilerCore() if MacroSkillCompilerCore else None
         else:
             self.memory_tools.reset_episode()
             self.hypothesis_tools.reset_episode()
+            self.subgoal_tools.reset_episode()
+            self.rule_tools.reset_episode()
+            if self.macro_tools.core:
+                self.macro_tools.core.active_macro = None
+                self.macro_tools.core.active_queue.clear()
+
 
 
     def determine_cognitive_mode(
@@ -409,6 +442,8 @@ class ADKGamePlayer:
             if self.plan_queue:
                 self.plan_queue.clear()
             self.memory_tools.memory_delete("plan.active")
+            if self.macro_tools.has_active_macro():
+                self.macro_tools.abort_macro(reason=f"Action caused 0 pixel changes at step {self.step_index}")
 
             # 破綻した仮説を「反証済み知識 (Refuted Hypothesis)」としてノートブックにアーカイブ
             prev_hypo_content = self.memory_tools.memory_read("hypothesis.active")
@@ -473,6 +508,56 @@ class ADKGamePlayer:
                 actual_notes=f"Action {self.last_action_info.get('action_name')} succeeded with {pixels_changed} pixels changed."
             )
 
+        # 遷移結果からの因果ルール帰納 (Rule Inducer)
+        if self.last_action_info is not None:
+            self.rule_tools.induce_rule_from_transition(
+                action_name=self.last_action_info.get("action_name", "UNKNOWN"),
+                action_id=self.last_action_info.get("action_id", 0),
+                pixels_changed=pixels_changed,
+                coords=self.last_action_info.get("coordinates"),
+            )
+
+        # ---------------------------------------------------------------------
+        # 認知的ステートマシン: マクロスキル高速実行 (Fast Path: LLMバイパス)
+        # ---------------------------------------------------------------------
+        if self.macro_tools.has_active_macro():
+            next_step_str = self.macro_tools.execute_macro_step()
+            if next_step_str and next_step_str != "null":
+                step_data = json.loads(next_step_str)
+                if step_data:
+                    act_type = step_data.get("action_type")
+                    if act_type == "MOVE_CURSOR" and "coords" in step_data:
+                        mc = step_data["coords"]
+                        self.cursor_pos = (mc.get("x", 0), mc.get("y", 0))
+                        if self.action_tools.controller:
+                            self.action_tools.controller.set_cursor(self.cursor_pos[0], self.cursor_pos[1])
+                        next_step_str = self.macro_tools.execute_macro_step()
+                        if next_step_str and next_step_str != "null":
+                            step_data = json.loads(next_step_str)
+
+                    act_id = step_data.get("action_id", 6)
+                    coords = step_data.get("coords") or ({"x": self.cursor_pos[0], "y": self.cursor_pos[1]} if act_id == 6 else None)
+                    act_name = step_data.get("action_name") or f"ACTION{act_id}"
+
+                    decision = self._convert_to_decision(
+                        action_str=act_name,
+                        coordinates=coords,
+                        reasoning="Fast-path procedural macro execution",
+                        available_action_ids=avail_ids,
+                        grid_shape=arr.shape[:2],
+                        grid=arr,
+                        metadata={"fast_path": True, "macro": True},
+                    )
+                    self.last_action_info = {
+                        "action": decision.action_name,
+                        "action_name": decision.action_name,
+                        "action_id": decision.action_id,
+                        "coordinates": decision.coordinates,
+                        "reasoning": decision.reasoning,
+                        "is_effective": True,
+                    }
+                    self.last_grid = arr.copy()
+                    return decision
 
         # ---------------------------------------------------------------------
         # 認知的ステートマシン: 計画追従・高速サクサク実行 (Fast Path: LLMバイパス)
@@ -480,6 +565,7 @@ class ADKGamePlayer:
         if self.cognitive_state == CognitiveState.EXECUTING and len(self.plan_queue) > 0:
             self.current_cognitive_mode = CognitiveMode.BACKWARD_ARCHITECT
             next_plan = self.plan_queue.pop(0)
+
             action_str = next_plan.get("action", "")
             coords = next_plan.get("coordinates")
             reasoning = next_plan.get("reasoning", f"Fast execution along planned route ({len(self.plan_queue)} remaining in queue)")
