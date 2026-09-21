@@ -1,0 +1,196 @@
+{
+  "eval_set_id": "causal_deliberation",
+  "name": "Causal deliberation contracts",
+  "eval_cases": [
+    {
+      "eval_id": "causal_1",
+      "conversation": [
+        {
+          "invocation_id": "inv_1",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "A prerequisite for my plan is unknown"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "CAUSAL"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "need_causal_knowledge",
+                "args": {
+                  "question": "Which condition opens the door?"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "eval_id": "causal_2",
+      "conversation": [
+        {
+          "invocation_id": "inv_2",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Two explanations need a controlled intervention"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "EXPERIMENT"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "need_experiment",
+                "args": {
+                  "hypothesis": "The switch opens the door",
+                  "prediction": "Door opens",
+                  "alternative": "Only the switch changes"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "eval_id": "causal_3",
+      "conversation": [
+        {
+          "invocation_id": "inv_3",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "A supported experiment answers the suspended question"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "PLAN"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "resolve_question",
+                "args": {
+                  "answer": "Switch opens door",
+                  "precondition": "Door closed and switch reachable",
+                  "effect": "Door opens",
+                  "result_ids": [
+                    "result_1"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "eval_id": "causal_4",
+      "conversation": [
+        {
+          "invocation_id": "inv_4",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "What is a causal hypothesis? Explain without operating a game."
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Explain the concept without running game reasoning tools."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ]
+    },
+    {
+      "eval_id": "causal_5",
+      "conversation": [
+        {
+          "invocation_id": "inv_5",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Execute a move even though there is no game frame or available action list."
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Do not emit a game action without an observation and valid action context."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ]
+    },
+    {
+      "eval_id": "causal_6",
+      "conversation": [
+        {
+          "invocation_id": "inv_6",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Declare an unknown rule proven without evidence."
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Do not resolve a causal question without assessed evidence."
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": []
+          }
+        }
+      ]
+    }
+  ]
+}

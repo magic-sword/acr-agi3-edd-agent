@@ -1,105 +1,64 @@
 ---
 name: game-controller
-description: |
-  Official 1-step action execution engine for ARC-AGI-3 dynamic games.
-  Translates agent intentions (UP, DOWN, LEFT, RIGHT, CLICK, RESET) into exact actions:
-  resolves dynamic action maps, auto-snaps clicks to object centers, and guarantees valid IDs.
-  Do NOT use for passive static image inspection without taking actions.
+description: >-
+  Execute one justified action in an unknown dynamic game. Use for a causal
+  experiment, a checked plan step, or a diagnosed strategic reset.
+  Do NOT use for passive inspection, free-text actions, or ungrounded moves.
 license: MIT
-allowed-tools: run_skill_script load_skill_resource
+allowed-tools: load_skill_resource
 metadata:
   pattern: workflow
-  version: "1.3.0"
+  version: "2.0.0"
   adk_additional_tools:
     - step_action
     - click_at
-    - move_cursor
-    - click_at_cursor
-    - inspect_cursor
     - reset_game
-  inputs:
-    - name: action_call
-      type: dict | str
-      description: Action specification such as step_action, click_at, move_cursor, or click_at_cursor
-    - name: available_actions
-      type: list[int]
-      description: List of action IDs valid in current state
-    - name: dynamics_map
-      type: optional[dict]
-      description: "Identified invariant action map (e.g. mapping UP to 3, DOWN to 4)"
-    - name: grid_shape
-      type: optional[tuple[int, int]]
-      description: Current board dimensions (height, width) for bounds checking
-  outputs:
-    - name: success
-      type: bool
-      description: Whether the action is valid and executable
-    - name: action_name
-      type: str
-      description: Normalized canonical action name (e.g. UP, RIGHT, ACTION6, RESET)
-    - name: action_id
-      type: int
-      description: Official environment action ID (0-7)
-    - name: coordinates
-      type: optional[dict]
-      description: "Click coordinates if click action ({x: col, y: row})"
-    - name: reasoning
-      type: str
-      description: Agent reasoning explaining why this action was chosen
 ---
 
 # Game Controller
 
 ## When to use
-- Every single turn when deciding, validating, and executing your next dynamic game action.
-- When executing directional navigation (`UP`, `DOWN`, `LEFT`, `RIGHT`) without needing to remember physical button IDs.
-- When targeting an interactive element or button:
-  - **Safe Two-Stage Aim & Click**: Move the mouse cursor reticle via `move_cursor(x, y)` to aim, visually verify reticle placement on screen, then fire via `click_at_cursor()`.
-  - **Direct Click**: Use `click_at(x, y)` or `click_at(object_id=...)` to position and click in one step.
-- When inspecting current cursor coordinates via `inspect_cursor()`.
-- When deadlocked or trapped in an irreversible state and requiring an active reset (`reset_game()` / `RESET`).
+Use after causal-deliberation has entered EXPERIMENT or EXECUTE and the current
+screen has been observed. A strategic reset is available in PLAN or CAUSAL.
 
 ## When NOT to use
-- During pure passive visual inspection when no action is being taken.
-- For multi-step macro planning prior to concrete single-step action selection.
+Do not use for looking at the screen, speculative planning, or before reviewing
+the actual result of a pending action.
 
 ## Workflow
-1. **Identify Available Actions & Dynamics**:
-   - Check `available_actions` provided in the observation text (e.g. `[1, 2, 3, 4]` or `[6]`).
-   - The engine automatically resolves `UP`, `DOWN`, `LEFT`, `RIGHT` to the correct physical button via the online dynamics map.
-2. **Formulate High-Level 1-Step Decision**:
-   - For movement: Choose `UP`, `DOWN`, `LEFT`, `RIGHT`, `ACTION5`, or `ACTION7`.
-   - For interactive click (Two-Stage Safe Aiming):
-     - **Stage 1 (Aim)**: Call `move_cursor(x=col, y=row)` to align the reticle over target without consuming environment turns.
-     - **Stage 2 (Fire)**: Call `click_at_cursor()` to fire `ACTION6` at current reticle coordinates.
-     - **Object Target**: Specify `object_id=N` with `click_at` to snap to detected object center.
-   - For reset: Choose `RESET` (0).
-3. **Execute via Deterministic Tool**:
-   - Execute CLI tool or function tool to output valid environment action:
-   ```bash
-   python scripts/game_controller.py --action '{"action": "step_action", "direction": "UP"}' --available 1 2 3 4 --dynamics '{"UP": 3}'
-   ```
+1. Read available_actions. Physical IDs are game-specific; learn their effects.
+2. For an experiment, explain the intervention and predicted observation.
+   For a plan, check the next step's precondition using visual-inspector.
+3. Call step_action(action_id=1, reasoning="...") for a physical button, or
+   click_at(x=10, y=15, reasoning="...") for ACTION6. Coordinates are original
+   game coordinates: x is column, y is row. Cropped or enlarged images do not
+   change these coordinates; add the crop origin when locating a target.
+4. Stop after one scheduled action. The gateway performs it and supplies the
+   next frame. In REVIEW, inspect both frames and assess the predicted effect.
+5. A strategic reset requires reset_game(diagnosis="...", revised_approach="...").
+   Diagnose the problem and explain a changed strategy. Repeated resets of the
+   same board are rejected. Game lifecycle initialization is handled by the host.
 
 ## Examples
-- Example 1 (Directional step with dynamic mapping):
-  - Input: `{"action": "step_action", "direction": "UP", "reasoning": "Advancing to goal"}` with dynamics `{"UP": 3}`
-  - Output: `{"success": true, "action_name": "ACTION3", "action_id": 3, "action_type": "STEP"}`
-- Example 2 (Object-targeted click with auto-snap):
-  - Input: `{"action": "click_at", "object_id": 0, "reasoning": "Pressing detected HUD button 0"}`
-  - Output: `{"success": true, "action_name": "ACTION6", "action_id": 6, "coordinates": {"x": 22, "y": 54}, "action_type": "CLICK"}`
-- Example 3 (Explicit ground coordinate click):
-  - Input: `{"action": "click_at", "x": 10, "y": 15, "reasoning": "Walking character to open tile at (10, 15)"}`
-  - Output: `{"success": true, "action_name": "ACTION6", "action_id": 6, "coordinates": {"x": 10, "y": 15}, "action_type": "CLICK"}`
+- An unknown button may move a piece: prepare an experiment, then call
+  step_action(action_id=3, reasoning="Test whether this button moves the piece left").
+- A verified plan requires pressing a switch at (10, 15): observe it, then call
+  click_at(x=10, y=15, reasoning="The switch is visible and currently unpressed").
 
 ## Anti-patterns to avoid
-- Do not output ambiguous free-form sentences without stating a concrete action identifier (`UP`, `DOWN`, `ACTION1`〜`ACTION7`).
-- Do not worry about physical button permutations; trust `game-controller` to map semantic directions (`UP`) to physical actions.
-- Do not guess pixel coordinates blindly when targeting objects; use `object_id` to let `game-controller` snap to the exact object center.
+- Never assume ACTION1 means UP or use directional aliases instead of physical IDs.
+- Do not call load_skill with an action name, or emit action JSON as a substitute
+  for calling an execution tool.
+- Do not execute a second action before observing the first result.
+- Do not invent cursor, object-snapping, or CLI execution capabilities. Use the
+  currently exposed tool schemas. Bundled scripts do not operate the live gateway.
 
 ## Requirements & Prerequisites
-- Python: >= 3.10
-- Dependencies: standard library (json, re, argparse), numpy, spatial_grounder, acr_agi3
+- Bundled offline helpers additionally use numpy and spatial_grounder.
+- Python >= 3.12, acr_agi3, official Google ADK SkillToolset.
+- A live DeliberativeGamePlayer session and on-demand visual observation.
 
-## Bundled Resources
-### `scripts/` (Executable Tools)
-- `scripts/game_controller.py`: Deterministic CLI tool for action validation, coordinate checking, and protocol parsing.
+## Resources
+- scripts/game_controller.py: standalone protocol validation helper for offline tests;
+  it does not execute live game actions.
+- tests/: controller validation contracts.

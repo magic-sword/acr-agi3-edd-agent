@@ -282,8 +282,28 @@ class LocalQwenVL(BaseLlm):
                     )
                 elif hasattr(part, "function_response") and part.function_response:
                     fr = part.function_response
+                    # Observation tools return real images on demand. Keep image
+                    # bytes out of the text prompt while preserving frame labels.
+                    response = fr.response
+                    if isinstance(response, dict) and "screen_observation" in response:
+                        import base64
+                        import io
+
+                        observation = response["screen_observation"]
+                        labels = []
+                        observation_images = []
+                        for item in observation.get("images", []):
+                            img = Image.open(io.BytesIO(base64.b64decode(item["data"]))).convert("RGB")
+                            observation_images.append(img)
+                            labels.append({k: v for k, v in item.items() if k != "data"})
+                        # The most recent explicit look replaces older visual
+                        # context; a before/after pair stays together and ordered.
+                        images = observation_images
+                        response = {"screen_observation": {
+                            "current_frame_id": observation["current_frame_id"], "images": labels,
+                        }}
                     parts_text.append(
-                        f"<tool_response>\n{json.dumps(fr.response, ensure_ascii=False, default=str)}\n</tool_response>"
+                        f"<tool_response>\n{json.dumps(response, ensure_ascii=False, default=str)}\n</tool_response>"
                     )
                 # 画像バイトデータまたは PIL Image の取得
                 elif hasattr(part, "inline_data") and part.inline_data:
@@ -325,11 +345,6 @@ class LocalQwenVL(BaseLlm):
                         except Exception:
                             args = {}
                     if name:
-                        if name == "load_skill":
-                            raw_sn = str(args.get("skill_name", "")).strip().upper()
-                            if raw_sn in ["ACTION1", "ACTION2", "ACTION3", "ACTION4", "ACTION5", "ACTION6", "ACTION7", "UP", "DOWN", "LEFT", "RIGHT", "RESET"]:
-                                logger.info(f"[LocalQwenVL] Auto-correcting misrouted load_skill('{raw_sn}') to step_action(action='{raw_sn}')")
-                                return "step_action", {"action": raw_sn, "reasoning": f"Executing {raw_sn}"}
                         return name, args
                 except Exception:
                     pass
@@ -390,8 +405,8 @@ class LocalQwenVL(BaseLlm):
             from qwen_vl_utils import process_vision_info
 
             content_items: List[Dict[str, Any]] = []
-            if images:
-                content_items.append({"type": "image", "image": images[-1]})
+            for observation_image in images:
+                content_items.append({"type": "image", "image": observation_image})
             content_items.append({"type": "text", "text": prompt})
 
             messages = [{"role": "user", "content": content_items}]

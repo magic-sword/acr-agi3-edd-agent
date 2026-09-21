@@ -77,14 +77,15 @@ def test_positive_reset_observation_clears_plan_preserves_knowledge(player, monk
     probe.assert_not_called()
 
 
-def test_positive_required_lifecycle_resets_are_preserved(player):
+def test_positive_required_lifecycle_resets_are_preserved():
+    from acr_agi3.agent.deliberative_player import DeliberativeGamePlayer
+    from acr_agi3.agent.llm.local_vlm import LocalQwenVL
     agent = MyAgent.__new__(MyAgent)
-    agent.player = player
+    agent.player = DeliberativeGamePlayer(model=LocalQwenVL("mock", generate_fn=lambda *_: ""))
     agent.step_count = 0
-    player._reset_states.add(player._reset_state_key(np.zeros((8, 8))))
     for state in (GameState.NOT_PLAYED, GameState.GAME_OVER):
         assert agent.choose_action([], SimpleNamespace(state=state)) == GameAction.RESET
-        assert not player._reset_states
+        assert agent.player.actions.pending_decision.action_id == 0
 
 
 def test_negative_80_unchanged_frames_do_not_repeat_reset(player):

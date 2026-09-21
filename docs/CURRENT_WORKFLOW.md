@@ -1,170 +1,84 @@
-# ARC-AGI-3 最新自律ゲームプレイ処理フロー仕様書 (Cognitive State Machine & 3-Phase Architecture)
+# 現在のゲームプレイ・ワークフロー
 
-本ドキュメントは、人間プレイスタイル（VCGT: Visual Concept Guided Thinking）の分析に基づき、**「Google ADK 2.0 準拠 3フェーズ（Perceive ➔ Plan ➔ Act）」** と **「認知的ステートマシン（Cognitive State Machine: 探索 ⇄ 計画 ⇄ 高速実行 ⇄ 逸脱検知）」** を統合した、ARC-AGI-3 の最新自律ゲームプレイ処理フローを体系的に可視化・解説する仕様書です。
+公式エントリーポイント `MyAgent` は `DeliberativeGamePlayer` を使用する。
+最初の思考状態は **PLAN（ゴールからの逆算）**。必要な知識が足りないときに
+因果推論へ移り、その推論に証拠が足りない場合に初めて実験する。
+観測はどの思考状態でも呼べる読み取り専用スキルであり、固定の最初の工程ではない。
 
----
-
-## 1. システム全体アーキテクチャ概要 (Fast Path / Slow Path 2層構造)
-
-本システムは、LLM のプロンプト内に巨大な条件分岐や全スキル指示を流し込む「プロンプト肥大化（Prompt Stuffing）」を完全に排除し、**決定論的な Python ワークフロー層が認知的ステート（CognitiveState）を管理し、計画中は Google ADK 2.0 の特化ノード（Slow Path）を動かし、計画確定後は LLM をバイパスして 1手 0.001 秒でサクサク直進する（Fast Path）ハイブリッド構成**をとっています。
-
-```
-┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-│                            ゲーム環境 (arcengine / GameEnvironment)                          │
-└───────────────────────┬─────────────────────────────────────────────▲───────────────────────┘
-                        │ 最新グリッド (grid)                         │ 確定1手 (ActionDecision)
-                        ▼                                             │
-┌─────────────────────────────────────────────────────────────────────┴───────────────────────┐
-│ [認知的ステートマシン判定] Cognitive State Machine                                          │
-│                                                                                             │
-│  【EXECUTING 状態 & キュー残あり】 (Fast Path: LLM 呼び出し 0 回、所要時間 ~1ms)             │
-│    ├─ 逸脱判定: 前手で ΔPixels == 0 (壁衝突)?                                                │
-│    │    ├─ YES ➔ キュー即時破棄 ➔ RECOVERY ➔ PLANNING (再計画へ)                             │
-│    │    └─ NO  ➔ plan_queue から次の手をポップ ➔ game-controller で直進即時発行             │
-│                                                                                             │
-│  【PROBING / PLANNING / RECOVERY 状態】 (Slow Path: ADK 2.0 特化ノード実行)                 │
-│    ├─ Node 1 (Perceive): visual-inspector ＋ spatial-grounder (盤面幾何・アンカー抽出)      │
-│    ├─ Node 2 (Plan): memory-notebook ＋ backward-planner (A* 最短経路 ➔ キュー生成)          │
-│    └─ Node 3 (Act): game-controller ＋ taboo-reset-guard (1手確定 ＆ 安全防壁)              │
-└─────────────────────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 2. 5段階 認知的モード（Cognitive Mode）ステートマシン
-
-人間の熟練プレイヤーが未知ゲームを解く思考遷移（VCGT）を、Python の決定論的ステートマシン `determine_cognitive_mode()` として再現しています。
+## 思考状態と遷移
 
 ```mermaid
 stateDiagram-v2
-    [*] --> PROBING_SCIENTIST: 初動 (Step <= 4) & 未検証キー有
-
-    PROBING_SCIENTIST --> CAUSAL_PROGRAMMER: 力学同定完了 & 鍵/扉/クリックアンカー発見
-    PROBING_SCIENTIST --> BACKWARD_ARCHITECT: ゴール視認 & A* 最短経路同定
-    PROBING_SCIENTIST --> RISK_NAVIGATOR: 一般移動探索
-
-    CAUSAL_PROGRAMMER --> BACKWARD_ARCHITECT: 前提条件（スイッチ等）解除完了
-    CAUSAL_PROGRAMMER --> TABOO_RECOVERY: クリック空振り / 変化なし
-
-    BACKWARD_ARCHITECT --> RISK_NAVIGATOR: 経路上に未予期動的障害物
-    BACKWARD_ARCHITECT --> TABOO_RECOVERY: 壁衝突 / 0ピクセル変化
-
-    RISK_NAVIGATOR --> BACKWARD_ARCHITECT: ゴールへの新ルート発見
-    RISK_NAVIGATOR --> TABOO_RECOVERY: デッドロック / 2手振動検知
-
-    TABOO_RECOVERY --> BACKWARD_ARCHITECT: 直前失敗手を回避した直交手で脱出成功
-    TABOO_RECOVERY --> RISK_NAVIGATOR: 回避成功・通常探索復帰
-    TABOO_RECOVERY --> [*]: 手詰まり時 Active Reset (リセット対応ゲーム)
-
-    note right of TABOO_RECOVERY
-        最優先ガード:
-        stagnation_count >= 1 または
-        2ステップ振動ループ検知時に即時発動
-    end note
+    [*] --> PLAN
+    PLAN --> CAUSAL: 計画に必要な知識が不足
+    CAUSAL --> CAUSAL: 前提となる別の疑問を積む
+    CAUSAL --> EXPERIMENT: 証拠不足・仮説と予測を定義
+    EXPERIMENT --> REVIEW: 一手の介入を実行
+    REVIEW --> CAUSAL: 実験結果を評価・因果関係を更新
+    CAUSAL --> PLAN: 疑問を解決して中断した計画へ戻る
+    PLAN --> EXECUTE: 根拠となるルールと条件付き計画が揃う
+    EXECUTE --> REVIEW: 計画の一手を実行
+    REVIEW --> PLAN: 予測を支持・残りの計画を再検討
+    REVIEW --> CAUSAL: 予測不一致・原因を診断
+    EXECUTE --> CAUSAL: 実行前に新たな知識不足を発見
+    EXPERIMENT --> CAUSAL: 介入前に実験の前提を再検討
 ```
 
-### モード判定の優先順位と役割定義
+状態を決めるのは経過手数や画面差分の量ではなく、モデルがツールに明示する
+知識不足・実験意図・観測結果である。Python は状態遷移の妥当性、根拠ID、
+観測フレーム、実行可能な操作を検査する。因果解釈の正しさ自体を保証するものではない。
 
-| 優先度 | 認知的モード (`CognitiveMode`) | 発動トリガー | 課される単一目的タスク（LLM への指示） | 連携ツール |
-| :---: | :--- | :--- | :--- | :--- |
-| **1** | **`TABOO_RECOVERY`**<br>(禁忌ガード・脱出) | `stagnation_count >= 1`（0ピクセル変化）<br>または 2手振動ループ | 直前に失敗したアクションを即座に禁止。<br>直交する代替方向、別アンカー、またはリセットを選択 | `taboo-reset-guard`<br>`filter_taboo_actions` |
-| **2** | **`PROBING_SCIENTIST`**<br>(探針科学者) | `step_index <= 4` かつ<br>未同定アクションが存在 | 操作力学の仮説検証。<br>推奨未同定キー（例: `ACTION2`）を押下し、画面の物理的反応を観測 | `epistemic-prober`<br>`recommend_probe_action` |
-| **3** | **`CAUSAL_PROGRAMMER`**<br>(因果プログラマー) | 鍵・扉・スイッチ等の前提条件が存在<br>またはクリックアンカーが存在 | 離散インタラクション。<br>特定アンカー座標への `click_at` またはスイッチ切り替えを検証 | `spatial-grounder`<br>`inspect_clickable_anchors` |
-| **4** | **`BACKWARD_ARCHITECT`**<br>(逆算建築家) | 自機とゴールを視認し、<br>A* 最短幾何経路が存在 | ゴールからの逆算。<br>計算された A* 最短経路の推奨手（例: `RIGHT`）に従って前進 | `backward-planner`<br>`plan_path` |
-| **5** | **`RISK_NAVIGATOR`**<br>(動的ナビゲーター) | 上記の特定条件に該当しない<br>通常の探索局面 | 局所的トラップ・障害物を回避しながら、<br>未知領域・有望なエリアへ慎重に前進 | `visual-inspector`<br>`inspect_affordances` |
+`need_causal_knowledge` は疑問・復帰先・中断したゴールをスタックに保存する。
+疑問の中で別の疑問が発生しても、内側から解決して呼び出し元に戻れる。
+見れば分かる事実は `answer_visible_question`、既知のルールで解ける疑問は
+`use_known_rules` で解決でき、毎回の実験は強制しない。
 
----
+実験には仮説・予測・対立する説明が必要。実際の一手と前後フレームを結び付け、
+`assess_result` で supported / refuted / inconclusive を記録する。
+`resolve_question` は評価済み証拠を引用した条件付きルールを暫定知識として保存する。
+不明瞭な結果だけでは疑問を解決できない。失敗しても既知のルールを一括削除しない。
 
-## 3. 詳細処理フロー図 (Detailed Mermaid Sequence)
+計画はサブゴール、参照ルール、各手の前提条件・予測結果を保持する。
+一手ごとに結果を確認し、次の前提を観測して `continue_plan` する。
+実行前に疑問が生じた場合は、未実行の計画・実験を破棄して推論に戻れる。
 
-ゲームの1ステップにおいて、各コンポーネントがどのようにデータを授受するかを示すシーケンスです。
+## 思考中のオンデマンド観測
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Env as GameEnvironment (arcengine)
-    participant Har as VisionObservationHarness
-    participant Node1 as Node 1: Perceive Node
-    participant WF as Python ワークフロー層 (ADKGamePlayer)
-    participant Node2 as Node 2: Plan Node
-    participant Node3 as Node 3: Act Node
-    participant Guard as Taboo & Dynamics (Level 3)
+1. Gateway が最新画面を `ScreenTools.publish` に渡す。この時点では画像をモデルに渡さない。
+2. モデルが公式 ADK `load_skill("visual-inspector")` で観測手順を読み込む。
+3. `observe_screen` を呼ぶと、公式レンダラーで作成した PNG がツール結果に含まれる。
+4. `LocalQwenVL` がその画像を復号し、次のローカルマルチモーダル推論に実画像として渡す。
 
-    Env->>Har: grid (観測グリッド配列), available_actions
-    Har->>Node1: 統合画像Blob (カラー盤面+HUD) + 客観的事実テキスト
-    
-    rect rgb(240, 248, 255)
-        Note over Node1: 最小権限: visual-inspector, spatial-grounder
-        Node1-->>WF: Visual Observation Summary (有色ブロック、アンカー一覧)
-    end
+`view="current"` / `"previous"` / `"both"` と矩形切り出しに対応する。
+前後比較では2枚の画像を渡す。観測はゲーム操作もリセットも行わず、どの思考状態でも利用できる。
+画面を見直してもゲーム時間は進まない。見られるのは Gateway が最後に渡した画面である。
+クリックは拡大後の画像座標ではなく、元のゲーム座標を使用する。
 
-    rect rgb(255, 250, 240)
-        Note over WF: 決定論的自動解析 (Cognitive Context Analysis)
-        WF->>WF: ΔPixels 変化量判定 (stagnation_count 更新)
-        WF->>Guard: analyze_displacement (前フレーム差分 ➔ dynamics_map 更新)
-        WF->>WF: A* 最短経路探索 (nav_rec_dir, nav_path_len)
-        WF->>WF: determine_cognitive_mode() ➔ モード決定
-        WF->>WF: 単一目的の極小プロンプト構築 (Workflow Guidance)
-    end
+## 実行と境界
 
-    rect rgb(245, 255, 245)
-        Note over Node2: 最小権限: memory-notebook, backward-planner
-        WF->>Node2: 観測要約 + Cognitive Mode 指示
-        Node2-->>WF: Immediate Subgoal & Strategy (思考テキスト)
-    end
+- `SkillHarness` → 公式 ADK `SkillToolset` を使用し、カタログ・手順・ツールを段階的に開示する。
+- 現行ランタイムのスキルは `causal-deliberation`、`visual-inspector`、`game-controller`。
+- 環境操作は `step_action` / `click_at` / `reset_game` の Level 3 ツール経由のみ。
+- 一つの Gateway フレームに対して一手だけ選ぶ。自由文や誤ったスキル名を操作に読み替えない。
+- 戦略的リセットには診断と変更後の方針が必要。同じ盤面へのリセットを繰り返さない。
+- 開始・ゲームオーバーの初期化リセットは `MyAgent` が操作ツールを通して処理する。
+- ゲームごとに因果知識を分離する。同じゲームの再開ではルールを保持し、古い観測事実と実行意図は破棄する。
+- レベル移行時はルールを暫定的に保持し、目標・計画・前提を再確認する。
+- 推論予算内に根拠ある操作を選べない場合は `DeliberationBudgetExceededError` で終了する。
+  無関係な一手を補ってスコア測定を継続しない。
 
-    rect rgb(255, 245, 245)
-        Note over Node3: 最小権限: game-controller, taboo-reset-guard
-        WF->>Node3: 即時サブゴール + 実行指示
-        Node3->>Guard: step_action(action) または click_at(x, y)
-        Guard->>Guard: dynamics_map による方向 ➔ 物理ボタン変換 (例: LEFT ➔ ACTION3)
-        Guard->>Guard: snap_to_anchor による近傍重心吸着
-        Guard->>Guard: filter_taboo_actions による壁衝突・振動ループ遮断
-        Guard-->>Node3: 検証済み ActionDecision
-        Node3-->>WF: ActionDecision {action_id, coordinates, reasoning}
-    end
+## 実装と検証範囲
 
-    WF->>Env: env.step(action_id, coordinates)
-    Env-->>WF: 新グリッド, 報酬/ステータス (NOT_FINISHED / WIN / GAME_OVER)
-```
+- `src/acr_agi3/agent/deliberation.py`: 思考状態・疑問スタック・証拠・条件付きルール。
+- `src/acr_agi3/agent/deliberative_player.py`: ADK セッションと状態を操作するツール。
+- `src/acr_agi3/tools/screen_tools.py`: 副作用のない画像観測。
+- `src/acr_agi3/agent/llm/local_vlm.py`: ツール画像をローカル VLM に届けるアダプター。
+- `tests/test_deliberative_player.py`: スクリプト化したモデルを使う ADK 統合テストと境界テスト。
 
----
+旧 `ADKGamePlayer` とその認知ワークフローは比較・回帰検証用に残しているが、
+公式 `MyAgent` の実行経路やフォールバックには使用しない。
+`submission/entrypoint.py` は別の簡易環境向け従来評価器で、ヒューリスティック救済処理を持つ。
+新設計の検証・スコア測定には、公式 `MyAgent` を使用する `scripts/run_local_leaderboard.py` を使う。
 
-## 4. Google ADK 2.0 ノード別・最小権限スキル＆ツール構成
-
-プロンプトの肥大化を防ぎ、モデルの誤認（Hallucination）を防止するため、各フェーズで開示されるスキルとツールは厳密に制限（最小権限の原則）されています。
-
-| ノード | 常駐メタスキル（Level 1 & 2） | 動的解放 Level 3 実行ツール | 役割と責務 |
-| :--- | :--- | :--- | :--- |
-| **Node 1<br>(Perceive)** | • `visual-inspector`<br>• `spatial-grounder` | • `inspect_board_summary`<br>• `inspect_affordances`<br>• `inspect_clickable_anchors`<br>• `inspect_grid_region` | 盤面を客観的に観察し、色の分布、有色物体の重心、クリック対象候補のアンカー一覧を抽出 |
-| **Node 2<br>(Plan)** | • `memory-notebook`<br>• `backward-planner` | • `memory_write`<br>• `memory_read`<br>• `memory_toc`<br>• `plan_geometric_path` | 観測結果と認知的モードに基づき、目下の即時サブゴールと A* 幾何最短経路を策定（**行動の直接実行は厳禁**） |
-| **Node 3<br>(Act)** | • `game-controller`<br>• `taboo-reset-guard`<br>• `epistemic-prober` | • `step_action`<br>• `click_at`<br>• `reset_game`<br>• `filter_taboo_action` | プランナーの意図を 1 手のアクションに変換。操作力学の解決、クリック自動吸着、禁忌チェックを経て環境へ安全に発行 |
-
----
-
-## 5. EDD 契約テストとベンチマーク実機検証結果
-
-本ワークフローの各メタスキルは、上流 EDD（Evaluation-Driven Development）規約に基づき **「正例 3 件 ＋ 負例 3 件」の計 24 件の厳格な契約テスト** を備えています。
-
-### ① 契約テスト ＆ 単体テスト結果
-```bash
-docker exec arc-agi3-dev python3 -m pytest tests/ meta_skills/*/tests/ --import-mode=importlib -v
-# 結果: 49 passed in 2.06s (100% 合格)
-```
-
-### ② MCP 規約静的検証 (`edd_validate_skill`)
-すべての新規・行動計画スキルにおいて **エラー 0 件・警告 0 件 (VALID)** を確認済み：
-- `spatial-grounder`: `{"is_valid": true, "errors": [], "warnings": []}`
-- `epistemic-prober`: `{"is_valid": true, "errors": [], "warnings": []}`
-- `backward-planner`: `{"is_valid": true, "errors": [], "warnings": []}`
-- `taboo-reset-guard`: `{"is_valid": true, "errors": [], "warnings": []}`
-
-### ③ 実機リーダーボード性能改善（`tu93` 検証）
-従来の Raw LLM プロンプト推論と、本認知的ステートマシン導入後の実機性能比較：
-
-| 評価指標 | 従来設計（LLM ベタ打ち推論） | 最新ワークフロー（Cognitive Mode 統合） | 改善度 |
-| :--- | :---: | :---: | :---: |
-| **有効行動率 (Efficiency)** | 20〜35% (壁衝突・無駄手が多発) | **`100.0%`** (20手すべてで有意な変位を記録) | **+65〜80 pt 改善** |
-| **停滞ステップ数 (Stagnation)** | 10〜15 ステップ停滞 | **`0s`** (停滞ゼロ) | **完全解消** |
-| **操作力学の同定** | 未同定（常にデフォルト ACTION1 に偏重） | **初動 2 ステップで `LEFT -> ACTION3` を同定** | **自律適応達成** |
-| **アクション実行保証** | 構文エラーや無効キーによる失敗あり | `game-controller` ＋ `TabooGuard` で **100% 正常実行** | **エラーゼロ** |
+統合テストは状態遷移と画像伝達、操作制約を検証する。実モデルが適切な仮説や逆算計画を
+生成できるか、およびリーダーボードスコアが改善するかは、別途実ゲームで測定する必要がある。

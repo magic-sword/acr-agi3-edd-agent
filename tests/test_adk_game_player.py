@@ -97,11 +97,19 @@ def test_adk_game_player_end_to_end_decision():
 
 def test_my_agent_integration_with_adk_player():
     """MyAgent が ADKGamePlayer を通じて arcengine の choose_action を正常に実行できるかを検証."""
-    def mock_click_generation_fn(prompt: str) -> str:
-        return "I see an interactive tile at col=8, row=5. Let's click (8, 5) to activate the switch."
-
-    mock_llm = LocalTransformersLlm(model_name_or_path="mock", generation_fn=mock_click_generation_fn)
-    agent = MyAgent(model=mock_llm)
+    from acr_agi3.agent.llm.local_vlm import LocalQwenVL
+    calls = iter([
+        {"name":"load_skill", "args":{"skill_name":"causal-deliberation"}},
+        {"name":"need_causal_knowledge", "args":{"question":"Does the tile open the route?"}},
+        {"name":"load_skill", "args":{"skill_name":"visual-inspector"}},
+        {"name":"observe_screen", "args":{}},
+        {"name":"need_experiment", "args":{
+            "hypothesis":"Tile opens route", "prediction":"Route opens", "alternative":"Tile only changes color"}},
+        {"name":"load_skill", "args":{"skill_name":"game-controller"}},
+        {"name":"click_at", "args":{"x":8,"y":5,"reasoning":"Test the suspected switch once"}},
+    ])
+    model = LocalQwenVL("mock", generate_fn=lambda prompt, images=None: next(calls))
+    agent = MyAgent(model=model)
 
     grid = np.zeros((10, 10), dtype=int)
     grid[5, 8] = 4  # Switch (row=5, col=8)

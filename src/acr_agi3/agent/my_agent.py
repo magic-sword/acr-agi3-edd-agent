@@ -1,7 +1,7 @@
 """ACR-AGI-3 公式提出用エージェント (MyAgent - Google ADK 2.0 ネイティブ).
 
 ARC Gateway / Kaggle 提出仕様に準拠し、
-決定論的プログラムではなく Google ADK 2.0 ネイティブの ADKGamePlayer を通じて
+決定論的プログラムではなく Google ADK 2.0 ネイティブの DeliberativeGamePlayer を通じて
 画面認識（カラー画像）、Progressive Disclosure (SKILL.md)、
 および Function Calling による自律的行動決定を実行するエージェント。
 """
@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from acr_agi3.agent.adk_game_player import ADKGamePlayer
+from acr_agi3.agent.deliberative_player import DeliberativeGamePlayer
 from acr_agi3.harness.game_action_tools import ActionDecision
 
 logger = logging.getLogger(__name__)
@@ -91,18 +91,9 @@ class MyAgent(Agent):
         # ADK 2.0 ネイティブゲームプレイヤー
         import re
         clean_id = re.sub(r"[^a-zA-Z0-9_]", "_", self.game_id)
-        if autonomous_probing is not None:
-            auto_probe = autonomous_probing
-        else:
-            # model が明示的に渡されたカスタム推論（テストモック等）の場合は False、
-            # デフォルト（本番自律推論）の場合は True
-            auto_probe = (model is None)
-
-        self.player = ADKGamePlayer(
+        self.player = DeliberativeGamePlayer(
             model=model,
-            name=f"adk_player_{clean_id}",
-            app_name=f"app_{clean_id}",
-            autonomous_probing=auto_probe,
+            name=f"deliberative_{clean_id}",
         )
 
     def is_done(self, frames: list[FrameData], latest_frame: FrameData) -> bool:
@@ -119,6 +110,7 @@ class MyAgent(Agent):
         if state in [GameState.NOT_PLAYED, GameState.GAME_OVER]:
             self.step_count = 0
             self.player.reset()
+            self.player.actions.reset_game(reasoning="Game lifecycle requires initialization")
             return GameAction.RESET
 
         # 利用可能アクションの抽出
