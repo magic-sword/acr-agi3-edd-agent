@@ -152,10 +152,10 @@ def test_positive_dpad_label_formatting():
 
     # 1. デフォルト力学時
     labels = player._format_available_action_labels([1, 2, 3, 4, 6])
-    assert "UP (ACTION1)" in labels
-    assert "DOWN (ACTION2)" in labels
-    assert "LEFT (ACTION3)" in labels
-    assert "RIGHT (ACTION4)" in labels
+    assert "ACTION1" in labels  # Unknown semantics until verified
+    assert "ACTION2" in labels  # Unknown semantics until verified
+    assert "ACTION3" in labels  # Unknown semantics until verified
+    assert "ACTION4" in labels  # Unknown semantics until verified
     assert "CLICK (ACTION6)" in labels
 
     # 2. 操作力学が動的同定された場合 (例: UP -> ACTION3, RIGHT -> ACTION1)

@@ -115,8 +115,9 @@ def test_cognitive_mode_in_decide_next_action():
     grid2[2, 6] = 3  # Goal
 
     decision2 = player.decide_next_action(grid=grid2, available_actions=[1, 2, 3, 4])
-    # 経路が見つかっていれば BACKWARD_ARCHITECT、それ以外は RISK_NAVIGATOR
-    assert player.current_cognitive_mode in (CognitiveMode.BACKWARD_ARCHITECT, CognitiveMode.RISK_NAVIGATOR)
+    # A manually supplied mapping and one displacement are not confirmation.
+    assert player.current_cognitive_mode == CognitiveMode.PROBING_SCIENTIST
+    assert not player.plan_queue
 
     # Step 3: 壁衝突等で 0 変化が起きた場合の TABOO_RECOVERY
     # 盤面が変化しなかった場合 (grid2 のまま)

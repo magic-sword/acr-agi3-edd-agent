@@ -84,7 +84,14 @@ def test_kaggle_submission_pipeline_execution(tmp_path: Path) -> None:
         },
     }
 
-    pipeline = KaggleSubmissionPipeline(max_steps_per_task=20)
+    # This contract verifies the submission pipeline, not real-model inference.
+    from acr_agi3.agent.llm.local_model import LocalTransformersLlm
+    from acr_agi3.agent.my_agent import MyAgent
+
+    model = LocalTransformersLlm("mock", generation_fn=lambda _: "ACTION2")
+    pipeline = KaggleSubmissionPipeline(
+        agent=MyAgent(model=model), max_steps_per_task=20
+    )
     results = pipeline.run_on_challenges(
         challenges_source=mock_challenges,
         output_submission_path=output_file,

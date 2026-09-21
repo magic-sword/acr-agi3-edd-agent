@@ -45,6 +45,10 @@ def test_blackboard_causality_dynamics_sync():
     # Step 2: Displacement analyzed -> dynamics mapped
     _ = player.decide_next_action(grid_1, available_actions=[1, 2, 3, 4], state_str="NOT_FINISHED")
 
+    grid_2 = np.zeros((5, 5), dtype=np.uint8)
+    grid_2[1, 3] = 2
+    player.decide_next_action(grid_2, available_actions=[1, 2, 3, 4])
+
     # Verify memory_tools contains causality.dynamics
     res = player.memory_tools.memory_read("causality.dynamics")
     data = json.loads(res)
@@ -57,6 +61,8 @@ def test_blackboard_causality_dynamics_sync():
 def test_blackboard_plan_active_sync_and_eraser_on_completion():
     """Verify plan.active is written when A* route is found, and erased when finished."""
     player = create_mock_player("RIGHT")
+    from acr_agi3.agent.execution_evidence import Motion
+    player.execution_evidence.samples[4] = (Motion(2, 0, 1), 2)
 
     # Grid with player (2) at (1, 1) and goal (3) at (1, 3)
     grid = np.zeros((5, 5), dtype=np.uint8)
@@ -94,6 +100,8 @@ def test_blackboard_plan_active_sync_and_eraser_on_completion():
 def test_blackboard_taboo_barrier_sync_on_deviation():
     """Verify plan.active is erased and taboo.step_N is written on wall bump (0 pixel change)."""
     player = create_mock_player("RIGHT")
+    from acr_agi3.agent.execution_evidence import Motion
+    player.execution_evidence.samples[4] = (Motion(2, 0, 1), 2)
 
     # Populate plan_queue
     player.cognitive_state = CognitiveState.EXECUTING

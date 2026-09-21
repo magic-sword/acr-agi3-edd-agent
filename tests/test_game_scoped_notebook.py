@@ -71,6 +71,8 @@ def test_game_switching_and_instant_recall():
     player.decide_next_action(grid, available_actions=[1, 2, 3, 4], game_id="game_Alpha")
     player.memory_tools.memory_write("rules.switches", "Yellow button opens gate", title="Switch Rule", tags="rule")
     player.dynamics_map["UP"] = 1
+    from acr_agi3.agent.execution_evidence import Motion
+    player.execution_evidence.samples[1] = (Motion(2, -1, 0), 2)
 
     # 2. 未知の環境 game_Beta に切り替え
     player.decide_next_action(grid, available_actions=[1, 2, 3, 4], game_id="game_Beta")

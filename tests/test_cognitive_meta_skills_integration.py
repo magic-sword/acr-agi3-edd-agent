@@ -66,7 +66,13 @@ def test_adk_player_macro_fast_path_and_zero_pixel_abort():
     # Call decide_next_action with last_action_info and last_grid simulating pixel change
     player.last_action_info = {"name": "ACTION1", "action_id": 1}
     player.last_grid = np.zeros((10, 10), dtype=np.int32)
-    player.last_grid[0, 0] = 1  # to make pixels_changed > 0
+    # A macro needs a verified object-motion prediction, not arbitrary pixels.
+    from acr_agi3.agent.execution_evidence import Motion
+    player.last_grid[5, 3] = 2
+    grid[5, 4] = 2
+    player.execution_evidence.samples[1] = (Motion(2, 0, 1), 2)
+    player.execution_evidence.observe(player.last_grid, None)
+    player.execution_evidence.arm(player.last_grid, 1)
     decision = player.decide_next_action(grid, available_actions=available_actions)
     assert decision.action_name == "ACTION1"  # First step is ACTION1
     assert player.macro_tools.has_active_macro() is True

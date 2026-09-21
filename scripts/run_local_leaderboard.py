@@ -214,6 +214,26 @@ def evaluate_single_environment(
                         changed_colors.add(n_s)
 
         is_eff = (diff_count > 0) or (res.levels_completed > latest_frame.levels_completed) or (res.state is GameState.WIN)
+        # Keep upstream pixel-effectiveness semantics intact; report actual
+        # ARC game progress and prediction outcomes separately in reasoning.
+        reasoning = dict(reasoning)
+        outcome = {
+            "screen_changed": diff_count > 0,
+            "level_progress": res.levels_completed > latest_frame.levels_completed,
+            "win": res.state is GameState.WIN,
+            "prediction_match": None,
+        }
+        player = getattr(agent, "player", None)
+        evidence = getattr(player, "execution_evidence", None)
+        if evidence is not None and evidence.expected is not None:
+            import numpy as np
+            color, expected_mask = evidence.expected
+            actual = np.asarray(new_2d)
+            outcome["prediction_match"] = bool(
+                actual.shape == expected_mask.shape
+                and np.array_equal(actual == color, expected_mask)
+            )
+        reasoning["execution_outcome"] = outcome
 
         step_telemetry = StepTelemetry(
             step_index=steps,
@@ -278,6 +298,25 @@ def evaluate_single_environment(
     session_telemetry.total_win_levels = last_frame.win_levels
 
     diagnostic_report = DiagnosticAnalyzer.analyze(session_telemetry)
+    outcomes = [
+        (step.reasoning or {}).get("execution_outcome", {})
+        for step in session_telemetry.steps
+    ]
+    predictions = [o["prediction_match"] for o in outcomes if o.get("prediction_match") is not None]
+    execution_metrics = {
+        "prediction_checks": len(predictions),
+        "prediction_matches": sum(predictions),
+        "prediction_match_rate": sum(predictions) / len(predictions) if predictions else None,
+        "level_progress_steps": sum(o.get("level_progress", False) for o in outcomes),
+        "perception_cache_hits": sum(
+            (step.reasoning or {}).get("phase_metrics", {}).get("perception_reused", False)
+            for step in session_telemetry.steps
+        ),
+        "repeated_click_trials": sum(
+            (step.reasoning or {}).get("repeated_click_trial", False)
+            for step in session_telemetry.steps
+        ),
+    }
 
     return {
         "game_id": game_id,
@@ -289,6 +328,7 @@ def evaluate_single_environment(
         "errors": errors,
         "diagnostics": diagnostic_report,
         "telemetry": session_telemetry,
+        "execution_metrics": execution_metrics,
     }
 
 
@@ -463,6 +503,7 @@ def main():
                 "win_levels": r["win_levels"],
                 "status": r["status"],
                 "eff_ratio": round(r["diagnostics"].effective_ratio, 3),
+                "execution_metrics": r["execution_metrics"],
             }
             for r in results
         ],

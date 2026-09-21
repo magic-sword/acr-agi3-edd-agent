@@ -31,6 +31,17 @@ def test_state_machine_fast_path_execution_and_deviation():
     grid1[2, 2] = 2  # Agent
     grid1[2, 6] = 3  # Goal
 
+    # Execution is permitted only after a confirmed prediction succeeds.
+    from acr_agi3.agent.execution_evidence import Motion
+    prior = grid1.copy()
+    prior[2, 2] = 0
+    prior[2, 1] = 2
+    player.execution_evidence.samples[4] = (Motion(2, 0, 1), 2)
+    player.execution_evidence.observe(prior, None)
+    player.execution_evidence.arm(prior, 4)
+    player.last_action_info = {"action_id": 4}
+    player.last_grid = prior
+
     # Step 1: EXECUTING 高速パス発動 (LLM 呼び出し回数 0)
     decision1 = player.decide_next_action(grid=grid1, available_actions=[1, 2, 3, 4])
     assert decision1.action_name in ("RIGHT", "ACTION4")

@@ -1,17 +1,17 @@
 """Google ADK 2.0 準拠・自律ゲームプレイエージェント (ADKGamePlayer).
 
-過剰に複雑化したワークフローや多数のメタスキルを全廃し、
-人間が画面を見てプレイするのと同様の、
-「視覚入力 (visual-inspector) -> 画像認識思考 (Planner) -> 1手出力 (game-controller)」
-の直線的かつ超高速な自律ゲームプレイを実現するエージェント。
+視覚観測、計画、Level 3 ツールによる行動を実行し、
+観測された物体移動と予測の一致に基づいて短い計画を継続・修正する。
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from enum import Enum
 import json
 import logging
+import time
 import re
 import sys
 from pathlib import Path
@@ -23,6 +23,7 @@ from google.adk.runners import Runner, RunConfig
 from google.adk.sessions import InMemorySessionService
 from google.genai.types import Content, Part
 
+from acr_agi3.agent.execution_evidence import ExecutionEvidence
 from acr_agi3.agent.llm.local_vlm import LocalQwenVL
 from acr_agi3.agent.workflow_schemas import PlanProposal
 from acr_agi3.harness.game_action_tools import ActionDecision, GameActionTools
@@ -257,13 +258,21 @@ class ADKGamePlayer:
         self.game_dynamics: Dict[str, Dict[str, int]] = {}
         self.taboo_click_coords: List[Tuple[int, int]] = []
         self.cursor_pos: Tuple[int, int] = (32, 32)
+        self._reset_states: set[bytes] = set()
+        self.execution_evidence = ExecutionEvidence()
+        self.game_evidence: dict[str, ExecutionEvidence] = {}
+        self._perception_cache = None
+        self._candidate_plan = []
+        self._phase_metrics = {}
 
     def switch_game(self, game_id: str) -> None:
         """指定されたゲーム環境 (game_id) に切り替え、環境ごとのノートと力学を復元."""
         if not game_id or game_id == self.current_game_id:
             return
         logger.info("Switching game environment from %s to %s", self.current_game_id, game_id)
+        self.game_evidence[self.current_game_id] = self.execution_evidence
         self.current_game_id = game_id
+        self.execution_evidence = self.game_evidence.setdefault(game_id, ExecutionEvidence())
         self.memory_tools.switch_game(game_id)
         self.dynamics_map = self.game_dynamics.setdefault(game_id, {})
         self.action_tools.set_dynamics_map(self.dynamics_map)
@@ -301,8 +310,15 @@ class ADKGamePlayer:
         self.cognitive_state = CognitiveState.PROBING
         self.plan_queue.clear()
         self.last_expected_action = None
+        self._reset_states.clear()
+        self.execution_evidence.reset_episode()
+        self._perception_cache = None
+        self._candidate_plan = []
+        if self.planning_tools.guard is not None:
+            self.planning_tools.guard.action_history.clear()
 
         if full_wipe:
+            self.execution_evidence = ExecutionEvidence()
             self.memory_tools.clear()
             self.dynamics_map.clear()
             self.action_tools.set_dynamics_map({})
@@ -310,10 +326,16 @@ class ADKGamePlayer:
             if self.planning_tools.prober is not None:
                 self.planning_tools.prober.dynamics_map.clear()
                 self.planning_tools.prober.tested_actions.clear()
-            self.hypothesis_tools.engine = HypothesisEngineCore() if HypothesisEngineCore else None
-            self.rule_tools.core = RuleInducerCore() if RuleInducerCore else None
-            self.subgoal_tools.core = SubgoalDecomposerCore() if SubgoalDecomposerCore else None
-            self.macro_tools.core = MacroSkillCompilerCore() if MacroSkillCompilerCore else None
+            # Keep bound tool instances intact and rebuild their loaded engines.
+            for tool, attr in (
+                (self.hypothesis_tools, "engine"),
+                (self.rule_tools, "core"),
+                (self.subgoal_tools, "core"),
+                (self.macro_tools, "core"),
+            ):
+                core = getattr(tool, attr)
+                if core is not None:
+                    setattr(tool, attr, type(core)())
         else:
             self.memory_tools.reset_episode()
             self.hypothesis_tools.reset_episode()
@@ -368,6 +390,7 @@ class ADKGamePlayer:
         available_actions: Optional[List[int]] = None,
         state_str: str = "NOT_FINISHED",
         game_id: Optional[str] = None,
+        levels_completed: int = 0,
     ) -> ActionDecision:
         """最新観測から 3フェーズ (Perceive -> Plan -> Act) を経て game-controller で 1 手を実行."""
         if game_id and game_id != self.current_game_id:
@@ -375,22 +398,36 @@ class ADKGamePlayer:
         self.step_index += 1
         arr = normalize_grid(grid)
 
-        # 差分情報の算出
-        pixels_changed = 0
-        is_effective = False
-        if self.last_grid is not None and self.last_grid.shape == arr.shape:
-            diff_mask = (self.last_grid != arr)
-            pixels_changed = int(np.sum(diff_mask))
-            is_effective = (pixels_changed > 0)
+        # RESET is an episode boundary, not a failed movement/click. Preserve
+        # learned knowledge and reset history, but discard transient execution.
+        if self.last_action_info and self.last_action_info.get("action_id") == 0:
+            reset_states = self._reset_states.copy()
+            reset_states.add(self._reset_state_key(arr))
+            self.reset(full_wipe=False)
+            self._reset_states = reset_states
+            self.step_index = 1
 
-        # 停滞カウントの更新
-        if self.last_action_info is not None:
-            if pixels_changed == 0:
-                self.stagnation_count += 1
-            else:
-                self.stagnation_count = 0
+        self._phase_metrics = {}
+        if self.execution_evidence.previous is None and self.last_grid is not None:
+            self.execution_evidence.observe(self.last_grid, None, levels_completed)
+        self.execution_evidence.observe(arr, self.last_action_info, levels_completed)
+        evidence = self.execution_evidence
+        pixels_changed = evidence.pixels_changed
+        is_effective = evidence.meaningful_change
+        if self.last_action_info is not None and not is_effective:
+            self.stagnation_count += 1
         else:
             self.stagnation_count = 0
+        if evidence.prediction_match is False or evidence.cycle or evidence.level_progress:
+            self.plan_queue.clear()
+            self._candidate_plan = []
+            self.cognitive_state = CognitiveState.RECOVERY
+            self.memory_tools.memory_delete("plan.active")
+            if self.macro_tools.has_active_macro():
+                self.macro_tools.abort_macro(reason="Execution evidence requires re-planning")
+        # Coordinate exclusions apply only to the current observed state.
+        self.taboo_click_coords = sorted(evidence.tried_clicks())
+        self.spatial_tools.set_taboo_coords(self.taboo_click_coords)
 
         # 利用可能アクションの更新
         avail_ids = available_actions or [1, 2, 3, 4]
@@ -403,24 +440,20 @@ class ADKGamePlayer:
         self.hypothesis_tools.set_context(step_index=self.step_index, available_actions=avail_ids)
         self.memory_tools.set_step(self.step_index)
 
-        # 操作力学同定 (Epistemic Prober) のオンライン更新
-        if self.last_grid is not None and self.last_action_info is not None:
-            self.planning_tools.prober.analyze_displacement(
-                grid_before=self.last_grid,
-                grid_after=arr,
-                action_id=self.last_action_info.get("action_id", 1),
-            )
-            self.dynamics_map.update(self.planning_tools.prober.get_dynamics_map())
-            self.action_tools.set_dynamics_map(self.dynamics_map)
-            # 共有黒板 (memory-notebook) に同定済み力学を自動同期
-            if self.dynamics_map:
-                self.memory_tools.memory_write(
-                    section_id="causality.dynamics",
-                    title="Controller Mechanics Map",
-                    content=json.dumps(self.dynamics_map, ensure_ascii=False),
-                    summary=f"Mapped {len(self.dynamics_map)} controller actions",
-                    tags="causality,dynamics",
-                )
+        # Only repeated rigid object translations can establish direction semantics.
+        self.dynamics_map.clear()
+        self.dynamics_map.update(evidence.dynamics())
+        self.action_tools.set_dynamics_map(self.dynamics_map)
+        if self.planning_tools.prober is not None:
+            self.planning_tools.prober.dynamics_map = dict(self.dynamics_map)
+            if self.last_action_info and self.last_action_info.get("action_id") != 0:
+                aid = self.last_action_info["action_id"]
+                if aid not in self.planning_tools.prober.tested_actions:
+                    self.planning_tools.prober.tested_actions.append(aid)
+        self.memory_tools.memory_write(
+            section_id="causality.dynamics", title="Verified Controller Mechanics",
+            content=json.dumps(self.dynamics_map), tags="causality,dynamics",
+        )
 
         # 十字キー (D-Pad: UP/DOWN/LEFT/RIGHT) およびアクションボタン名付きの直感的ラベル生成
         avail_names = self._format_available_action_labels(avail_ids)
@@ -520,7 +553,7 @@ class ADKGamePlayer:
         # ---------------------------------------------------------------------
         # 認知的ステートマシン: マクロスキル高速実行 (Fast Path: LLMバイパス)
         # ---------------------------------------------------------------------
-        if self.macro_tools.has_active_macro():
+        if self.macro_tools.has_active_macro() and evidence.prediction_match is True:
             next_step_str = self.macro_tools.execute_macro_step()
             if next_step_str and next_step_str != "null":
                 step_data = json.loads(next_step_str)
@@ -548,6 +581,7 @@ class ADKGamePlayer:
                         grid=arr,
                         metadata={"fast_path": True, "macro": True},
                     )
+                    decision = self._guard_repeated_reset(decision, arr, avail_ids)
                     self.last_action_info = {
                         "action": decision.action_name,
                         "action_name": decision.action_name,
@@ -557,11 +591,14 @@ class ADKGamePlayer:
                         "is_effective": True,
                     }
                     self.last_grid = arr.copy()
-                    return decision
+                    return self._record_execution(decision, arr)
 
         # ---------------------------------------------------------------------
         # 認知的ステートマシン: 計画追従・高速サクサク実行 (Fast Path: LLMバイパス)
         # ---------------------------------------------------------------------
+        if self.plan_queue and evidence.prediction_match is not True:
+            self.plan_queue.clear()
+            self.cognitive_state = CognitiveState.PLANNING
         if self.cognitive_state == CognitiveState.EXECUTING and len(self.plan_queue) > 0:
             self.current_cognitive_mode = CognitiveMode.BACKWARD_ARCHITECT
             next_plan = self.plan_queue.pop(0)
@@ -597,6 +634,7 @@ class ADKGamePlayer:
                     decision.action_name = f"ACTION{sanitized}"
                     decision.reasoning += f" [TabooGuard: {reason}]"
 
+            decision = self._guard_repeated_reset(decision, arr, avail_ids)
             if decision.coordinates and "x" in decision.coordinates and "y" in decision.coordinates:
                 self.cursor_pos = (int(decision.coordinates["x"]), int(decision.coordinates["y"]))
                 if self.action_tools.controller is not None:
@@ -620,7 +658,7 @@ class ADKGamePlayer:
             if len(self.plan_queue) == 0:
                 self.cognitive_state = CognitiveState.PLANNING
                 self.memory_tools.memory_delete("plan.active")
-            return decision
+            return self._record_execution(decision, arr)
 
         # コントローラーのカーソル位置と同期
         if self.action_tools.controller is not None:
@@ -657,6 +695,7 @@ class ADKGamePlayer:
                 state_str=state_str,
             )
         )
+        decision = self._guard_repeated_reset(decision, arr, avail_ids)
 
         # アクション決定後のカーソル位置同期
         if decision.coordinates and "x" in decision.coordinates and "y" in decision.coordinates:
@@ -679,7 +718,7 @@ class ADKGamePlayer:
             "pixels_changed": pixels_changed,
             "is_effective": is_effective,
         }
-        return decision
+        return self._record_execution(decision, arr)
 
     async def _run_plan_act_workflow(
         self,
@@ -724,66 +763,82 @@ class ADKGamePlayer:
         # ---------------------------------------------------------------------
         node_run_config = RunConfig(max_llm_calls=4)
         perceive_content = Content(role="user", parts=obs_parts)
-        perceive_events = self.perceive_runner.run_async(
-            session_id=self.perceive_session_id,
-            user_id=user_id,
-            new_message=perceive_content,
-            run_config=node_run_config,
+        perception_key = (self._reset_state_key(grid), tuple(available_action_ids), self.cursor_pos)
+        cache = self._perception_cache
+        reuse = bool(
+            cache and cache[0] == perception_key and cache[2] < 2
+            and self.execution_evidence.prediction_match is not False
         )
-        perceive_summary = ""
-        try:
-            async for ev in perceive_events:
-                if hasattr(ev, "content") and ev.content:
-                    for p in getattr(ev.content, "parts", []):
-                        if hasattr(p, "text") and p.text:
-                            perceive_summary += p.text
-        except Exception as e:
-            logger.warning("Step %d [Perceive Node notice]: %s", self.step_index, e)
+        phase_start = time.perf_counter()
+        if reuse:
+            perceive_summary = cache[1]
+            self._perception_cache = (cache[0], cache[1], cache[2] + 1)
+        else:
+            perceive_events = self.perceive_runner.run_async(
+                session_id=self.perceive_session_id,
+                user_id=user_id,
+                new_message=perceive_content,
+                run_config=node_run_config,
+            )
+            perceive_summary = ""
+            try:
+                async for ev in perceive_events:
+                    if hasattr(ev, "content") and ev.content:
+                        for p in getattr(ev.content, "parts", []):
+                            if hasattr(p, "text") and p.text:
+                                perceive_summary += p.text
+            except Exception as e:
+                logger.warning("Step %d [Perceive Node notice]: %s", self.step_index, e)
+
+            if perceive_summary:
+                self._perception_cache = (perception_key, perceive_summary, 0)
+        self._phase_metrics["perceive_ms"] = round((time.perf_counter() - phase_start) * 1000, 3)
+        self._phase_metrics["perception_reused"] = reuse
 
         logger.info("Step %d [Phase 1: Perceive Complete] Summary: %s...", self.step_index, perceive_summary[:120].strip())
 
         # ---------------------------------------------------------------------
         # Python ワークフロー層: 認知的コンテキストの自動解析 (Cognitive Context Analysis)
         # ---------------------------------------------------------------------
-        probe_rec = None
-        if self.planning_tools.prober is not None and self.planning_tools.prober.is_probing_needed(self.step_index, available_action_ids):
-            probe_rec = self.planning_tools.prober.recommend_probe_action(available_action_ids)
+        probe_candidates = [
+            aid for aid in available_action_ids if aid not in (0, 6)
+            and self.execution_evidence.confirmed(aid) is None
+            and self.execution_evidence.attempts[aid] < 2
+        ]
+        probe_rec = min(probe_candidates, key=lambda aid: self.execution_evidence.attempts[aid]) if probe_candidates else None
 
         nav_rec_dir = None
         nav_path_len = 0
-        is_directional = any(a in [1, 2, 3, 4] for a in available_action_ids)
-        if is_directional and grid is not None and self.vision_tools.inspector is not None and self.planning_tools.planner is not None:
-            try:
-                report = self.vision_tools.inspector.analyze_frame(grid, step_index=self.step_index)
-                if report.agent_pos and report.goal_pos:
-                    sc, sr = report.agent_pos[1], report.agent_pos[0]
-                    gc, gr = report.goal_pos[1], report.goal_pos[0]
+        self._candidate_plan = []
+        if grid is not None and self.vision_tools.inspector is not None:
+            report = self.vision_tools.inspector.analyze_frame(grid, step_index=self.step_index)
+            if report.agent_pos and report.goal_pos:
+                color = int(grid[report.agent_pos])
+                verified = {
+                    d: aid for d, aid in self.dynamics_map.items()
+                    if (motion := self.execution_evidence.confirmed(aid)) is not None
+                    and motion.color == color and abs(motion.dr) + abs(motion.dc) == 1
+                    and aid in available_action_ids
+                }
+                if verified and report.agent_object and report.agent_object.size == 1:
+                    # Treat other occupied colors conservatively, without assigning
+                    # universal meanings such as blue=wall or green=goal.
+                    allowed_colors = {report.background_color, color, int(grid[report.goal_pos])}
+                    blocked = [int(c) for c in np.unique(grid) if int(c) not in allowed_colors]
                     actions = self.planning_tools.plan_action_sequence(
-                        start_col=sc,
-                        start_row=sr,
-                        goal_col=gc,
-                        goal_row=gr,
-                        impassable_colors=[1],
+                        start_col=report.agent_pos[1], start_row=report.agent_pos[0],
+                        goal_col=report.goal_pos[1], goal_row=report.goal_pos[0],
+                        impassable_colors=blocked,
                     )
-                    if actions:
-                        nav_rec_dir = actions[0]
+                    for action in actions[:3]:
+                        if action not in verified:
+                            break
+                        self._candidate_plan.append({"action": action, "action_id": verified[action]})
+                    if self._candidate_plan and not self.execution_evidence.cycle:
+                        nav_rec_dir = self._candidate_plan[0]["action"]
                         nav_path_len = len(actions)
-                        if len(actions) > 1 and self.stagnation_count == 0 and self.cognitive_state != CognitiveState.RECOVERY:
-                            self.plan_queue = [{"action": a} for a in actions[1:]]
-                            self.cognitive_state = CognitiveState.EXECUTING
-                            self.memory_tools.memory_write(
-                                section_id="plan.active",
-                                title="Active Shortest Path Plan",
-                                content=json.dumps({"planned_actions": actions, "next_steps": [a["action"] for a in self.plan_queue]}, ensure_ascii=False),
-                                summary=f"A* route with {len(actions)} steps",
-                                tags="plan,active",
-                            )
-                            logger.info(
-                                "Step %d [Plan Formulated] Enqueued %d future actions: %s. State -> EXECUTING.",
-                                self.step_index, len(self.plan_queue), [a["action"] for a in self.plan_queue]
-                            )
-            except Exception as e:
-                logger.debug("Automatic pathfinding notice: %s", e)
+                    else:
+                        self._candidate_plan = []
 
         anchors_hint = ""
         if 6 in available_action_ids and self.spatial_tools.cached_anchors:
@@ -868,8 +923,8 @@ class ADKGamePlayer:
         elif self.current_cognitive_mode == CognitiveMode.BACKWARD_ARCHITECT:
             mode_instructions.append(
                 "🧭 [Mode: BACKWARD ARCHITECT / GEOMETRIC SHORTEST PATH]\n"
-                f"A* shortest path to goal identified ({nav_path_len} steps).\n"
-                f"Recommended next movement: `{nav_rec_dir}`. Execute `{nav_rec_dir}` directly to advance along optimal path."
+                f"Short exploratory route to an unverified target candidate ({nav_path_len} steps).\n"
+                f"Recommended next movement: `{nav_rec_dir}`. Test `{nav_rec_dir}` and verify the predicted object displacement; target semantics remain a hypothesis."
             )
         elif self.current_cognitive_mode == CognitiveMode.CAUSAL_PROGRAMMER:
             mode_instructions.append(
@@ -884,6 +939,11 @@ class ADKGamePlayer:
             )
 
         workflow_guidance = f"\n\n{mode_header}\n" + "\n\n".join(mode_instructions)
+        workflow_guidance += (
+            "\nPrevious transition evidence (screen change is NOT goal progress): "
+            + json.dumps(self.execution_evidence.metrics())
+            + "\nAlready tested clicks in this state: " + str(self.taboo_click_coords)
+        )
 
         # ---------------------------------------------------------------------
         # Phase 2: Cognitive Planning (Plan Node) - 最小限ツール: memory-notebook
@@ -902,6 +962,7 @@ class ADKGamePlayer:
             f"According to Cognitive Mode {self.current_cognitive_mode.value}, formulate your immediate subgoal and strategy. (Do not call any action tools like step_action)."
         )
         plan_content = Content(role="user", parts=[Part.from_text(text=plan_prompt)])
+        phase_start = time.perf_counter()
         plan_events = self.plan_runner.run_async(
             session_id=self.plan_session_id,
             user_id=user_id,
@@ -918,6 +979,7 @@ class ADKGamePlayer:
         except Exception as e:
             logger.warning("Step %d [Plan Node notice]: %s", self.step_index, e)
 
+        self._phase_metrics["plan_ms"] = round((time.perf_counter() - phase_start) * 1000, 3)
         logger.info("Step %d [Phase 2: Plan Complete] Strategy: %s...", self.step_index, plan_summary[:120].strip())
         if plan_summary:
             self.hypothesis_tools.formulate_hypothesis(
@@ -953,6 +1015,7 @@ class ADKGamePlayer:
             f"Execute your 1-step action aligned with Cognitive Mode {self.current_cognitive_mode.value} by {act_guidance}"
         )
         act_content = Content(role="user", parts=[Part.from_text(text=act_prompt)])
+        phase_start = time.perf_counter()
         act_events = self.act_runner.run_async(
             session_id=self.act_session_id,
             user_id=user_id,
@@ -1052,6 +1115,8 @@ class ADKGamePlayer:
                 )
                 break
 
+        self._phase_metrics["act_ms"] = round((time.perf_counter() - phase_start) * 1000, 3)
+
         # リトライ上限を超えても無効な場合の最外周フェイルセーフ
         if not decision.metadata.get("success", True):
             default_id = available_action_ids[0] if available_action_ids else 1
@@ -1083,24 +1148,9 @@ class ADKGamePlayer:
                     decision.coordinates = {"x": best["x"], "y": best["y"]}
                     decision.reasoning += f" [SpatialGrounder: Fallback click to Anchor {best['id']} at ({best['x']}, {best['y']})]"
 
-            # 反証済みクリック座標の自動回避 (HypothesisEngine Refutation Guard)
-            if decision.coordinates and self.hypothesis_tools.is_action_refuted(6, decision.coordinates):
-                cand_anchors = [(a["x"], a["y"]) for a in self.spatial_tools.cached_anchors] if self.spatial_tools.cached_anchors else None
-                alt_str = self.hypothesis_tools.propose_alternative_hypothesis(candidate_coords=cand_anchors)
-                try:
-                    alt_data = json.loads(alt_str)
-                    prop = alt_data.get("proposal")
-                    if prop and "coords" in prop and prop["coords"]:
-                        old_coords = decision.coordinates
-                        decision.coordinates = prop["coords"]
-                        decision.reasoning += f" [HypothesisEngine: Redirected click from refuted {old_coords} to unrefuted {decision.coordinates}]"
-                except Exception:
-                    pass
-
-
         # 禁忌アクション刈り込み＆能動的リセット (Taboo Reset Guard)
         if self.planning_tools.guard is not None:
-            last_eff = self.last_action_info.get("is_effective", True) if self.last_action_info else True
+            last_eff = self.execution_evidence.meaningful_change
             last_aid = self.last_action_info.get("action_id") if self.last_action_info else None
             is_allowed, sanitized, reason = self.planning_tools.guard.filter_taboo_actions(
                 proposed_action=decision.action_id,
@@ -1114,13 +1164,17 @@ class ADKGamePlayer:
                 decision.action_name = f"ACTION{sanitized}"
                 decision.reasoning += f" [TabooGuard: {reason}]"
 
-            if self.planning_tools.guard.should_active_reset(self.stagnation_count) and (0 in available_action_ids or self.stagnation_count >= 5):
-                decision.action_id = 0
-                decision.action_name = "RESET"
-                decision.action_type = "RESET"
-                decision.reasoning += f" [TabooGuard: Active reset triggered after {self.stagnation_count} stagnant steps to escape dead end]"
-
-            self.planning_tools.guard.record_step(decision.action_id)
+            if (
+                self.planning_tools.guard.should_active_reset(self.stagnation_count)
+                and grid is not None
+                and self._reset_state_key(grid) not in self._reset_states
+            ):
+                decision = ActionDecision(
+                    action_type="RESET",
+                    action_name="RESET",
+                    action_id=0,
+                    reasoning=f"Active reset after {self.stagnation_count} stagnant steps",
+                )
 
         try:
             import torch
@@ -1130,6 +1184,157 @@ class ADKGamePlayer:
             pass
 
         return decision
+
+    def _record_execution(self, decision: ActionDecision, grid: np.ndarray) -> ActionDecision:
+        """Finalize every execution path with state-scoped trials and predictions."""
+        evidence = self.execution_evidence
+        if self.autonomous_probing and decision.action_id not in (0, 6) and not self._candidate_plan:
+            probes = [aid for aid in self.action_tools.available_action_ids
+                      if aid not in (0, 6) and evidence.confirmed(aid) is None
+                      and evidence.attempts[aid] < 2]
+            if probes:
+                aid = min(probes, key=lambda a: evidence.attempts[a])
+                self.action_tools.step_action(
+                    action=f"ACTION{aid}", reasoning="Controlled probe of an unconfirmed button"
+                )
+                decision = self.action_tools.pending_decision
+        if decision.action_id == 6:
+            tried = evidence.tried_clicks()
+            anchors = self.spatial_tools.cached_anchors
+            coords = decision.coordinates or {}
+            requested = (coords.get("x"), coords.get("y"))
+            candidates = [(int(a["x"]), int(a["y"])) for a in anchors
+                          if (int(a["x"]), int(a["y"])) not in tried]
+            target = requested
+            if candidates and (requested in tried or requested not in candidates):
+                target = candidates[0]
+            elif requested in tried or None in requested:
+                h, w = grid.shape
+                target = next(((c, r) for r in range(h) for c in range(w)
+                               if (c, r) not in tried), requested)
+            if target != requested and None not in target:
+                original_metadata = decision.metadata.copy()
+                self.action_tools.click_at(
+                    x=target[0], y=target[1],
+                    reasoning="Test a different target in this state; observe its response.",
+                )
+                decision = self.action_tools.pending_decision
+                decision.metadata.update(original_metadata)
+                decision.metadata["click_redirected"] = True
+            decision.metadata["click_target_grounded"] = target in candidates
+            decision.metadata["repeated_click_trial"] = target in tried
+            decision.metadata["expected_effect"] = "Target response to click (unverified)"
+
+        # All paths, including queued plans, emit via Level 3 execution tools.
+        metadata = decision.metadata.copy()
+        self.action_tools.pending_decision = None
+        if decision.action_id == 0:
+            self.action_tools.reset_game(reasoning=decision.reasoning)
+        elif decision.action_id == 6:
+            coords = decision.coordinates or {}
+            self.action_tools.click_at(
+                x=coords.get("x"), y=coords.get("y"), reasoning=decision.reasoning
+            )
+        else:
+            self.action_tools.step_action(
+                action=f"ACTION{decision.action_id}", reasoning=decision.reasoning
+            )
+        if self.action_tools.pending_decision is None:
+            raise RuntimeError("Execution tool rejected the selected action")
+        decision = self.action_tools.pending_decision
+        decision.metadata.update(metadata)
+
+        if self._candidate_plan:
+            first = self._candidate_plan[0]
+            if decision.action_id == first["action_id"]:
+                self.plan_queue = self._candidate_plan[1:]
+                self.cognitive_state = CognitiveState.EXECUTING if self.plan_queue else CognitiveState.PLANNING
+                if self.plan_queue:
+                    self.memory_tools.memory_write(
+                        "plan.active", json.dumps({
+                            "planned_actions": [p["action"] for p in self._candidate_plan],
+                            "next_steps": [p["action"] for p in self.plan_queue],
+                            "target_verified": False,
+                        }), title="Bounded exploratory plan"
+                    )
+            else:
+                self.plan_queue.clear()
+                self.cognitive_state = CognitiveState.PLANNING
+            self._candidate_plan = []
+        prediction_armed = evidence.arm(grid, decision.action_id)
+        if self.plan_queue and not prediction_armed:
+            self.plan_queue.clear()
+            self.cognitive_state = CognitiveState.PLANNING
+        if not self.plan_queue:
+            self.memory_tools.memory_delete("plan.active")
+        decision.metadata.update({
+            "previous_transition": evidence.metrics(),
+            "prediction_armed": prediction_armed,
+            "phase_metrics": dict(self._phase_metrics),
+            "trial_state_id": evidence.state_key.hex()[:16],
+        })
+        self.last_grid = grid.copy()
+        if self.planning_tools.guard is not None:
+            self.planning_tools.guard.record_step(decision.action_id)
+        self.last_expected_action = decision.action_name
+        self.last_action_info = {
+            "action": decision.action_name, "action_name": decision.action_name,
+            "action_id": decision.action_id, "coordinates": decision.coordinates,
+            "reasoning": decision.reasoning, "is_effective": evidence.meaningful_change,
+        }
+        if decision.coordinates:
+            self.cursor_pos = (decision.coordinates["x"], decision.coordinates["y"])
+            if self.action_tools.controller:
+                self.action_tools.controller.set_cursor(*self.cursor_pos)
+        return decision
+
+    @staticmethod
+    def _reset_state_key(grid: Any) -> bytes:
+        arr = np.asarray(grid, dtype=np.int64)
+        return hashlib.sha256(str(arr.shape).encode() + arr.tobytes()).digest()
+
+    def _guard_repeated_reset(
+        self, decision: ActionDecision, grid: Any, available_actions: List[int]
+    ) -> ActionDecision:
+        """Allow one active reset per observed board, then resume exploration."""
+        if decision.action_id != 0 or grid is None:
+            return decision
+        key = self._reset_state_key(grid)
+        if key not in self._reset_states:
+            self._reset_states.add(key)
+            # Rebuild via the execution tool so RESET carries no stale click data.
+            self.action_tools.reset_game(reasoning=decision.reasoning)
+            return self.action_tools.pending_decision
+
+        alternatives = [aid for aid in available_actions if aid != 0]
+        if not alternatives:
+            return decision
+        reason = "Repeated reset blocked for this board; explore an alternative target/action."
+        self.action_tools.pending_decision = None
+        if 6 in alternatives:
+            anchors = [
+                a for a in self.spatial_tools.cached_anchors
+                if (a["x"], a["y"]) not in self.taboo_click_coords
+            ]
+            if anchors:
+                x, y = anchors[0]["x"], anchors[0]["y"]
+            else:
+                h, w = np.asarray(grid).shape[:2]
+                x, y = next(
+                    ((c, r) for r in range(h) for c in range(w)
+                     if (c, r) not in self.taboo_click_coords),
+                    (0, 0),
+                )
+            self.action_tools.click_at(x=int(x), y=int(y), reasoning=reason)
+        else:
+            last_id = (self.last_action_info or {}).get("action_id")
+            aid = next((a for a in alternatives if a != last_id), alternatives[0])
+            self.action_tools.step_action(action=f"ACTION{aid}", reasoning=reason)
+        replacement = self.action_tools.pending_decision
+        if replacement is None:
+            raise RuntimeError("Unable to select an available action after blocking repeated reset")
+        replacement.metadata["reset_suppressed"] = True
+        return replacement
 
     def _convert_to_decision(
         self,
@@ -1214,13 +1419,10 @@ class ADKGamePlayer:
     def _format_available_action_labels(self, avail_ids: List[int]) -> List[str]:
         """利用可能アクションIDを十字キー方向名・ボタン名付きの直感的な表現へ整形."""
         rev_map = {v: k for k, v in self.dynamics_map.items() if k in ("UP", "DOWN", "LEFT", "RIGHT")}
-        default_dir_map = {1: "UP", 2: "DOWN", 3: "LEFT", 4: "RIGHT"}
         labels: List[str] = []
         for aid in avail_ids:
             if aid in rev_map:
                 labels.append(f"{rev_map[aid]} (ACTION{aid})")
-            elif aid in default_dir_map:
-                labels.append(f"{default_dir_map[aid]} (ACTION{aid})")
             elif aid == 6:
                 labels.append("CLICK (ACTION6)")
             elif aid == 0:

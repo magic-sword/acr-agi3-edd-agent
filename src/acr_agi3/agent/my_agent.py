@@ -136,6 +136,7 @@ class MyAgent(Agent):
             available_actions=avail_ids,
             state_str=str(state),
             game_id=self.game_id,
+            levels_completed=getattr(latest_frame, "levels_completed", 0),
         )
 
         # 決定されたアクション ID から GameAction を生成
