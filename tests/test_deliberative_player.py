@@ -1,9 +1,13 @@
 """Contracts for goal-first thought, tool observation and causal resumption."""
 
+import json
+import re
+
 import numpy as np
 import pytest
 from google.adk.models import LlmRequest
-from google.genai.types import Content, Part
+from google.adk.tools.skill_toolset import SkillToolset
+from google.genai.types import Content, FunctionDeclaration, Part
 
 from acr_agi3.agent.deliberation import ThoughtMode, ThoughtState
 from acr_agi3.agent.deliberative_player import (
@@ -317,3 +321,122 @@ def test_new_gap_can_interrupt_an_unissued_action(mode, parent):
     assert state.questions[-1].return_mode == parent
     assert not state.plan
     assert state.experiment is None
+
+
+CORE = {"list_skills", "load_skill", "load_skill_resource"}
+EXPECTED = {
+    ThoughtMode.PLAN: {
+        "set_goal",
+        "need_causal_knowledge",
+        "plan_actions",
+        "continue_plan",
+        "reset_game",
+    },
+    ThoughtMode.CAUSAL: {
+        "need_causal_knowledge",
+        "need_experiment",
+        "resolve_question",
+        "answer_visible_question",
+        "use_known_rules",
+        "reset_game",
+    },
+    ThoughtMode.EXPERIMENT: {"need_causal_knowledge", "step_action", "click_at"},
+    ThoughtMode.EXECUTE: {"need_causal_knowledge", "step_action", "click_at"},
+    ThoughtMode.REVIEW: {"assess_result"},
+}
+
+
+def schemas(prompt):
+    block = re.search(r"<tools>\n(.*?)\n</tools>", prompt, re.DOTALL)
+    assert block
+    return {
+        item["function"]["name"]: item["function"]
+        for item in map(json.loads, block.group(1).splitlines())
+    }
+
+
+@pytest.mark.parametrize("mode", list(ThoughtMode))
+def test_real_prompt_disclosure_and_state_scope(mode):
+    captures = []
+    calls = [
+        call("load_skill", skill_name=name)
+        for name in ("causal-deliberation", "visual-inspector", "game-controller")
+    ]
+    player = DeliberativeGamePlayer(
+        model=model_script(calls + ["No action requested"], captures),
+        max_llm_calls=4,
+    )
+    player.state.mode = mode
+    assert len(player.agent.tools) == 1
+    assert isinstance(player.agent.tools[0], SkillToolset)
+    with pytest.raises(DeliberationBudgetExceededError):
+        player.decide_next_action(board(), available_actions=[1])
+    assert len(captures) == 4
+    # L1: only discovery APIs, no execution schemas or injected skill bodies.
+    assert set(schemas(captures[0][0])) == CORE
+    for name in ("causal-deliberation", "visual-inspector", "game-controller"):
+        instructions = player.skill_harness.get_skill(name).instructions
+        first_line = instructions.strip().splitlines()[0]
+        assert first_line not in captures[0][0]
+    # L2: the actual SKILL.md reaches the model after load_skill.
+    assert "# Causal Deliberation" in captures[1][0]
+    assert "observe_screen" not in schemas(captures[1][0])
+    assert "# Visual Inspector" in captures[2][0]
+    assert "observe_screen" in schemas(captures[2][0])
+    assert "step_action" not in schemas(captures[2][0])
+    # L3: tools require BOTH an activated skill and an appropriate mode.
+    assert "# Game Controller" in captures[3][0]
+    assert set(schemas(captures[3][0])) == CORE | {"observe_screen"} | EXPECTED[mode]
+    params = schemas(captures[0][0])["load_skill"]["parameters"]
+    assert params["required"] == ["skill_name"]
+    assert "skill_name" in params["properties"]
+
+
+def test_state_change_recomputes_tools_within_same_adk_session():
+    captures = []
+    player = DeliberativeGamePlayer(model=model_script(experiment_calls(), captures))
+    player.decide_next_action(board(), available_actions=[1])
+    assert "plan_actions" in schemas(captures[1][0])
+    assert "need_experiment" not in schemas(captures[1][0])
+    assert "plan_actions" not in schemas(captures[2][0])
+    assert "need_experiment" in schemas(captures[2][0])
+    assert "need_experiment" not in schemas(captures[5][0])
+    assert "step_action" in schemas(captures[6][0])
+
+
+def test_adk_json_schema_survives_local_vlm_conversion():
+    parameters = {
+        "type": "object",
+        "properties": {"skill_name": {"type": "string"}},
+        "required": ["skill_name"],
+        "additionalProperties": False,
+    }
+    declaration = FunctionDeclaration(name="load_skill", parameters_json_schema=parameters)
+    assert LocalQwenVL._declaration_to_schema(declaration)["function"]["parameters"] == parameters
+
+
+def test_skill_catalog_contains_metadata_without_workflow_bodies():
+    captures = []
+    player = DeliberativeGamePlayer(
+        model=model_script([call("list_skills"), "inspect catalog"], captures),
+        max_llm_calls=2,
+    )
+    with pytest.raises(DeliberationBudgetExceededError):
+        player.decide_next_action(board(), available_actions=[1])
+    prompt = captures[-1][0]
+    assert set(schemas(prompt)) == CORE
+    for name in ("causal-deliberation", "visual-inspector", "game-controller"):
+        assert name in prompt
+        title = player.skill_harness.get_skill(name).instructions.strip().splitlines()[0]
+        assert title not in prompt
+
+
+def test_skill_activation_does_not_leak_into_next_gateway_session():
+    captures = []
+    player = DeliberativeGamePlayer(
+        model=model_script(experiment_calls() + experiment_calls(), captures),
+    )
+    player.decide_next_action(board(), available_actions=[1])
+    player.reset()
+    player.decide_next_action(board(), available_actions=[1])
+    assert set(schemas(captures[len(experiment_calls())][0])) == CORE

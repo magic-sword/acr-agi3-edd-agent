@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import unquote, urlparse
 
 from google.adk.skills import Skill, load_skills_from_dir
+from google.adk.tools.base_toolset import ToolPredicate
 from google.adk.tools.skill_toolset import SkillToolset
 
 # 後方互換性エイリアス
@@ -102,6 +103,7 @@ class SkillHarness:
         skill_names: List[str],
         tool_name_prefix: Optional[str] = None,
         additional_tools: Optional[List[Any]] = None,
+        tool_filter: ToolPredicate | list[str] | None = None,
     ) -> SkillToolset:
         """指定されたスキルのみに絞り込んだ最小権限の SkillToolset を生成して返却."""
         scoped_skills: List[Skill] = []
@@ -113,6 +115,7 @@ class SkillHarness:
             skills=scoped_skills,
             tool_name_prefix=tool_name_prefix,
             additional_tools=additional_tools,
+            tool_filter=tool_filter,
         )
 
     def list_skills(self) -> List[Skill]:

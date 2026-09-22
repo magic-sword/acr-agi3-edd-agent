@@ -184,7 +184,11 @@ class LocalQwenVL(BaseLlm):
         desc = getattr(fd, "description", "") or ""
         params: Dict[str, Any] = {"type": "object", "properties": {}}
 
-        raw_params = getattr(fd, "parameters", None)
+        # ADK skill-management tools use parameters_json_schema; FunctionTool
+        # may instead use parameters. Preserve both official declaration forms.
+        raw_params = getattr(fd, "parameters_json_schema", None)
+        if raw_params is None:
+            raw_params = getattr(fd, "parameters", None)
         if raw_params is not None:
             if isinstance(raw_params, dict):
                 params = raw_params

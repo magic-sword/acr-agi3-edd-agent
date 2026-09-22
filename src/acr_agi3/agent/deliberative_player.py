@@ -79,6 +79,7 @@ class DeliberativeGamePlayer:
         toolset = self.skill_harness.get_scoped_toolset(
             ["causal-deliberation", "visual-inspector", "game-controller"],
             additional_tools=bindings,
+            tool_filter=self._tool_is_relevant,
         )
         self.agent = Agent(
             name=name,
@@ -96,6 +97,35 @@ class DeliberativeGamePlayer:
             ),
         )
         self.runner = Runner(agent=self.agent, app_name=name, session_service=self.session_service)
+
+    def _tool_is_relevant(self, tool, context) -> bool:
+        """Filter ADK-activated tools by thought purpose; ADK still owns loading.
+
+        Observation and skill discovery remain available in every mode. Execution
+        checks remain authoritative even if a stale call reaches the dispatcher.
+        """
+        common = {"list_skills", "load_skill", "load_skill_resource", "observe_screen"}
+        by_mode = {
+            ThoughtMode.PLAN: {
+                "set_goal",
+                "need_causal_knowledge",
+                "plan_actions",
+                "continue_plan",
+                "reset_game",
+            },
+            ThoughtMode.CAUSAL: {
+                "need_causal_knowledge",
+                "need_experiment",
+                "resolve_question",
+                "answer_visible_question",
+                "use_known_rules",
+                "reset_game",
+            },
+            ThoughtMode.EXPERIMENT: {"need_causal_knowledge", "step_action", "click_at"},
+            ThoughtMode.EXECUTE: {"need_causal_knowledge", "step_action", "click_at"},
+            ThoughtMode.REVIEW: {"assess_result"},
+        }
+        return tool.name in common | by_mode[self.state.mode]
 
     def _ensure_observed(self) -> None:
         if self.screen.current_id not in self.screen.viewed:
