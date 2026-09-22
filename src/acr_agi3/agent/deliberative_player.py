@@ -71,32 +71,148 @@ class DeliberativeGamePlayer:
             self.continue_plan,
             self.answer_visible_question,
             self.use_known_rules,
-            self.screen.observe_screen,
+            self.observe_screen,
             self.step_action,
             self.click_at,
             self.reset_game,
         ]
+        scoped_skills = ["causal-deliberation", "visual-inspector", "game-controller"]
         toolset = self.skill_harness.get_scoped_toolset(
-            ["causal-deliberation", "visual-inspector", "game-controller"],
+            scoped_skills,
             additional_tools=bindings,
             tool_filter=self._tool_is_relevant,
+        )
+        catalog = self.skill_harness.get_level1_catalog(scoped_skills)
+        instruction = (
+            "You are an autonomous cognitive game-playing agent for ARC-AGI-3.\n"
+            "You solve games through a rigorous 5-Mode Cognitive State Machine.\n"
+            "NEVER take blind actions without grounded evidence or hypothesis.\n\n"
+            f"{catalog}\n\n"
+            "=== COGNITIVE STATE MACHINE ARCHITECTURE ===\n"
+            "1. [PLAN Mode] (Current Goal & Strategy)\n"
+            "   - Purpose: Observe the screen, identify the goal, and formulate a plan.\n"
+            "   - If screen unobserved: Load 'visual-inspector' and call observe_screen(view='current').\n"
+            "   - If causal rules are UNKNOWN (how objects move or what buttons do):\n"
+            "     -> Call need_causal_knowledge(question='...') to advance to CAUSAL mode.\n"
+            "   - If plan is ready: Call plan_actions(subgoal=..., steps=[...], rule_ids=[...]) to advance to EXECUTE mode.\n"
+            "   - Constraint: Environment actions (step_action/click_at) are NOT available in PLAN mode.\n\n"
+            "2. [CAUSAL Mode] (Knowledge Gap Resolution)\n"
+            "   - Purpose: Resolve open questions through hypothesis testing.\n"
+            "   - If visible by inspection: Call answer_visible_question(answer=..., visual_evidence=...).\n"
+            "   - If test is needed: Call need_experiment(hypothesis=..., prediction=..., alternative=...) to advance to EXPERIMENT mode.\n"
+            "   - Constraint: Environment actions are NOT available in CAUSAL mode.\n\n"
+            "3. [EXPERIMENT Mode] (Controlled Hypothesis Testing)\n"
+            "   - Purpose: Execute ONE minimal intervention to test the active hypothesis.\n"
+            "   - Action: Load 'game-controller' and call step_action(action_id=..., reasoning=...) or click_at(x=..., y=..., reasoning=...).\n\n"
+            "4. [EXECUTE Mode] (Plan Step Dispatch)\n"
+            "   - Purpose: Execute the planned step.\n"
+            "   - Action: Load 'game-controller' and call step_action or click_at matching the plan.\n\n"
+            "5. [REVIEW Mode] (Outcome Assessment & Rule Learning)\n"
+            "   - Purpose: Compare before and after frames to assess hypothesis validity.\n"
+            "   - Steps: Call observe_screen(view='both'), then assess_result(...).\n"
+            "   - If supported: Call resolve_question(...) to record a learned rule.\n\n"
+            "=== OUTPUT RULES ===\n"
+            "- Keep reasoning extremely concise (1-2 sentences maximum).\n"
+            "- In every turn, you MUST call exactly one tool from the available tools matching your current mode.\n"
+            "- Do NOT hallucinate that an action already took place until you actually execute it and enter REVIEW mode."
         )
         self.agent = Agent(
             name=name,
             model=self.model,
             tools=[toolset],
-            instruction=(
-                "Solve the dynamic game by reasoning backwards from its goal. "
-                "Load causal-deliberation to manage knowledge gaps, experiments and plans. "
-                "Load visual-inspector whenever you need to see the screen, in ANY mode. "
-                "Images arrive only through observe_screen; never invent unseen facts. "
-                "Load game-controller to emit one action through step_action/click_at/reset_game. "
-                "Do not output action JSON or free-text actions: only execution tools act. "
-                "Use returned mode and errors to guide the next thought. Return to suspended "
-                "questions after obtaining evidence. Stop once an action is scheduled."
-            ),
+            instruction=instruction,
         )
         self.runner = Runner(agent=self.agent, app_name=name, session_service=self.session_service)
+
+    def _wrap_snapshot(self, res: dict) -> dict:
+        """ツールの実行結果に最新の Cognitive Guidance を埋め込み、モデルが次の行動を自律理解できるようにする."""
+        if isinstance(res, dict):
+            res["mode_guidance"] = self._build_mode_guidance()
+        return res
+
+    def _build_mode_guidance(self) -> str:
+        """現在地の ThoughtMode に応じた目的、達成条件、遷移ルールを明確に生成."""
+        observed = self.screen.current_id in self.screen.viewed
+        mode = self.state.mode
+
+        if mode == ThoughtMode.PLAN:
+            if not observed:
+                return (
+                    "📍 Current State: [PLAN] (Screen Unobserved)\n"
+                    "🎯 Goal: Observe the board to inspect layout, entities, and colors.\n"
+                    "👉 Next Action: Call load_skill('visual-inspector') and observe_screen(view='current')."
+                )
+            if not self.state.rules:
+                return (
+                    "📍 Current State: [PLAN] (Screen Observed, Zero Causal Rules Known)\n"
+                    "🎯 Goal: Since how actions affect the game is unknown, you cannot plan yet. You must investigate causality.\n"
+                    "👉 Next Action: Call need_causal_knowledge(question='Which action moves the piece or interacts with targets?') to enter CAUSAL mode.\n"
+                    "⚠️ Notice: You have 0 learned rules. 'plan_actions' and 'step_action' are NOT available yet."
+                )
+            return (
+                "📍 Current State: [PLAN] (Rules Available)\n"
+                f"📚 Learned Rules: {list(self.state.rules.keys())}\n"
+                "🎯 Goal: Formulate an execution plan using your learned rules.\n"
+                "👉 Next Action: Call plan_actions(subgoal=..., steps=[...], rule_ids=[...]) to advance to EXECUTE mode.\n"
+                "⚠️ Notice: Environment actions (step_action/click_at) are NOT available directly in PLAN mode."
+            )
+        elif mode == ThoughtMode.CAUSAL:
+            active_q = self.state.questions[-1].question if self.state.questions else "unknown causal relation"
+            if not observed:
+                return (
+                    f"📍 Current State: [CAUSAL] (Screen Unobserved)\n"
+                    f"❓ Open Question: {active_q}\n"
+                    "🎯 Goal: Observe the screen to check for visible answers.\n"
+                    "👉 Next Action: Call observe_screen(view='current')."
+                )
+            return (
+                f"📍 Current State: [CAUSAL] (Screen Observed)\n"
+                f"❓ Open Question: {active_q}\n"
+                "🎯 Goal: Design a minimal experiment to test how an action works.\n"
+                "👉 Next Action: Call need_experiment(hypothesis='Action 1 moves the piece', prediction='Piece moves one cell', alternative='Piece does not move') to enter EXPERIMENT mode.\n"
+                "⚠️ Notice: Direct actions and plan_actions are NOT available in CAUSAL mode."
+            )
+        elif mode == ThoughtMode.EXPERIMENT:
+            exp = self.state.experiment or {}
+            hyp = exp.get("hypothesis", "active hypothesis")
+            return (
+                f"📍 Current State: [EXPERIMENT]\n"
+                f"🧪 Active Hypothesis: {hyp}\n"
+                "🎯 Goal: Execute the single test action for this experiment.\n"
+                "👉 Next Action: Call load_skill('game-controller') and step_action(action_id=..., reasoning='...') or click_at(x=..., y=..., reasoning='...').\n"
+                "   (If this hypothesis is no longer viable, call need_causal_knowledge to propose a different question)."
+            )
+        elif mode == ThoughtMode.EXECUTE:
+            next_step = self.state.plan[0] if self.state.plan else {}
+            return (
+                f"📍 Current State: [EXECUTE]\n"
+                f"📋 Next Planned Step: {next_step}\n"
+                "🎯 Goal: Execute the planned step.\n"
+                "👉 Next Action: Call load_skill('game-controller') and step_action(action_id=..., reasoning='...') or click_at(x=..., y=..., reasoning='...').\n"
+                "   (If an unexpected obstacle or rule violation appears, call need_causal_knowledge to pause and investigate)."
+            )
+        elif mode == ThoughtMode.REVIEW:
+            if not observed:
+                return (
+                    "📍 Current State: [REVIEW] (Screen Unobserved)\n"
+                    "🎯 Goal: Observe the consequence of the last action.\n"
+                    "👉 Next Action: Call observe_screen(view='both') to inspect changes before and after."
+                )
+            before_id = (self.state.pending or {}).get("frame_id", max(1, self.screen.current_id - 1))
+            after_id = self.screen.current_id
+            return (
+                "📍 Current State: [REVIEW] (Screen Observed)\n"
+                "🎯 Goal: Assess whether the observed outcome supports or refutes the hypothesis.\n"
+                f"👉 Next Action: Call assess_result(outcome='supported', evidence='Observed movement/change', before_frame_id={before_id}, after_frame_id={after_id}).\n"
+                "⚠️ Notice: 'resolve_question' is NOT available in REVIEW mode. You MUST call assess_result first!"
+            )
+        return ""
+
+    @tool_errors
+    def observe_screen(self, view: str = "current") -> dict:
+        """Inspect the current game frame on demand or compare before/after frames."""
+        res = self.screen.observe_screen(view=view)
+        return self._wrap_snapshot(res)
 
     def _tool_is_relevant(self, tool, context) -> bool:
         """Filter ADK-activated tools by thought purpose; ADK still owns loading.
@@ -143,18 +259,18 @@ class DeliberativeGamePlayer:
         if not goal.strip() or not visual_evidence.strip():
             raise ValueError("Supply a goal and its visible evidence.")
         self.state.goal = goal
-        return self.state.snapshot()
+        return self._wrap_snapshot(self.state.snapshot())
 
     @tool_errors
     def need_causal_knowledge(self, question: str) -> dict:
         """Suspend reasoning or an unissued action because a necessary causal fact is missing."""
-        return self.state.ask(question)
+        return self._wrap_snapshot(self.state.ask(question))
 
     @tool_errors
     def need_experiment(self, hypothesis: str, prediction: str, alternative: str) -> dict:
         """Evidence is insufficient: design a minimal intervention to distinguish explanations."""
         self._ensure_observed()
-        return self.state.propose_experiment(hypothesis, prediction, alternative)
+        return self._wrap_snapshot(self.state.propose_experiment(hypothesis, prediction, alternative))
 
     @tool_errors
     def assess_result(
@@ -168,7 +284,7 @@ class DeliberativeGamePlayer:
         self._ensure_observed()
         if before_frame_id not in self.screen.viewed or after_frame_id != self.screen.current_id:
             raise ValueError("Observe both the actual before and latest after frames first.")
-        return self.state.review(outcome, evidence, before_frame_id, after_frame_id)
+        return self._wrap_snapshot(self.state.review(outcome, evidence, before_frame_id, after_frame_id))
 
     @tool_errors
     def resolve_question(
@@ -179,7 +295,7 @@ class DeliberativeGamePlayer:
         result_ids: list[str],
     ) -> dict:
         """Record an evidence-backed conditional rule and resume the suspended thought."""
-        return self.state.resolve(answer, precondition, effect, result_ids)
+        return self._wrap_snapshot(self.state.resolve(answer, precondition, effect, result_ids))
 
     @tool_errors
     def answer_visible_question(self, answer: str, visual_evidence: str) -> dict:
@@ -199,7 +315,7 @@ class DeliberativeGamePlayer:
         )
         self.state.facts = self.state.facts[-16:]
         self.state.transition(question.return_mode, "Visible fact resolved without an intervention")
-        return self.state.snapshot()
+        return self._wrap_snapshot(self.state.snapshot())
 
     @tool_errors
     def use_known_rules(
@@ -216,7 +332,7 @@ class DeliberativeGamePlayer:
         self.state.transition(
             question.return_mode, f"Known rules answer {question.question}: {answer}"
         )
-        return self.state.snapshot()
+        return self._wrap_snapshot(self.state.snapshot())
 
     @tool_errors
     def plan_actions(self, subgoal: str, steps: list[dict[str, Any]], rule_ids: list[str]) -> dict:
@@ -228,7 +344,7 @@ class DeliberativeGamePlayer:
         self._ensure_observed()
         for step in steps:
             self._validate_action(step.get("action_id"), step.get("x"), step.get("y"))
-        return self.state.make_plan(subgoal, steps, rule_ids)
+        return self._wrap_snapshot(self.state.make_plan(subgoal, steps, rule_ids))
 
     @tool_errors
     def continue_plan(self, precondition_evidence: str) -> dict:
@@ -238,7 +354,7 @@ class DeliberativeGamePlayer:
         if not self.state.plan or not precondition_evidence.strip():
             raise ValueError("There is no remaining plan, or its precondition was not checked.")
         self.state.transition(ThoughtMode.EXECUTE, precondition_evidence)
-        return self.state.snapshot()
+        return self._wrap_snapshot(self.state.snapshot())
 
     def _validate_action(self, action_id, x=None, y=None) -> None:
         if type(action_id) is not int or action_id not in self.available_actions or action_id == 0:
@@ -391,6 +507,7 @@ class DeliberativeGamePlayer:
         return loop.run_until_complete(self._think(state_str))
 
     async def _think(self, state_str: str) -> ActionDecision:
+        start = time.perf_counter()
         session = await self.session_service.create_session(app_name=self.name, user_id="player")
         context = {
             "game_id": self.current_game_id,
@@ -399,8 +516,13 @@ class DeliberativeGamePlayer:
             "available_actions": self.available_actions,
             "thought": self.state.snapshot(),
         }
-        start = time.perf_counter()
-        message = Content(role="user", parts=[Part.from_text(text=json.dumps(context))])
+        guidance = self._build_mode_guidance()
+        prompt_text = (
+            f"Observation:\n{json.dumps(context, indent=2)}\n\n"
+            f"=== COGNITIVE GUIDANCE ===\n{guidance}\n\n"
+            "Task: Advance the cognitive state machine or execute an action using the appropriate tool."
+        )
+        message = Content(role="user", parts=[Part.from_text(text=prompt_text)])
         remaining = self.max_llm_calls
         try:
             while remaining > 0 and self.decision is None:
@@ -422,18 +544,15 @@ class DeliberativeGamePlayer:
                 finally:
                     await events.aclose()
                 remaining -= max(1, calls)
+                guidance = self._build_mode_guidance()
+                followup_text = (
+                    f"State update:\n{json.dumps(self.state.snapshot(), indent=2)}\n\n"
+                    f"=== COGNITIVE GUIDANCE ===\n{guidance}\n\n"
+                    "Task: Advance the state machine or execute an action using the opened tools."
+                )
                 message = Content(
                     role="user",
-                    parts=[
-                        Part.from_text(
-                            text=(
-                                "No action is scheduled. "
-                                "Continue resolving the question using tools. "
-                                "Textual reasoning is allowed but does not operate the game. "
-                                + json.dumps(self.state.snapshot())
-                            )
-                        )
-                    ],
+                    parts=[Part.from_text(text=followup_text)],
                 )
         finally:
             await self.session_service.delete_session(

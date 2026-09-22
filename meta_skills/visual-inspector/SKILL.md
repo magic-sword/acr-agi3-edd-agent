@@ -6,7 +6,7 @@ description: >-
   an action's before and after frames. Do NOT use to execute game actions or
   claim causal knowledge from appearance alone.
 license: MIT
-allowed-tools: load_skill_resource
+allowed-tools: observe_screen load_skill_resource
 metadata:
   pattern: workflow
   version: "3.0.0"

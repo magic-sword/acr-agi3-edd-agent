@@ -5,7 +5,7 @@ description: >-
   experiment, a checked plan step, or a diagnosed strategic reset.
   Do NOT use for passive inspection, free-text actions, or ungrounded moves.
 license: MIT
-allowed-tools: load_skill_resource
+allowed-tools: step_action click_at reset_game load_skill_resource
 metadata:
   pattern: workflow
   version: "2.0.0"

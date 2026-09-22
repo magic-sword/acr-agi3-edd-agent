@@ -156,9 +156,9 @@ class ADKGamePlayer:
         # Node 1: Visual Inspection (Perceive Node) - 盤面・アフォーダンス目視点検
         perceive_instruction = (
             "You are the Visual Inspection Specialist for ARC-AGI-3 dynamic games.\n"
-            "Your objective is to observe the visual console screen (game board and controller HUD) and extract objective spatial layout, active colors, player candidates, targets, and affordances.\n"
-            "1. You have access to the skills: 'visual-inspector', 'spatial-grounder'. You may call `load_skill(skill_name='visual-inspector')` if you need detailed inspection guides or scripts.\n"
-            "2. You may also call inspection tools directly if needed: `inspect_board_summary()`, `inspect_affordances(mode='deep')`, `inspect_detected_objects()`, or `inspect_clickable_anchors()`.\n"
+            "Your objective is to observe the visual console screen and extract objective spatial "
+            "layout, active colors, player candidates, targets, and affordances.\n"
+            "Discover and use available skills to inspect the game board.\n"
             "Output a concise visual observation summary:\n"
             "- Board layout geometry, active colors, and spatial symmetry\n"
             "- Discovered entities (player, goal, obstacles, movable blocks, clickable buttons)\n"
@@ -174,18 +174,15 @@ class ADKGamePlayer:
         # Node 2: Cognitive Planning (Plan Node) - 逆算プランニング・記憶連携
         plan_instruction = (
             "You are the Cognitive Planner for ARC-AGI-3 dynamic games.\n"
-            "Your objective is to review the visual observation summary from Node 1 and formulate a backward-chaining strategy and immediate subgoal.\n"
-            "CRITICAL CONSTRAINT: You are ONLY a planner. You MUST NOT execute actions or call step_action or click_at.\n"
-            "Node 3 will execute the action based on your plan.\n"
-            "1. You have access to the skills: 'memory-notebook', 'backward-planner', 'spatial-grounder', 'hypothesis-engine', 'subgoal-decomposer', 'rule-inducer'. You may call `load_skill(skill_name=...)` if needed.\n"
-            "2. You may use planning & reasoning tools:\n"
-            "   - Subgoals & Preconditions: `decompose_hierarchical_subgoals()`, `get_active_subgoal()`, `advance_subgoal()`\n"
-            "   - Hypotheses & Rules: `formulate_hypothesis(claim=...)`, `get_refuted_bookmarks()`, `get_known_rules()`\n"
-            "   - Memory: `memory_write(section_id=..., content=...)`, `memory_read(section_id=...)`, `memory_toc()`, `memory_search(query=...)`.\n"
-            "3. If planning an interaction or click, query candidate targets using `inspect_clickable_anchors()` or `inspect_detected_objects()`.\n"
+            "Your objective is to review the visual observation summary and formulate an action "
+            "strategy and immediate subgoal.\n"
+            "CRITICAL CONSTRAINT: You are ONLY a planner. Do not execute environment actions "
+            "directly.\n"
+            "Discover and use available skills to plan subgoals, manage memory, and reason about "
+            "causal rules.\n"
             "Output your planning strategy as plain text:\n"
-            "- Immediate subgoal (e.g. advance towards target, stage piece in buffer, test unexplored button, avoid trap)\n"
-            "- Keystone piece or dependency ordering (Backward Chaining)\n"
+            "- Immediate subgoal\n"
+            "- Keystone piece or dependency ordering\n"
             "- Key hypothesis on causal dynamics"
         )
         self.plan_agent = Agent(
@@ -198,17 +195,9 @@ class ADKGamePlayer:
         # Node 3: 1-Step Execution (Act Node) - 1手決定・安全検証
         act_instruction = (
             "You are the Action Decision Specialist for ARC-AGI-3 dynamic games.\n"
-            "Your objective is to execute the immediate subgoal from Node 2 using available tools.\n"
-            "1. You have access to the skills: 'game-controller', 'visual-inspector', 'spatial-grounder', 'macro-skill-compiler'. Call `load_skill(skill_name=...)` if needed.\n"
-            "2. Mouse Cursor Aiming & Visual Inspection Workflow (Aim -> Inspect -> Fire):\n"
-            "   - `move_cursor(x=col, y=row, reasoning='...')`: Move cursor to aim at target without consuming environment turns.\n"
-            "   - `inspect_cursor_target()`: Call visual-inspector to verify whether the reticle is centered on an interactable button and inspect the local 7x7 map.\n"
-            "   - `click_at_cursor(reasoning='...')`: Fire click at current cursor position (consumes turn).\n"
-            "   - `click_at(x=col, y=row, reasoning='...')`: Direct click (moves cursor and fires click).\n"
-            "3. Directional Steps & Reset:\n"
-            "   - `step_action(action='...', reasoning='...')`: Execute move using D-Pad ('UP', 'DOWN', 'LEFT', 'RIGHT') or button ('ACTION1'-'ACTION7').\n"
-            "   - `reset_game(reasoning='...')`: Reset level when deadlocked.\n"
-            "DO NOT call load_skill with action names (e.g. do NOT call load_skill('ACTION1')). Always use execution tools."
+            "Your objective is to execute the immediate subgoal using available tools.\n"
+            "Discover and use available skills to select and execute the single best action.\n"
+            "Always execute actions through the tools provided by the loaded skills."
         )
         self.act_agent = Agent(
             name=f"{self.name}_act",

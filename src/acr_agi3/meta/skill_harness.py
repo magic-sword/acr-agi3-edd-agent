@@ -92,11 +92,15 @@ class SkillHarness:
         additional_tools: Optional[List[Any]] = None,
     ) -> SkillToolset:
         """Google ADK 公式 SkillToolset を生成して返却 (Level 1/2/3 自動提供)."""
-        return SkillToolset(
+        ts = SkillToolset(
             skills=self.skills,
             tool_name_prefix=tool_name_prefix,
             additional_tools=additional_tools,
         )
+        for s in self.skills:
+            ts._skills[s.name.replace("-", "_")] = s
+            ts._skills[s.name.replace("_", "-")] = s
+        return ts
 
     def get_scoped_toolset(
         self,
@@ -111,30 +115,38 @@ class SkillHarness:
             skill = self.get_skill(name)
             if skill and skill not in scoped_skills:
                 scoped_skills.append(skill)
-        return SkillToolset(
+        ts = SkillToolset(
             skills=scoped_skills,
             tool_name_prefix=tool_name_prefix,
             additional_tools=additional_tools,
             tool_filter=tool_filter,
         )
+        for s in scoped_skills:
+            ts._skills[s.name.replace("-", "_")] = s
+            ts._skills[s.name.replace("_", "-")] = s
+        return ts
 
     def list_skills(self) -> List[Skill]:
         return self.skills
 
-    def get_level1_catalog(self) -> str:
+    def get_level1_catalog(self, skill_names: Optional[List[str]] = None) -> str:
         """Level 1 カタログ文字列の生成 (デバッグ・確認用)."""
         if not self._skills_map:
             return "No skills currently available."
+        skills = (
+            [self.get_skill(n) for n in skill_names if self.get_skill(n)]
+            if skill_names
+            else list(self._skills_map.values())
+        )
         lines = [
             "### Available Meta-Skills (Trigger on demand):",
             "To use any skill, request to trigger it by name to load its full workflow (Level 2 instructions).",
         ]
-        for s in self._skills_map.values():
+        for s in skills:
             desc = " ".join(s.description.strip().splitlines())
             if len(desc) > 120:
                 desc = desc[:117] + "..."
-            tools_str = f" [tools: {s.frontmatter.allowed_tools}]" if s.frontmatter.allowed_tools else ""
-            lines.append(f"- `{s.name}`: {desc}{tools_str}")
+            lines.append(f"- `{s.name}`: {desc}")
         return "\n".join(lines)
 
     def read_skill_content(self, skill_name: str) -> str:
@@ -149,6 +161,23 @@ class SkillHarness:
             f"===========================================\n\n"
         )
         return header + skill.instructions.strip()
+
+    def get_skills_operational_guidance(self, skill_names: List[str]) -> str:
+        """指定されたスキルの SKILL.md から思考ガイダンス・運用ルールを構造化抽出."""
+        guidance_blocks: List[str] = []
+        for name in skill_names:
+            skill = self.get_skill(name)
+            if not skill:
+                continue
+            inst = skill.instructions.strip()
+            guidance_blocks.append(
+                f"=== [Skill Guidance: {skill.name}] ===\n"
+                f"{skill.description.strip()}\n\n"
+                f"{inst}\n"
+            )
+        if not guidance_blocks:
+            return ""
+        return "\n".join(guidance_blocks)
 
     def get_skill_module(self, skill_name: str, script_name: Optional[str] = None) -> Any:
         """スキルディレクトリ配下の Python モジュールを直接インポートして返却."""

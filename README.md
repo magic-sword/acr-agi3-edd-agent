@@ -11,7 +11,7 @@
 
 詳細なアーキテクチャ設計書は [ARCHITECTURE.md](file:///home/prog/work/kaggle/acr-agi3-edd-agent/ARCHITECTURE.md)、AI エージェントの行動指針は [AGENTS.md](file:///home/prog/work/kaggle/acr-agi3-edd-agent/AGENTS.md)、学術論文（Paper Track）向けの設計経緯・認知科学的根拠は [docs/paper/RESEARCH_REPORT_META_SKILLS.md](file:///home/prog/work/kaggle/acr-agi3-edd-agent/docs/paper/RESEARCH_REPORT_META_SKILLS.md)、人間プレイ解析の評価指標は [docs/HUMAN_ADAPTATION_EVALUATION_METRICS.md](file:///home/prog/work/kaggle/acr-agi3-edd-agent/docs/HUMAN_ADAPTATION_EVALUATION_METRICS.md)、人間プレイ適応プロセスの詳細解析報告書は [docs/HUMAN_ADAPTATION_ANALYSIS_REPORT.md](file:///home/prog/work/kaggle/acr-agi3-edd-agent/docs/HUMAN_ADAPTATION_ANALYSIS_REPORT.md) を参照してください。
 
-現在の公式 `MyAgent` は、ゴールからの逆算を起点に「知識不足 → 因果推論 → 必要な実験 → 結果評価 → 計画再開」を行う状態機械です。画面は思考中に観測スキルで取得します。実行経路と検証範囲は [現在のワークフロー](docs/CURRENT_WORKFLOW.md) を参照してください。
+現在の公式 `MyAgent` は、ゴールからの逆算を起点に「知識不足 → 因果推論 → 必要な実験 → 結果評価 → 計画再開」を行う 5-Mode 認知状態機械です。画面は思考中に観測スキルで取得します。実行経路と検証範囲は [現在のワークフロー](docs/CURRENT_WORKFLOW.md)、認知ステートマシンの動的ガイダンス設計および実機検証データは [docs/COGNITIVE_STATE_MACHINE_GUIDANCE_DESIGN.md](file:///home/prog/work/kaggle/acr-agi3-edd-agent/docs/COGNITIVE_STATE_MACHINE_GUIDANCE_DESIGN.md)、Google ADK 2.0 の Progressive Disclosure 構造を崩さずにローカルモデル（Qwen2.5-VL）へ適応させたラッパー層の設計仕様は [docs/QWEN_ADK_ADAPTER_WRAPPER_DESIGN.md](file:///home/prog/work/kaggle/acr-agi3-edd-agent/docs/QWEN_ADK_ADAPTER_WRAPPER_DESIGN.md) を参照してください。
 
 ---
 

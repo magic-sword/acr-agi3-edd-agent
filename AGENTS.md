@@ -60,6 +60,12 @@ ACR-AGI-3 は **「未知の動的ゲーム環境において、状態観測か�
    * 提出ノートブック（`notebooks/submission_template.ipynb`）は、エージェントをロードして Gateway を叩くだけの極小・クリーンな構成（数十行）を維持すること。
    * 実行時動的生成スキル（`generated_skills/`）のみを書き込み可能領域（`/kaggle/working/generated_skills`）で扱うこと。
 
+10. **5-Mode 認知ステートマシンの動的ガイダンス設計の遵守**
+    * エージェントは 5-Mode（`PLAN`, `CAUSAL`, `EXPERIMENT`, `EXECUTE`, `REVIEW`）の認知的境界と遷移規則を厳格に遵守すること。
+    * **禁止事項**: モデルが呼べないツールを呼んだ際に、裏側のコードで勝手にモードを自動昇格させて通すアドホックなパッチを記述してはならない。
+    * **動的認知ガイダンス原則**: モデル自身が「現在地・目的・不足情報・次の正規ツール」を理解できるよう、`_build_mode_guidance()` およびツールの戻り値（`_wrap_snapshot`）を通じてリアルタイムに認知フィードバックを提供すること。
+    * 詳細設計仕様および実機検証データは [`docs/COGNITIVE_STATE_MACHINE_GUIDANCE_DESIGN.md`](file:///home/prog/work/kaggle/acr-agi3-edd-agent/docs/COGNITIVE_STATE_MACHINE_GUIDANCE_DESIGN.md) を参照すること。
+
 ---
 
 ## 🧩 Google ADK 準拠 3段階 Progressive Disclosure 設計思想

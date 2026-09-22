@@ -5,7 +5,7 @@ description: >-
   by missing causal knowledge, evidence requires an experiment, or an action result
   must be reviewed before resuming a suspended question. Do NOT use for static grid transformations or general factual questions.
 license: MIT
-allowed-tools: load_skill load_skill_resource
+allowed-tools: set_goal need_causal_knowledge need_experiment assess_result resolve_question plan_actions continue_plan answer_visible_question use_known_rules load_skill_resource
 metadata:
   pattern: workflow
   version: "1.0.0"
