@@ -84,6 +84,7 @@ def evaluate_single_environment(
     max_steps: int,
     scorecard_id: Optional[str] = None,
     verbose: bool = False,
+    event_log_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """1つの公式ゲーム環境に対してエージェントを実行."""
     env = arcade.make(game_id, scorecard_id=scorecard_id)
@@ -98,6 +99,16 @@ def evaluate_single_environment(
         record=False,
         arc_env=env,
     )
+
+    if event_log_path is not None and hasattr(agent, "player"):
+
+        def persist_event(event):
+            # Append each event before the next inference; survive interrupted runs.
+            with event_log_path.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(event, ensure_ascii=False) + "\n")
+                stream.flush()
+
+        agent.player.trace_sink = persist_event
 
     obs = env.reset()
     raw_obs_frame = [arr.tolist() for arr in obs.frame] if obs.frame else []
@@ -530,6 +541,7 @@ def main():
                 max_steps=default_steps,
                 scorecard_id=card_id,
                 verbose=args.verbose,
+                event_log_path=run_dir / f"environment_{idx:03d}.events.jsonl",
             )
         except Exception as error:
             res = {

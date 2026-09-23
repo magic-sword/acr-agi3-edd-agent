@@ -30,6 +30,14 @@ def prepare_experiment(p):
         "passage opens",
         "switch changes color only",
         expected_visual_change=True,
+        target={
+            "x": 0,
+            "y": 0,
+            "width": 8,
+            "height": 8,
+            "description": "test object and destination",
+        },
+        precondition="object visible",
     )
 
 
@@ -125,7 +133,19 @@ def test_causal_positive_evidence_changes_next_decision(outcome):
     else:
         assert (
             p.need_experiment(
-                "different hypothesis", "different effect", "no effect", expected_visual_change=True
+                "different hypothesis",
+                "different effect",
+                "no effect",
+                retry_reason="Prior result inconclusive; distinguish another effect",
+                expected_visual_change=True,
+                target={
+                    "x": 0,
+                    "y": 0,
+                    "width": 8,
+                    "height": 8,
+                    "description": "test object and destination",
+                },
+                precondition="object visible",
             )["mode"]
             == "EXPERIMENT"
         )
@@ -138,18 +158,55 @@ def test_causal_negative_invalid_evidence_or_retry(case):
     p.need_causal_knowledge("What opens the passage?")
     if case == "same_predictions":
         assert "error" in p.need_experiment(
-            "switch", "no change", "no change", expected_visual_change=True
+            "switch",
+            "no change",
+            "no change",
+            expected_visual_change=True,
+            target={
+                "x": 0,
+                "y": 0,
+                "width": 8,
+                "height": 8,
+                "description": "test object and destination",
+            },
+            precondition="object visible",
         )
     elif case == "invented_result":
         assert "error" in p.resolve_question("opens", "pressed", "open", ["fake"])
     else:
-        p.need_experiment("switch", "open", "closed", expected_visual_change=True)
+        p.need_experiment(
+            "switch",
+            "open",
+            "closed",
+            expected_visual_change=True,
+            target={
+                "x": 0,
+                "y": 0,
+                "width": 8,
+                "height": 8,
+                "description": "test object and destination",
+            },
+            precondition="object visible",
+        )
         p.step_action(1, "test")
         p.decision = None
         p.screen.publish(p.screen.frames[1])
         p.observe_screen(view="both")
         p.assess_result("refuted", "No passage opened", 1, 2)
-        p.need_experiment("switch", "open", "closed", expected_visual_change=True)
+        p.need_experiment(
+            "switch",
+            "open",
+            "closed",
+            expected_visual_change=True,
+            target={
+                "x": 0,
+                "y": 0,
+                "width": 8,
+                "height": 8,
+                "description": "test object and destination",
+            },
+            precondition="object visible",
+        )
         assert "error" in p.step_action(1, "repeat unchanged experiment")
         assert p.decision is None
 
@@ -287,6 +344,14 @@ def test_review_checks_explicit_visual_prediction(expected, changed):
         "predicted visible effect",
         "competing effect",
         expected_visual_change=expected,
+        target={
+            "x": 0,
+            "y": 0,
+            "width": 8,
+            "height": 8,
+            "description": "test object and destination",
+        },
+        precondition="object visible",
     )
     p.step_action(1, "test control")
     p.decision = None
@@ -311,7 +376,20 @@ def test_experiment_requires_boolean_prediction(expected):
     p = player()
     p.observe_screen()
     p.need_causal_knowledge("Does control move the object?")
-    result = p.need_experiment("movement", "moves", "stays", expected_visual_change=expected)
+    result = p.need_experiment(
+        "movement",
+        "moves",
+        "stays",
+        expected_visual_change=expected,
+        target={
+            "x": 0,
+            "y": 0,
+            "width": 8,
+            "height": 8,
+            "description": "test object and destination",
+        },
+        precondition="object visible",
+    )
     assert "error" in result
     assert p.state.mode == ThoughtMode.CAUSAL
     assert p.state.experiment is None

@@ -68,3 +68,24 @@ def test_actual_action_budget_exhaustion_is_distinct(monkeypatch):
     assert result["termination_reason"] == "action_budget_exhausted"
     assert result["errors"] == []
     assert len(result["observations"]) == 3
+
+
+def test_workflow_events_are_on_disk_before_inference_failure(monkeypatch, tmp_path):
+    import json
+
+    monkeypatch.setattr(leaderboard, "FrameData", SimpleNamespace)
+    env = SimpleNamespace(reset=observation)
+    arcade = SimpleNamespace(make=lambda *args, **kwargs: env)
+    journal = tmp_path / "events.jsonl"
+
+    class InterruptedAgent(Agent):
+        def choose_action(self, frames, latest_frame):
+            self.player.trace_sink({"kind": "model_input", "frame_id": 1})
+            assert json.loads(journal.read_text())["frame_id"] == 1
+            raise RuntimeError("interrupted after input")
+
+    result = leaderboard.evaluate_single_environment(
+        arcade, InterruptedAgent, "test", "TEST", 5, 80, event_log_path=journal
+    )
+    assert result["termination_reason"] == "inference_error"
+    assert json.loads(journal.read_text())["kind"] == "model_input"

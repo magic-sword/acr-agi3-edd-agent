@@ -8,7 +8,7 @@ license: MIT
 allowed-tools: set_goal need_causal_knowledge need_experiment assess_result resolve_question plan_actions continue_plan answer_visible_question use_known_rules load_skill_resource
 metadata:
   pattern: workflow
-  version: "2.0.0"
+  version: "3.0.0"
   adk_additional_tools:
     - set_goal
     - need_causal_knowledge
@@ -45,7 +45,9 @@ blind action emission without a goal and observation.
    Inspect the screen whenever needed. If existing evidence cannot distinguish
    explanations, call need_experiment with a hypothesis, a predicted visible
    result, a competing explanation, and explicit expected_visual_change (true or false).
-   This describes whether supporting the prediction requires the raw screen to change. Random button enumeration is not a goal.
+   Supply the observed precondition and target={x,y,width,height,description}.
+   The target is the effect region, including the expected destination for movement.
+   expected_visual_change concerns this region, not changes elsewhere on screen. Random button enumeration is not a goal.
 4. **EXPERIMENT**: Load game-controller. Perform one minimal intervention via
    step_action, or move_cursor followed by visual-inspector observation and
    click_at_cursor confirmation. Use physical
@@ -53,20 +55,27 @@ blind action emission without a goal and observation.
 5. **REVIEW**: In the next observation, call observe_screen(view="both"). Use
    assess_result with the actual before/after frame IDs and visual evidence.
    supported/refuted concern the predicted effect; inconclusive is legitimate.
-   A supported result must agree with expected_visual_change. Unchanged frames
+   A supported result must agree with expected_visual_change in the target region.
+   HUD changes outside it cannot support movement. Observe the full target region
+   in both frames before assessing. Reviews update the hypothesis ledger. Unchanged frames
    cannot support a predicted visible movement; use refuted or inconclusive.
    Screen animation alone does not verify a causal hypothesis. A wall collision
    does not refute the meaning of a movement button.
 6. **Resume**: After experiment review, return to CAUSAL. Use resolve_question
    with cited result IDs, a precondition and an effect. Rules remain provisional.
    Supported evidence should resolve the relevant gap before another experiment.
+   If all evidence is inconclusive, resolve_question is not exposed; inspect again
+   or design a revised experiment with retry_reason.
    Refutation can establish a conditional limitation; inconclusive evidence needs
-   a different observation or intervention. For a repeated intervention on the
-   same board, supply retry_reason explaining changed conditions or new information.
+   a different observation or intervention. For every new experiment on an already assessed question, supply retry_reason
+   explaining which prior evidence was insufficient and what new distinction is needed.
    Do not copy a previous test without learning from its result.
+   Cite only results for the active question ID. Contradictory evidence must be
+   disambiguated; refuted-only rules describe limitations and cannot justify execution.
    This pops the suspended question and returns to the mode that needed its answer.
 7. **EXECUTE**: In PLAN, call plan_actions with a subgoal, cited rule IDs and an
-   ordered list of steps. Each step needs action_id, precondition, expected_result;
+   ordered list of steps. Each step needs action_id, precondition, expected_result,
+   target={x,y,width,height,description}, and expected_visual_change;
    clicks need x and y. Execute only its first step; click coordinates describe the planned target,
    while execution requires moving, observing the reticle, and confirming it. After review, inspect current
    preconditions and continue_plan, revise the plan, or ask a new causal question.

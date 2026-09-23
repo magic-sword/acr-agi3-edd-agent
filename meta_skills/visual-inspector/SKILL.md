@@ -9,7 +9,7 @@ license: MIT
 allowed-tools: observe_screen load_skill_resource
 metadata:
   pattern: workflow
-  version: "4.0.0"
+  version: "5.0.0"
   adk_additional_tools:
     - observe_screen
 ---
@@ -44,7 +44,12 @@ causal conclusion. Repeated viewing does not produce a new environment frame.
 5. Separate visible facts from hypothesized roles and causal relations. A moving
    animation is not necessarily player movement or progress. A stationary object
    can mean an obstacle, a wrong control hypothesis, or insufficient evidence.
-6. Resume the interrupted thought. A visible factual question can be answered
+6. Ground experiment and plan predictions in an observed target region:
+   x, y, width, height and a description in original frame coordinates. Include
+   an expected movement destination; avoid unrelated HUD regions. A crop outside
+   the target does not count as inspecting it. Inspect the region in both frames
+   for review; an invisible or ambiguous effect is inconclusive.
+7. Resume the interrupted thought. A visible factual question can be answered
    without a game action; causal uncertainty may require a controlled experiment.
 
 ## Examples

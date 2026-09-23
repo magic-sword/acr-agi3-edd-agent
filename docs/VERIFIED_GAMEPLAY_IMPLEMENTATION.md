@@ -1,5 +1,8 @@
 # 観測・操作・因果レビューの接続修正
 
+本書は先行修正の記録。2026-09-23の対象領域・仮説台帳・逐次ログを含む追加再設計は
+[ADK状態機械再設計](ADK_WORKFLOW_STATE_MACHINE_REDESIGN.md)を参照。
+
 ## 実装した動作
 
 提出経路は `MyAgent → DeliberativeGamePlayer → SkillHarness / ADK SkillToolset`。

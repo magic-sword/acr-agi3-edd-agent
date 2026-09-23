@@ -16,6 +16,7 @@ class ScreenTools:
         self.frames: dict[int, np.ndarray] = {}
         self.current_id = 0
         self.viewed: set[int] = set()
+        self.viewed_regions: dict[int, list[tuple[int, int, int, int]]] = {}
         self.cursor: tuple[int, int] | None = None
         self.cursor_revision = 0
         self.cursor_observed: tuple[int, int] | None = None
@@ -56,6 +57,7 @@ class ScreenTools:
         for key in list(self.frames)[:-2]:
             del self.frames[key]
             self.viewed.discard(key)
+            self.viewed_regions.pop(key, None)
         return self.current_id
 
     def observe_screen(
@@ -113,6 +115,18 @@ class ScreenTools:
                 }
             )
         self.viewed.update(selected)
+        for item in images:
+            ox, oy = item["origin"]
+            rh, rw = item["grid_shape"]
+            self.viewed_regions.setdefault(item["frame_id"], []).append((ox, oy, rw, rh))
         if cursor_visible:
             self.cursor_observed = (self.current_id, self.cursor_revision)
         return {"screen_observation": {"images": images, "current_frame_id": self.current_id}}
+
+    def require_viewed_region(self, frame_id: int, target: dict) -> None:
+        tx, ty, tw, th = (target[k] for k in ("x", "y", "width", "height"))
+        if not any(
+            x <= tx and y <= ty and tx + tw <= x + w and ty + th <= y + h
+            for x, y, w, h in self.viewed_regions.get(frame_id, [])
+        ):
+            raise ValueError("Observe the entire predicted target region in this frame first.")

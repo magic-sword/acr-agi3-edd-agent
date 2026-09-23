@@ -104,7 +104,7 @@ def test_my_agent_integration_with_adk_player():
         {"name":"load_skill", "args":{"skill_name":"visual-inspector"}},
         {"name":"observe_screen", "args":{}},
         {"name":"need_experiment", "args":{
-            "expected_visual_change":True, "hypothesis":"Tile opens route", "prediction":"Route opens", "alternative":"Tile only changes color"}},
+            "target":{"x":0,"y":0,"width":10,"height":10,"description":"switch and passage"}, "precondition":"switch visible", "expected_visual_change":True, "hypothesis":"Tile opens route", "prediction":"Route opens", "alternative":"Tile only changes color"}},
         {"name":"load_skill", "args":{"skill_name":"game-controller"}},
         {"name":"move_cursor", "args":{"x":8,"y":5,"reasoning":"Aim at switch"}},
         {"name":"observe_screen", "args":{}},

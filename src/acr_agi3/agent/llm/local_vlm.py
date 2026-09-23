@@ -5,6 +5,7 @@ ARC のグリッド画像とテキスト (SKILL.md やプロンプト) を統合
 インターネット接続なしの完全オフライン動作に対応しています。
 """
 
+import hashlib
 import inspect
 import json
 import logging
@@ -57,6 +58,13 @@ class LocalQwenVL(BaseLlm):
     _processor: Any = PrivateAttr(default=None)
     _generate_fn: Optional[Callable[..., str]] = PrivateAttr(default=None)
     _inference_trace: list[dict] = PrivateAttr(default_factory=list)
+    _trace_sink: Any = PrivateAttr(default=None)
+
+    def _record_inference(self, entry: dict) -> None:
+        self._inference_trace.append(entry)
+        if self._trace_sink is not None:
+            self._trace_sink(entry)
+
     _last_output_error: str = PrivateAttr(default="")
 
     # プロセス内シングルトンキャッシュ (再ロードによる VRAM 浪費・時間遅延を防止)
@@ -440,6 +448,21 @@ class LocalQwenVL(BaseLlm):
         """マルチモーダル (画像 + テキスト) リクエストを推論処理."""
         self._last_output_error = ""
         prompt, images = self._extract_text_and_images(llm_request)
+        self._record_inference(
+            {
+                "phase": "input",
+                "prompt": prompt,
+                "available_tools": sorted(self._extract_available_tools(llm_request)),
+                "images": [
+                    {
+                        "size": list(img.size),
+                        "mode": img.mode,
+                        "sha256": hashlib.sha256(img.tobytes()).hexdigest(),
+                    }
+                    for img in images
+                ],
+            }
+        )
 
         # 1. カスタム生成関数 (モック・テスト用) の場合
         if self._generate_fn is not None:
@@ -447,7 +470,9 @@ class LocalQwenVL(BaseLlm):
                 generated = await self._generate_fn(prompt, images=images)
             else:
                 generated = self._generate_fn(prompt, images=images)
-            self._inference_trace.append({"image_count": len(images), "raw_output": str(generated)})
+            self._record_inference(
+                {"phase": "output", "image_count": len(images), "raw_output": str(generated)}
+            )
 
             available_tools = self._extract_available_tools(llm_request)
             tc = self._detect_tool_call(generated, available_tools=available_tools)
@@ -502,6 +527,15 @@ class LocalQwenVL(BaseLlm):
             ).to(self._model.device)
 
             input_tokens = int(inputs["input_ids"].shape[-1])
+            self._record_inference(
+                {
+                    "phase": "prepared_input",
+                    "rendered_prompt": text,
+                    "input_tokens": input_tokens,
+                    "image_count": len(vision_images),
+                    "max_input_tokens": self.max_input_tokens,
+                }
+            )
             if input_tokens > self.max_input_tokens:
                 raise ValueError(
                     f"Visual context exceeds input budget: {input_tokens} > {self.max_input_tokens}; "
@@ -522,8 +556,9 @@ class LocalQwenVL(BaseLlm):
                     skip_special_tokens=True,
                     clean_up_tokenization_spaces=False,
                 )[0]
-                self._inference_trace.append(
+                self._record_inference(
                     {
+                        "phase": "output",
                         "image_count": len(vision_images),
                         "input_tokens": input_tokens,
                         "output_tokens": len(generated_ids_trimmed[0]),

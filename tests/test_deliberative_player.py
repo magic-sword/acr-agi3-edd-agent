@@ -36,6 +36,14 @@ def experiment_calls(action_id=1):
             prediction="Object moves one cell right",
             alternative="Object stays or moves elsewhere",
             expected_visual_change=True,
+            target={
+                "x": 0,
+                "y": 0,
+                "width": 8,
+                "height": 8,
+                "description": "test object and destination",
+            },
+            precondition="object visible",
         ),
         call("load_skill", skill_name="game-controller"),
         call(
@@ -82,6 +90,7 @@ def test_goal_first_experiment_then_resume_plan_with_real_tool_images():
             effect="Moves one cell right",
             result_ids=["result_1"],
         ),
+        call("set_goal", goal="reach visible target", visual_evidence="target remains at right"),
         call(
             "plan_actions",
             subgoal="Approach the target",
@@ -91,6 +100,14 @@ def test_goal_first_experiment_then_resume_plan_with_real_tool_images():
                     "action_id": 1,
                     "precondition": "Right neighbor is free",
                     "expected_result": "Red object advances one cell towards target",
+                    "expected_visual_change": True,
+                    "target": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 8,
+                        "height": 8,
+                        "description": "object route",
+                    },
                 }
             ],
         ),
@@ -143,7 +160,18 @@ def test_unknown_action_and_unseen_screen_cannot_execute():
     assert "error" in player.step_action(1, "go")  # PLAN is not execution.
     player.need_causal_knowledge("What does the button do?")
     player.need_experiment(
-        "moves", "object changes location", "does nothing", expected_visual_change=True
+        "moves",
+        "object changes location",
+        "does nothing",
+        expected_visual_change=True,
+        target={
+            "x": 0,
+            "y": 0,
+            "width": 8,
+            "height": 8,
+            "description": "test object and destination",
+        },
+        precondition="object visible",
     )
     assert "error" in player.step_action(7, "invalid")
     assert player.decision is None
@@ -196,11 +224,18 @@ def test_nested_question_resumes_causal_parent_before_plan():
     state = ThoughtState()
     state.ask("How to open the door?")
     state.ask("Which object is the switch?")
-    state.results["e1"] = {"outcome": "supported"}
+    state.results["e1"] = {
+        "outcome": "supported",
+        "action": {"question_id": state.questions[-1].question_id},
+    }
     state.resolve("The left tile is a switch", "tile pressed", "door changes", ["e1"])
     assert state.mode == ThoughtMode.CAUSAL
     assert state.questions[-1].question == "How to open the door?"
-    state.resolve("Press the switch", "door closed", "door opens", ["e1"])
+    state.results["e2"] = {
+        "outcome": "supported",
+        "action": {"question_id": state.questions[-1].question_id},
+    }
+    state.resolve("Press the switch", "door closed", "door opens", ["e2"])
     assert state.mode == ThoughtMode.PLAN
 
 
@@ -246,6 +281,7 @@ def test_failed_plan_preserves_rule_but_discards_remaining_actions():
 def test_game_switch_isolates_rules_and_reset_drops_stale_observations():
     player = DeliberativeGamePlayer(model=model_script([]))
     player.switch_game("first")
+    player.set_goal("reach target", "target visible to right")
     player.state.rules["known"] = {"effect": "right"}
     player.state.facts.append({"frame_id": 1, "answer": "target on right"})
     first_id = player.screen.publish(board())
@@ -283,8 +319,17 @@ def test_one_action_per_frame_and_continue_plan_requires_fresh_observation():
     player.screen.observe_screen()
     player.available_actions = [1]
     player.actions.set_available_actions([1])
+    player.set_goal("reach target", "target visible to right")
     player.state.rules["known"] = {"effect": "right"}
-    steps = [{"action_id": 1, "precondition": "free", "expected_result": "moves right"}] * 2
+    steps = [
+        {
+            "action_id": 1,
+            "precondition": "free",
+            "expected_result": "moves right",
+            "expected_visual_change": True,
+            "target": {"x": 0, "y": 0, "width": 8, "height": 8, "description": "object route"},
+        }
+    ] * 2
     assert player.plan_actions("approach goal", steps, ["known"])["mode"] == "EXECUTE"
     assert player.step_action(1, "free right cell")["scheduled"]
     assert "error" in player.step_action(1, "another step")
@@ -338,7 +383,6 @@ EXPECTED = {
     ThoughtMode.CAUSAL: {
         "need_causal_knowledge",
         "need_experiment",
-        "resolve_question",
         "answer_visible_question",
         "use_known_rules",
         "reset_game",
