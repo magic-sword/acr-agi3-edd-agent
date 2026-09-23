@@ -9,7 +9,7 @@ ARC Gateway / Kaggle 提出仕様に準拠し、
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from acr_agi3.agent.deliberative_player import DeliberativeGamePlayer
 from acr_agi3.harness.game_action_tools import ActionDecision
@@ -87,6 +87,7 @@ class MyAgent(Agent):
             pass
         self.game_id = game_id or getattr(self, "game_id", "default")
         self.step_count = 0
+        self.last_decision_metadata: dict = {}
 
         # ADK 2.0 ネイティブゲームプレイヤー
         import re
@@ -104,6 +105,7 @@ class MyAgent(Agent):
     def choose_action(self, frames: list[FrameData], latest_frame: FrameData) -> Any:
         """現在の観測フレームから、ADK 2.0 エージェントの思考を経て行動を選択."""
         self.step_count += 1
+        self.last_decision_metadata = {}
         state = getattr(latest_frame, "state", None)
 
         # ゲーム開始時または終了時はリセットを発行
@@ -135,8 +137,8 @@ class MyAgent(Agent):
         act_id = decision.action_id
         try:
             action = GameAction.from_id(act_id)
-        except Exception:
-            action = GameAction.ACTION1
+        except Exception as error:
+            raise ValueError(f"Unsupported action ID from execution tool: {act_id}") from error
 
         # クリック座標や理由データの付与
         if decision.coordinates:
@@ -145,11 +147,12 @@ class MyAgent(Agent):
             action.action_data = ActionDataWrapper({})
 
         action_reasoning = {
-            "strategy": decision.reasoning,
+            "strategy": decision.reasoning[:1000],
             "step": self.step_count,
             "loaded_skill": decision.loaded_skill,
         }
         if hasattr(decision, "metadata") and isinstance(decision.metadata, dict):
-            action_reasoning.update(decision.metadata)
+            self.last_decision_metadata = decision.metadata
+            action_reasoning["thought_mode"] = decision.metadata.get("thought_mode")
         action.reasoning = action_reasoning
         return action

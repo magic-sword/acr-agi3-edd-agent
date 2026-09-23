@@ -35,6 +35,7 @@ def experiment_calls(action_id=1):
             hypothesis="This button moves the object right",
             prediction="Object moves one cell right",
             alternative="Object stays or moves elsewhere",
+            expected_visual_change=True,
         ),
         call("load_skill", skill_name="game-controller"),
         call(
@@ -141,7 +142,9 @@ def test_unknown_action_and_unseen_screen_cannot_execute():
     player.screen.observe_screen()
     assert "error" in player.step_action(1, "go")  # PLAN is not execution.
     player.need_causal_knowledge("What does the button do?")
-    player.need_experiment("moves", "object changes location", "does nothing")
+    player.need_experiment(
+        "moves", "object changes location", "does nothing", expected_visual_change=True
+    )
     assert "error" in player.step_action(7, "invalid")
     assert player.decision is None
 
@@ -340,8 +343,8 @@ EXPECTED = {
         "use_known_rules",
         "reset_game",
     },
-    ThoughtMode.EXPERIMENT: {"need_causal_knowledge", "step_action", "click_at"},
-    ThoughtMode.EXECUTE: {"need_causal_knowledge", "step_action", "click_at"},
+    ThoughtMode.EXPERIMENT: {"need_causal_knowledge", "step_action"},
+    ThoughtMode.EXECUTE: {"need_causal_knowledge", "step_action"},
     ThoughtMode.REVIEW: {"assess_result"},
 }
 
@@ -440,3 +443,50 @@ def test_skill_activation_does_not_leak_into_next_gateway_session():
     player.reset()
     player.decide_next_action(board(), available_actions=[1])
     assert set(schemas(captures[len(experiment_calls())][0])) == CORE
+
+
+def test_reloading_active_skill_keeps_tools_without_reinjecting_instructions():
+    captures = []
+    calls = experiment_calls()
+    calls.insert(1, call("load_skill", skill_name="causal-deliberation"))
+    player = DeliberativeGamePlayer(model=model_script(calls, captures))
+    decision = player.decide_next_action(board(), available_actions=[1])
+    assert decision.action_id == 1
+    assert captures[2][0].count("# Causal Deliberation") == 1
+    assert '"already_loaded": true' in captures[2][0]
+    assert "need_causal_knowledge" in schemas(captures[2][0])
+
+
+def test_invalid_tool_feedback_is_host_input_without_rewriting_model_output():
+    captures = []
+    invalid = call("visual_inspector")
+    player = DeliberativeGamePlayer(model=model_script([invalid] + experiment_calls(), captures))
+    decision = player.decide_next_action(board(), available_actions=[1])
+    assert decision.action_id == 1
+    assert "Tool feedback: No tool executed" in captures[1][0]
+    assert not any(
+        t.get("name") == "visual_inspector" for t in player.last_trace if t["kind"] == "call"
+    )
+    raw = [t for t in player.last_trace if t["kind"] == "inference"][0]["raw_output"]
+    assert raw == str(invalid)
+
+
+def test_click_tool_is_disclosed_only_after_current_reticle_observation():
+    captures = []
+    calls = experiment_calls()[:-1] + [
+        call("move_cursor", x=6, y=4, reasoning="Aim at visible target"),
+        call("observe_screen"),
+        call(
+            "click_at_cursor",
+            visual_evidence="Reticle aligned with target",
+            reasoning="Test target",
+        ),
+    ]
+    player = DeliberativeGamePlayer(model=model_script(calls, captures))
+    decision = player.decide_next_action(board(), available_actions=[6])
+    assert decision.coordinates == {"x": 6, "y": 4}
+    assert "move_cursor" in schemas(captures[-3][0])
+    assert "click_at_cursor" not in schemas(captures[-3][0])
+    assert "click_at_cursor" not in schemas(captures[-2][0])
+    assert "click_at_cursor" in schemas(captures[-1][0])
+    assert "step_action" not in schemas(captures[-1][0])

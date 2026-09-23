@@ -9,6 +9,7 @@ import time
 from functools import wraps
 from typing import Any
 
+import numpy as np
 from google.adk.agents import Agent
 from google.adk.agents.invocation_context import LlmCallsLimitExceededError
 from google.adk.runners import RunConfig, Runner
@@ -32,7 +33,7 @@ def tool_errors(function):
         try:
             return function(*args, **kwargs)
         except (ValueError, KeyError, TypeError) as error:
-            return {"error": str(error)}
+            return {"error": str(error), "mode_guidance": args[0]._build_mode_guidance()}
 
     return wrapped
 
@@ -60,6 +61,8 @@ class DeliberativeGamePlayer:
         self.reset_states: set[bytes] = set()
         self._reset_pending = False
         self.decision: ActionDecision | None = None
+        self.last_trace: list[dict] = []
+        self._loaded_skills: set[str] = set()
         self.session_service = InMemorySessionService()
         bindings = [
             self.set_goal,
@@ -73,7 +76,8 @@ class DeliberativeGamePlayer:
             self.use_known_rules,
             self.observe_screen,
             self.step_action,
-            self.click_at,
+            self.move_cursor,
+            self.click_at_cursor,
             self.reset_game,
         ]
         scoped_skills = ["causal-deliberation", "visual-inspector", "game-controller"]
@@ -88,6 +92,9 @@ class DeliberativeGamePlayer:
             "You solve games through a rigorous 5-Mode Cognitive State Machine.\n"
             "NEVER take blind actions without grounded evidence or hypothesis.\n\n"
             f"{catalog}\n\n"
+            "Before any cognitive transition, load_skill(skill_name='causal-deliberation'). "
+            "To observe, load 'visual-inspector'; to aim or act, load 'game-controller'. "
+            "Tools absent from the current schemas cannot be called. Loading a skill never changes mode.\n\n"
             "=== COGNITIVE STATE MACHINE ARCHITECTURE ===\n"
             "1. [PLAN Mode] (Current Goal & Strategy)\n"
             "   - Purpose: Observe the screen, identify the goal, and formulate a plan.\n"
@@ -95,18 +102,18 @@ class DeliberativeGamePlayer:
             "   - If causal rules are UNKNOWN (how objects move or what buttons do):\n"
             "     -> Call need_causal_knowledge(question='...') to advance to CAUSAL mode.\n"
             "   - If plan is ready: Call plan_actions(subgoal=..., steps=[...], rule_ids=[...]) to advance to EXECUTE mode.\n"
-            "   - Constraint: Environment actions (step_action/click_at) are NOT available in PLAN mode.\n\n"
+            "   - Constraint: Environment actions (step_action/click_at_cursor) are NOT available in PLAN mode.\n\n"
             "2. [CAUSAL Mode] (Knowledge Gap Resolution)\n"
             "   - Purpose: Resolve open questions through hypothesis testing.\n"
             "   - If visible by inspection: Call answer_visible_question(answer=..., visual_evidence=...).\n"
-            "   - If test is needed: Call need_experiment(hypothesis=..., prediction=..., alternative=...) to advance to EXPERIMENT mode.\n"
+            "   - If test is needed: Call need_experiment(hypothesis=..., prediction=..., alternative=..., expected_visual_change=...) to advance to EXPERIMENT mode.\n"
             "   - Constraint: Environment actions are NOT available in CAUSAL mode.\n\n"
             "3. [EXPERIMENT Mode] (Controlled Hypothesis Testing)\n"
             "   - Purpose: Execute ONE minimal intervention to test the active hypothesis.\n"
-            "   - Action: Load 'game-controller' and call step_action(action_id=..., reasoning=...) or click_at(x=..., y=..., reasoning=...).\n\n"
+            "   - Action: Load 'game-controller' and call step_action(action_id=..., reasoning=...) or move_cursor, observe_screen, then click_at_cursor.\n\n"
             "4. [EXECUTE Mode] (Plan Step Dispatch)\n"
             "   - Purpose: Execute the planned step.\n"
-            "   - Action: Load 'game-controller' and call step_action or click_at matching the plan.\n\n"
+            "   - Action: Load 'game-controller' and call step_action or click_at_cursor matching the plan.\n\n"
             "5. [REVIEW Mode] (Outcome Assessment & Rule Learning)\n"
             "   - Purpose: Compare before and after frames to assess hypothesis validity.\n"
             "   - Steps: Call observe_screen(view='both'), then assess_result(...).\n"
@@ -121,13 +128,34 @@ class DeliberativeGamePlayer:
             model=self.model,
             tools=[toolset],
             instruction=instruction,
+            before_tool_callback=self._before_tool,
+            after_tool_callback=self._after_tool,
         )
         self.runner = Runner(agent=self.agent, app_name=name, session_service=self.session_service)
+
+    def _before_tool(self, tool, args, tool_context):
+        if tool.name == "load_skill" and args.get("skill_name") in self._loaded_skills:
+            return self._wrap_snapshot(
+                {
+                    "skill_name": args["skill_name"],
+                    "already_loaded": True,
+                    "message": "Skill is active in this session. Use its exposed tools; do not reload it.",
+                }
+            )
+        return None
+
+    def _after_tool(self, tool, args, tool_context, tool_response):
+        if not isinstance(tool_response, dict):
+            return None
+        if tool.name == "load_skill" and "instructions" in tool_response:
+            self._loaded_skills.add(tool_response["skill_name"])
+        return self._wrap_snapshot(dict(tool_response))
 
     def _wrap_snapshot(self, res: dict) -> dict:
         """ツールの実行結果に最新の Cognitive Guidance を埋め込み、モデルが次の行動を自律理解できるようにする."""
         if isinstance(res, dict):
             res["mode_guidance"] = self._build_mode_guidance()
+            res["active_skills"] = sorted(self._loaded_skills)
         return res
 
     def _build_mode_guidance(self) -> str:
@@ -135,83 +163,109 @@ class DeliberativeGamePlayer:
         observed = self.screen.current_id in self.screen.viewed
         mode = self.state.mode
 
-        if mode == ThoughtMode.PLAN:
-            if not observed:
+        def load_guidance(skill_name: str) -> str:
+            call = json.dumps({"name": "load_skill", "arguments": {"skill_name": skill_name}})
+            return (
+                f"{mode.value}: Required skill is not loaded. Next tool call: {call}. "
+                f"'{skill_name}' is a skill name, not a callable tool. "
+                "Use the load_skill tool; do not call the skill name as a function."
+            )
+
+        if not observed:
+            if "visual-inspector" not in self._loaded_skills:
+                return load_guidance("visual-inspector")
+            view = "both" if mode == ThoughtMode.REVIEW else "current"
+            return f"{mode.value}: Visual inspector is active. Call observe_screen(view='{view}')."
+        if mode in (ThoughtMode.PLAN, ThoughtMode.CAUSAL, ThoughtMode.REVIEW):
+            if "causal-deliberation" not in self._loaded_skills:
+                return load_guidance("causal-deliberation")
+        if mode in (ThoughtMode.EXPERIMENT, ThoughtMode.EXECUTE):
+            if "game-controller" not in self._loaded_skills:
+                return load_guidance("game-controller")
+            if self.available_actions == [6] or self.screen.cursor is not None:
+                if self.screen.cursor is None:
+                    return f"{mode.value}: Call move_cursor to aim at the observed target; no click yet."
+                if self.screen.cursor_observed != (
+                    self.screen.current_id,
+                    self.screen.cursor_revision,
+                ):
+                    return f"{mode.value}: Cursor moved. Call observe_screen to inspect the reticle before clicking."
                 return (
-                    "📍 Current State: [PLAN] (Screen Unobserved)\n"
-                    "🎯 Goal: Observe the board to inspect layout, entities, and colors.\n"
-                    "👉 Next Action: Call load_skill('visual-inspector') and observe_screen(view='current')."
+                    f"{mode.value}: Reticle has been observed. If aligned, call click_at_cursor "
+                    "with visual_evidence and reasoning. If misplaced, move_cursor and observe again."
+                )
+
+        if mode == ThoughtMode.PLAN:
+            if self.state.goal_evidence is None:
+                return (
+                    "PLAN: Call set_goal with the displayed goal and visual evidence. "
+                    "If the goal is unknown, state that explicitly and describe visible candidates."
                 )
             if not self.state.rules:
                 return (
-                    "📍 Current State: [PLAN] (Screen Observed, Zero Causal Rules Known)\n"
-                    "🎯 Goal: Since how actions affect the game is unknown, you cannot plan yet. You must investigate causality.\n"
-                    "👉 Next Action: Call need_causal_knowledge(question='Which action moves the piece or interacts with targets?') to enter CAUSAL mode.\n"
-                    "⚠️ Notice: You have 0 learned rules. 'plan_actions' and 'step_action' are NOT available yet."
+                    "PLAN: Goal recorded; causal rules unknown. Call need_causal_knowledge "
+                    "with the specific missing relation blocking this goal."
                 )
             return (
-                "📍 Current State: [PLAN] (Rules Available)\n"
-                f"📚 Learned Rules: {list(self.state.rules.keys())}\n"
-                "🎯 Goal: Formulate an execution plan using your learned rules.\n"
-                "👉 Next Action: Call plan_actions(subgoal=..., steps=[...], rule_ids=[...]) to advance to EXECUTE mode.\n"
-                "⚠️ Notice: Environment actions (step_action/click_at) are NOT available directly in PLAN mode."
+                f"PLAN: Goal {self.state.goal}. Rules: {list(self.state.rules)}. "
+                "Plan backwards from the winning condition and its prerequisites; allow staging "
+                "and temporary detours. Call plan_actions with conditional steps and cited rule_ids, "
+                "continue_plan for a verified remaining plan, or need_causal_knowledge for a gap."
             )
-        elif mode == ThoughtMode.CAUSAL:
-            active_q = self.state.questions[-1].question if self.state.questions else "unknown causal relation"
-            if not observed:
+        if mode == ThoughtMode.CAUSAL:
+            active_q = (
+                self.state.questions[-1].question if self.state.questions else "unknown relation"
+            )
+            relevant = [
+                (key, value)
+                for key, value in self.state.results.items()
+                if value.get("action", {}).get("question") == active_q
+            ]
+            if relevant:
+                result_id, result = relevant[-1]
                 return (
-                    f"📍 Current State: [CAUSAL] (Screen Unobserved)\n"
-                    f"❓ Open Question: {active_q}\n"
-                    "🎯 Goal: Observe the screen to check for visible answers.\n"
-                    "👉 Next Action: Call observe_screen(view='current')."
+                    f"CAUSAL: Question: {active_q}. Latest evidence: {result_id}: "
+                    f"{result['outcome']}: {result['evidence']}. "
+                    "If this answers the question, call resolve_question with cited result_ids, "
+                    "a conditional precondition and effect to resume the suspended plan. "
+                    "Refutation establishes a conditional limitation, not a universal prohibition. "
+                    "If inconclusive or insufficient, revise the hypothesis or observation and "
+                    "call need_experiment. Repeating an intervention requires retry_reason "
+                    "explaining changed conditions or new information."
                 )
             return (
-                f"📍 Current State: [CAUSAL] (Screen Observed)\n"
-                f"❓ Open Question: {active_q}\n"
-                "🎯 Goal: Design a minimal experiment to test how an action works.\n"
-                "👉 Next Action: Call need_experiment(hypothesis='Action 1 moves the piece', prediction='Piece moves one cell', alternative='Piece does not move') to enter EXPERIMENT mode.\n"
-                "⚠️ Notice: Direct actions and plan_actions are NOT available in CAUSAL mode."
+                f"CAUSAL: Question: {active_q}. Use answer_visible_question for visible facts, "
+                "use_known_rules for existing knowledge, or need_experiment with distinguishable "
+                "conditional predictions and explicit expected_visual_change (boolean) for a missing relation. Choose the intervention from "
+                "the observed board and available_actions. Do not ask the same question again."
             )
-        elif mode == ThoughtMode.EXPERIMENT:
-            exp = self.state.experiment or {}
-            hyp = exp.get("hypothesis", "active hypothesis")
+        if mode in (ThoughtMode.EXPERIMENT, ThoughtMode.EXECUTE):
             return (
-                f"📍 Current State: [EXPERIMENT]\n"
-                f"🧪 Active Hypothesis: {hyp}\n"
-                "🎯 Goal: Execute the single test action for this experiment.\n"
-                "👉 Next Action: Call load_skill('game-controller') and step_action(action_id=..., reasoning='...') or click_at(x=..., y=..., reasoning='...').\n"
-                "   (If this hypothesis is no longer viable, call need_causal_knowledge to propose a different question)."
+                f"{mode.value}: Execute the prepared button using step_action, or aim at a "
+                "click target with move_cursor, observe_screen, then click_at_cursor. "
+                "Call need_causal_knowledge if a new gap prevents the prepared action."
             )
-        elif mode == ThoughtMode.EXECUTE:
-            next_step = self.state.plan[0] if self.state.plan else {}
+        if mode == ThoughtMode.REVIEW:
+            before_id = (self.state.pending or {}).get("frame_id", self.screen.current_id - 1)
             return (
-                f"📍 Current State: [EXECUTE]\n"
-                f"📋 Next Planned Step: {next_step}\n"
-                "🎯 Goal: Execute the planned step.\n"
-                "👉 Next Action: Call load_skill('game-controller') and step_action(action_id=..., reasoning='...') or click_at(x=..., y=..., reasoning='...').\n"
-                "   (If an unexpected obstacle or rule violation appears, call need_causal_knowledge to pause and investigate)."
-            )
-        elif mode == ThoughtMode.REVIEW:
-            if not observed:
-                return (
-                    "📍 Current State: [REVIEW] (Screen Unobserved)\n"
-                    "🎯 Goal: Observe the consequence of the last action.\n"
-                    "👉 Next Action: Call observe_screen(view='both') to inspect changes before and after."
-                )
-            before_id = (self.state.pending or {}).get("frame_id", max(1, self.screen.current_id - 1))
-            after_id = self.screen.current_id
-            return (
-                "📍 Current State: [REVIEW] (Screen Observed)\n"
-                "🎯 Goal: Assess whether the observed outcome supports or refutes the hypothesis.\n"
-                f"👉 Next Action: Call assess_result(outcome='supported', evidence='Observed movement/change', before_frame_id={before_id}, after_frame_id={after_id}).\n"
-                "⚠️ Notice: 'resolve_question' is NOT available in REVIEW mode. You MUST call assess_result first!"
+                f"REVIEW: Compare the predicted target effect in frames {before_id} and "
+                f"{self.screen.current_id}. Observe both if needed, then call assess_result "
+                "with supported, refuted or inconclusive and concrete evidence. Pixel or HUD "
+                "changes alone do not support the prediction. Resolve the question only after assessment."
             )
         return ""
 
     @tool_errors
-    def observe_screen(self, view: str = "current") -> dict:
+    def observe_screen(
+        self,
+        view: str = "current",
+        x: int = 0,
+        y: int = 0,
+        width: int = 0,
+        height: int = 0,
+    ) -> dict:
         """Inspect the current game frame on demand or compare before/after frames."""
-        res = self.screen.observe_screen(view=view)
+        res = self.screen.observe_screen(view=view, x=x, y=y, width=width, height=height)
         return self._wrap_snapshot(res)
 
     def _tool_is_relevant(self, tool, context) -> bool:
@@ -220,7 +274,23 @@ class DeliberativeGamePlayer:
         Observation and skill discovery remain available in every mode. Execution
         checks remain authoritative even if a stale call reaches the dispatcher.
         """
-        common = {"list_skills", "load_skill", "load_skill_resource", "observe_screen"}
+        common = {
+            "list_skills",
+            "load_skill",
+            "load_skill_resource",
+            "observe_screen",
+            "move_cursor",
+        }
+        if tool.name == "move_cursor" and 6 not in self.available_actions:
+            return False
+        if tool.name == "step_action" and not any(a != 6 for a in self.available_actions):
+            return False
+        if tool.name == "click_at_cursor" and (
+            6 not in self.available_actions
+            or self.screen.cursor is None
+            or self.screen.cursor_observed != (self.screen.current_id, self.screen.cursor_revision)
+        ):
+            return False
         by_mode = {
             ThoughtMode.PLAN: {
                 "set_goal",
@@ -237,8 +307,8 @@ class DeliberativeGamePlayer:
                 "use_known_rules",
                 "reset_game",
             },
-            ThoughtMode.EXPERIMENT: {"need_causal_knowledge", "step_action", "click_at"},
-            ThoughtMode.EXECUTE: {"need_causal_knowledge", "step_action", "click_at"},
+            ThoughtMode.EXPERIMENT: {"need_causal_knowledge", "step_action", "click_at_cursor"},
+            ThoughtMode.EXECUTE: {"need_causal_knowledge", "step_action", "click_at_cursor"},
             ThoughtMode.REVIEW: {"assess_result"},
         }
         return tool.name in common | by_mode[self.state.mode]
@@ -259,6 +329,7 @@ class DeliberativeGamePlayer:
         if not goal.strip() or not visual_evidence.strip():
             raise ValueError("Supply a goal and its visible evidence.")
         self.state.goal = goal
+        self.state.goal_evidence = {"frame_id": self.screen.current_id, "evidence": visual_evidence}
         return self._wrap_snapshot(self.state.snapshot())
 
     @tool_errors
@@ -267,10 +338,21 @@ class DeliberativeGamePlayer:
         return self._wrap_snapshot(self.state.ask(question))
 
     @tool_errors
-    def need_experiment(self, hypothesis: str, prediction: str, alternative: str) -> dict:
+    def need_experiment(
+        self,
+        hypothesis: str,
+        prediction: str,
+        alternative: str,
+        expected_visual_change: bool,
+        retry_reason: str = "",
+    ) -> dict:
         """Evidence is insufficient: design a minimal intervention to distinguish explanations."""
         self._ensure_observed()
-        return self._wrap_snapshot(self.state.propose_experiment(hypothesis, prediction, alternative))
+        if type(expected_visual_change) is not bool:
+            raise ValueError("expected_visual_change must explicitly be true or false.")
+        self.state.propose_experiment(hypothesis, prediction, alternative, retry_reason)
+        self.state.experiment["expected_visual_change"] = expected_visual_change
+        return self._wrap_snapshot(self.state.snapshot())
 
     @tool_errors
     def assess_result(
@@ -284,7 +366,23 @@ class DeliberativeGamePlayer:
         self._ensure_observed()
         if before_frame_id not in self.screen.viewed or after_frame_id != self.screen.current_id:
             raise ValueError("Observe both the actual before and latest after frames first.")
-        return self._wrap_snapshot(self.state.review(outcome, evidence, before_frame_id, after_frame_id))
+        self.state.require_mode(ThoughtMode.REVIEW)
+        pending = self.state.pending
+        if not pending or before_frame_id != pending["frame_id"]:
+            raise ValueError("Review the actual pending action's before frame.")
+        changed = not np.array_equal(
+            self.screen.frames[before_frame_id], self.screen.frames[after_frame_id]
+        )
+        expected = (pending.get("experiment") or {}).get("expected_visual_change")
+        if outcome == "supported" and isinstance(expected, bool) and changed != expected:
+            raise ValueError(
+                "The predicted visual change contradicts the actual frames. "
+                "Reinspect the evidence and assess as refuted or inconclusive. "
+                "Pixel change alone never proves the predicted effect."
+            )
+        result = self.state.review(outcome, evidence, before_frame_id, after_frame_id)
+        self.state.results[result["result_id"]]["observed_visual_change"] = changed
+        return self._wrap_snapshot({"result_id": result["result_id"], **self.state.snapshot()})
 
     @tool_errors
     def resolve_question(
@@ -381,14 +479,40 @@ class DeliberativeGamePlayer:
         else:
             expected = self.state.experiment["prediction"]
             intent = "experiment"
+        frame = self.screen.frames[self.screen.current_id]
+        scope = f"{self.current_game_id}:{self.levels_completed}:{frame.shape}".encode()
+        state_hash = hashlib.sha256(scope + frame.tobytes()).hexdigest()
+        repeated = any(
+            result["action"].get("state_hash") == state_hash
+            and result["action"].get("action_id") == action_id
+            and result["action"].get("coordinates")
+            == ({"x": x, "y": y} if action_id == 6 else None)
+            for result in self.state.results.values()
+            if "action" in result
+        )
+        if (
+            intent == "experiment"
+            and repeated
+            and not self.state.experiment.get("retry_reason", "").strip()
+        ):
+            raise ValueError(
+                "This intervention was already tested on this board. Return to CAUSAL, "
+                "resolve the evidence or specify a changed condition/information gain in retry_reason."
+            )
         self.actions.pending_decision = None
         if action_id == 6:
+            if (x, y) != self.screen.require_observed_cursor():
+                raise ValueError("Click must use the observed cursor coordinates.")
             self.actions.click_at(x=x, y=y, reasoning=reasoning)
         else:
             self.actions.step_action(action=f"ACTION{action_id}", reasoning=reasoning)
         if self.actions.pending_decision is None:
             raise ValueError("Execution tool rejected the action.")
         self.decision = self.actions.pending_decision
+        if action_id == 6 and self.decision.coordinates != {"x": x, "y": y}:
+            self.decision = None
+            self.actions.pending_decision = None
+            raise ValueError("Controller changed the verified click coordinates.")
         self.state.pending = {
             "intent": intent,
             "frame_id": self.screen.current_id,
@@ -397,6 +521,9 @@ class DeliberativeGamePlayer:
             "expected_result": expected,
             "reasoning": reasoning,
             "question": self.state.questions[-1].question if self.state.questions else None,
+            "state_hash": state_hash,
+            "experiment": dict(self.state.experiment or {}) if intent == "experiment" else None,
+            "repeated_intervention": repeated,
         }
         if intent == "plan":
             self.state.pending["subgoal"] = first["subgoal"]
@@ -409,13 +536,36 @@ class DeliberativeGamePlayer:
     def step_action(self, action_id: int, reasoning: str) -> dict:
         """Execute one physical button by verified ID; do not guess directional aliases."""
         if action_id == 6:
-            raise ValueError("Use click_at for ACTION6.")
+            raise ValueError("Use move_cursor, observe_screen, then click_at_cursor for ACTION6.")
         return self._schedule(action_id, None, None, reasoning)
 
     @tool_errors
-    def click_at(self, x: int, y: int, reasoning: str) -> dict:
-        """Execute one planned click or causal experiment in original frame coordinates."""
-        return self._schedule(6, x, y, reasoning)
+    def move_cursor(self, x: int, y: int, reasoning: str) -> dict:
+        """Position an internal reticle without a game action, in any thought mode.
+
+        Load visual-inspector and observe the reticle after every movement.
+        """
+        if self.decision is not None:
+            raise ValueError("Await the gateway frame before moving the cursor.")
+        if 6 not in self.available_actions or not reasoning.strip():
+            raise ValueError("Cursor aiming needs ACTION6 availability and a target rationale.")
+        return self._wrap_snapshot(self.screen.move_cursor(x, y))
+
+    @tool_errors
+    def click_at_cursor(self, visual_evidence: str, reasoning: str) -> dict:
+        """Click only the freshly observed reticle; coordinates cannot be changed here."""
+        if not visual_evidence.strip():
+            raise ValueError("Describe how the observed reticle aligns with the intended target.")
+        x, y = self.screen.require_observed_cursor()
+        result = self._schedule(6, x, y, reasoning)
+        self.state.pending["cursor_confirmation"] = {
+            "frame_id": self.screen.current_id,
+            "cursor_revision": self.screen.cursor_revision,
+            "coordinates": {"x": x, "y": y},
+            "visual_evidence": visual_evidence,
+        }
+        self.screen.cursor_observed = None
+        return result
 
     @tool_errors
     def reset_game(self, diagnosis: str, revised_approach: str) -> dict:
@@ -446,9 +596,11 @@ class DeliberativeGamePlayer:
             self.state.experiment = None
             self.state.questions.clear()
             self.state.facts.clear()
+            self.state.goal_evidence = None
             self.state.transition(ThoughtMode.PLAN, "Episode boundary; retain learned causal rules")
         # SkillToolset holds bound methods: retain the screen instance across
         # episodes so on-demand tools always see the current gateway frame.
+        self.screen.clear_cursor()
         self.screen.frames.clear()
         self.screen.viewed.clear()
         self.decision = None
@@ -490,6 +642,7 @@ class DeliberativeGamePlayer:
             self.state.experiment = None
             self.state.questions.clear()
             self.state.goal = "Identify and reach the new level's displayed winning condition"
+            self.state.goal_evidence = None
             self.state.facts.clear()
             self.state.transition(
                 ThoughtMode.PLAN, "Level changed; inspect new goal and preconditions"
@@ -508,6 +661,10 @@ class DeliberativeGamePlayer:
 
     async def _think(self, state_str: str) -> ActionDecision:
         start = time.perf_counter()
+        self.last_trace = []
+        self._loaded_skills.clear()
+        if hasattr(self.model, "_inference_trace"):
+            self.model._inference_trace.clear()
         session = await self.session_service.create_session(app_name=self.name, user_id="player")
         context = {
             "game_id": self.current_game_id,
@@ -535,6 +692,34 @@ class DeliberativeGamePlayer:
                 )
                 try:
                     async for event in events:
+                        if event.content:
+                            for part in event.content.parts or []:
+                                if part.function_call:
+                                    self.last_trace.append(
+                                        {
+                                            "kind": "call",
+                                            "name": part.function_call.name,
+                                            "args": dict(part.function_call.args or {}),
+                                        }
+                                    )
+                                elif part.function_response:
+                                    response = dict(part.function_response.response or {})
+                                    if "screen_observation" in response:
+                                        obs = dict(response["screen_observation"])
+                                        obs["images"] = [
+                                            {k: v for k, v in item.items() if k != "data"}
+                                            for item in obs["images"]
+                                        ]
+                                        response["screen_observation"] = obs
+                                    self.last_trace.append(
+                                        {
+                                            "kind": "result",
+                                            "name": part.function_response.name,
+                                            "response": response,
+                                        }
+                                    )
+                                elif part.text:
+                                    self.last_trace.append({"kind": "text", "text": part.text})
                         if event.content and event.content.role == "model":
                             calls += 1
                         if self.decision is not None:
@@ -546,6 +731,7 @@ class DeliberativeGamePlayer:
                 remaining -= max(1, calls)
                 guidance = self._build_mode_guidance()
                 followup_text = (
+                    f"Tool feedback: {getattr(self.model, '_last_output_error', '')}\n"
                     f"State update:\n{json.dumps(self.state.snapshot(), indent=2)}\n\n"
                     f"=== COGNITIVE GUIDANCE ===\n{guidance}\n\n"
                     "Task: Advance the state machine or execute an action using the opened tools."
@@ -555,6 +741,10 @@ class DeliberativeGamePlayer:
                     parts=[Part.from_text(text=followup_text)],
                 )
         finally:
+            self.last_trace.extend(
+                {"kind": "inference", **entry}
+                for entry in getattr(self.model, "_inference_trace", [])
+            )
             await self.session_service.delete_session(
                 app_name=self.name,
                 user_id="player",
@@ -567,6 +757,8 @@ class DeliberativeGamePlayer:
         self.decision.metadata.update(
             {
                 "thought_mode": self.state.mode.value,
+                "thought_snapshot": self.state.snapshot(),
+                "tool_trace": list(self.last_trace),
                 "transitions": list(self.state.transitions),
                 "pending_question": self.state.questions[-1].question
                 if self.state.questions

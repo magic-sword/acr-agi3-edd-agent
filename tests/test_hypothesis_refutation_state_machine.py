@@ -11,7 +11,10 @@ from acr_agi3.agent.llm.local_vlm import LocalQwenVL
 @pytest.fixture
 def mock_player():
     """モック VLM を持つ ADKGamePlayer インスタンス."""
-    mock_vlm = LocalQwenVL(model_name_or_path="mock")
+    mock_vlm = LocalQwenVL(
+        model_name_or_path="mock",
+        generate_fn=lambda prompt, images=None: "Test a different observed target after the refuted click.",
+    )
     player = ADKGamePlayer(model=mock_vlm, name="test_hypo_player")
     return player
 

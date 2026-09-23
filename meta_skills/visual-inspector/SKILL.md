@@ -9,7 +9,7 @@ license: MIT
 allowed-tools: observe_screen load_skill_resource
 metadata:
   pattern: workflow
-  version: "3.0.0"
+  version: "4.0.0"
   adk_additional_tools:
     - observe_screen
 ---
@@ -34,10 +34,17 @@ causal conclusion. Repeated viewing does not produce a new environment frame.
 3. For detail, provide x, y, width, height to crop in original game coordinates.
    The image is enlarged for visibility. Coordinates for a click remain game
    coordinates; translate crop-local positions using the returned origin.
-4. Separate visible facts from hypothesized roles and causal relations. A moving
+4. After move_cursor, observe the current frame with the reticle visible. Check
+   its alignment against the intended target, not just the reported coordinates.
+   A crop excluding the reticle or a previous-frame view cannot authorize a click.
+   Moving again, receiving a new frame or resetting requires a fresh inspection.
+   The reticle is an internal annotation, not a game object or game progress.
+   Before/after views use the same reticle overlay for a fair comparison.
+   Game frames use the official ARC-AGI-3 16-color palette.
+5. Separate visible facts from hypothesized roles and causal relations. A moving
    animation is not necessarily player movement or progress. A stationary object
    can mean an obstacle, a wrong control hypothesis, or insufficient evidence.
-5. Resume the interrupted thought. A visible factual question can be answered
+6. Resume the interrupted thought. A visible factual question can be answered
    without a game action; causal uncertainty may require a controlled experiment.
 
 ## Examples
@@ -61,5 +68,6 @@ causal conclusion. Repeated viewing does not produce a new environment frame.
 ## Resources
 - scripts/visual_inspector.py: offline grid-summary helper; live viewing uses
   observe_screen through the bound ScreenTools instance.
-- tests/: visual analysis contracts; tests/test_deliberative_player.py in the
+- tests/: visual analysis contracts;
+  tests/test_verified_observation_loop.py in the repository covers reticle and palette delivery; tests/test_deliberative_player.py in the
   repository also verifies live image delivery and invalid observation rejection.

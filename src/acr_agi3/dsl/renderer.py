@@ -25,6 +25,15 @@ ARC_COLORS = {
     9: (135, 12, 37),  # Maroon / Brown
 }
 
+# Dynamic ARC-AGI-3 frames use the 16-color palette from arc_agi.rendering.COLOR_MAP.
+# Keep the legacy ten-color palette for existing non-game rendering callers.
+GAME_COLORS = dict(enumerate([
+    (255, 255, 255), (204, 204, 204), (153, 153, 153), (102, 102, 102),
+    (51, 51, 51), (0, 0, 0), (229, 58, 163), (255, 123, 204),
+    (249, 60, 49), (30, 147, 255), (136, 216, 241), (255, 220, 0),
+    (255, 133, 27), (146, 18, 49), (79, 204, 48), (163, 86, 214),
+]))
+
 ARC_COLOR_NAMES = {
     0: "Black",
     1: "Blue",
@@ -49,6 +58,7 @@ def render_grid_to_image(
     grid_line_width: int = 1,
     scale: Optional[int] = None,
     cursor_pos: Optional[Tuple[int, int]] = None,
+    palette: Optional[Dict[int, Tuple[int, int, int]]] = None,
 ) -> Image.Image:
     """2次元グリッド配列をカラー画像 (PIL.Image) に変換する.
 
@@ -65,6 +75,10 @@ def render_grid_to_image(
     if scale is not None:
         cell_size = scale
     arr = np.array(grid, dtype=int)
+    colors = ARC_COLORS if palette is None else palette
+    unknown = set(np.unique(arr)) - colors.keys()
+    if unknown:
+        raise ValueError(f"Unmapped frame color IDs: {sorted(unknown)}")
 
     if arr.ndim != 2:
         raise ValueError(f"Grid must be 2-dimensional, got shape {arr.shape}")
@@ -79,7 +93,7 @@ def render_grid_to_image(
     for r in range(height):
         for c in range(width):
             color_id = int(arr[r, c])
-            color = ARC_COLORS.get(color_id, (0, 0, 0))
+            color = colors[color_id]
 
             x0 = c * cell_size
             y0 = r * cell_size
@@ -447,4 +461,3 @@ def render_console_observation(
     console_img.paste(panel_img, (padding, panel_y))
 
     return console_img
-

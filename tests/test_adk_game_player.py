@@ -104,9 +104,11 @@ def test_my_agent_integration_with_adk_player():
         {"name":"load_skill", "args":{"skill_name":"visual-inspector"}},
         {"name":"observe_screen", "args":{}},
         {"name":"need_experiment", "args":{
-            "hypothesis":"Tile opens route", "prediction":"Route opens", "alternative":"Tile only changes color"}},
+            "expected_visual_change":True, "hypothesis":"Tile opens route", "prediction":"Route opens", "alternative":"Tile only changes color"}},
         {"name":"load_skill", "args":{"skill_name":"game-controller"}},
-        {"name":"click_at", "args":{"x":8,"y":5,"reasoning":"Test the suspected switch once"}},
+        {"name":"move_cursor", "args":{"x":8,"y":5,"reasoning":"Aim at switch"}},
+        {"name":"observe_screen", "args":{}},
+        {"name":"click_at_cursor", "args":{"visual_evidence":"Reticle is on the yellow switch", "reasoning":"Test the suspected switch once"}},
     ])
     model = LocalQwenVL("mock", generate_fn=lambda prompt, images=None: next(calls))
     agent = MyAgent(model=model)
@@ -169,3 +171,20 @@ def test_adk_game_player_rethink_on_rejected_action():
     assert decision.metadata.get("rethink_attempts") == 1
     assert decision.metadata.get("success") is True
 
+
+
+def test_gateway_reasoning_excludes_large_local_diagnostics():
+    from acr_agi3.agent.llm.local_vlm import LocalQwenVL
+    from acr_agi3.harness.game_action_tools import ActionDecision
+    agent = MyAgent(model=LocalQwenVL('mock'))
+    decision = ActionDecision(action_type='STEP', action_name='ACTION1', action_id=1,
+                              reasoning='説明' * 10000, loaded_skill='game-controller')
+    decision.metadata = {'thought_mode': 'REVIEW', 'tool_trace': [{'text': 'large' * 10000}]}
+    agent.player.decide_next_action = lambda **kwargs: decision
+    frame = FrameData(levels_completed=0, state=GameState.NOT_FINISHED,
+                      frame=[np.zeros((8, 8), dtype=int).tolist()], available_actions=[1])
+    action = agent.choose_action([frame], frame)
+    import json
+    assert len(json.dumps(action.reasoning, ensure_ascii=False).encode()) < 16384
+    assert 'tool_trace' not in action.reasoning
+    assert agent.last_decision_metadata['tool_trace'] == decision.metadata['tool_trace']

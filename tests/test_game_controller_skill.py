@@ -148,7 +148,8 @@ def test_positive_step_action_direction_name_with_coords():
 def test_positive_dpad_label_formatting():
     """正例 7: 利用可能アクションが十字キー (UP/DOWN/LEFT/RIGHT) や CLICK 付きの直感的ラベルに整形されること."""
     from acr_agi3.agent.adk_game_player import ADKGamePlayer
-    player = ADKGamePlayer(name="test_player", app_name="test_app", model=None, autonomous_probing=False)
+    from acr_agi3.agent.llm.local_vlm import LocalQwenVL
+    player = ADKGamePlayer(name="test_player", app_name="test_app", model=LocalQwenVL("mock"), autonomous_probing=False)
 
     # 1. デフォルト力学時
     labels = player._format_available_action_labels([1, 2, 3, 4, 6])

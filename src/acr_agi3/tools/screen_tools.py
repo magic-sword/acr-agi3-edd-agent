@@ -7,7 +7,7 @@ import io
 
 import numpy as np
 
-from acr_agi3.dsl.renderer import render_grid_to_image
+from acr_agi3.dsl.renderer import GAME_COLORS, render_grid_to_image
 from acr_agi3.harness.vision_observation import normalize_grid
 
 
@@ -16,10 +16,42 @@ class ScreenTools:
         self.frames: dict[int, np.ndarray] = {}
         self.current_id = 0
         self.viewed: set[int] = set()
+        self.cursor: tuple[int, int] | None = None
+        self.cursor_revision = 0
+        self.cursor_observed: tuple[int, int] | None = None
+
+    def clear_cursor(self) -> None:
+        self.cursor = None
+        self.cursor_revision += 1
+        self.cursor_observed = None
+
+    def move_cursor(self, x: int, y: int) -> dict:
+        if not self.frames:
+            raise ValueError("No current frame is available.")
+        h, w = self.frames[self.current_id].shape
+        if type(x) is not int or type(y) is not int or not (0 <= x < w and 0 <= y < h):
+            raise ValueError("Cursor coordinates must be integers inside the current frame.")
+        self.cursor = (x, y)
+        self.cursor_revision += 1
+        self.cursor_observed = None
+        return {
+            "cursor": [x, y],
+            "cursor_revision": self.cursor_revision,
+            "frame_id": self.current_id,
+            "requires_observation": True,
+        }
+
+    def require_observed_cursor(self) -> tuple[int, int]:
+        if self.cursor is None or self.cursor_observed != (self.current_id, self.cursor_revision):
+            raise ValueError(
+                "Move the cursor, then observe its reticle on the current frame before clicking."
+            )
+        return self.cursor
 
     def publish(self, grid) -> int:
         """Receive a frame without placing any pixels in the model context."""
         self.current_id += 1
+        self.cursor_observed = None
         self.frames[self.current_id] = normalize_grid(grid).copy()
         for key in list(self.frames)[:-2]:
             del self.frames[key]
@@ -46,6 +78,7 @@ class ScreenTools:
             return {"error": "No previous frame is available."}
         selected = ids if view == "both" else [ids[-1] if view == "current" else ids[-2]]
         images = []
+        cursor_visible = False
         for frame_id in selected:
             grid = self.frames[frame_id]
             h, w = grid.shape
@@ -53,17 +86,33 @@ class ScreenTools:
             if x < 0 or y < 0 or cw <= 0 or ch <= 0 or x + cw > w or y + ch > h:
                 return {"error": "Crop must lie inside every requested frame."}
             stream = io.BytesIO()
-            render_grid_to_image(grid[y : y + ch, x : x + cw], cell_size=12).save(
-                stream, format="PNG"
-            )
+            reticle = None
+            if self.cursor is not None:
+                cx, cy = self.cursor
+                if x <= cx < x + cw and y <= cy < y + ch:
+                    reticle = (cx - x, cy - y)
+                    cursor_visible = cursor_visible or frame_id == self.current_id
+            render_grid_to_image(
+                grid[y : y + ch, x : x + cw],
+                cell_size=12,
+                cursor_pos=reticle,
+                palette=GAME_COLORS,
+                grid_line_width=0,
+            ).save(stream, format="PNG")
             images.append(
                 {
                     "frame_id": frame_id,
                     "origin": [x, y],
                     "grid_shape": [ch, cw],
+                    "cursor": list(self.cursor) if reticle is not None else None,
+                    "cursor_revision": self.cursor_revision if reticle is not None else None,
+                    "palette": "arc-agi-3",
+                    "reticle_is_annotation": reticle is not None,
                     "mime_type": "image/png",
                     "data": base64.b64encode(stream.getvalue()).decode(),
                 }
             )
         self.viewed.update(selected)
+        if cursor_visible:
+            self.cursor_observed = (self.current_id, self.cursor_revision)
         return {"screen_observation": {"images": images, "current_frame_id": self.current_id}}

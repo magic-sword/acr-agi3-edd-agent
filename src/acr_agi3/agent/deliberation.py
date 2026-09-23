@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any
@@ -26,6 +27,7 @@ class Question:
 class ThoughtState:
     mode: ThoughtMode = ThoughtMode.PLAN
     goal: str = "Identify and reach the game's displayed winning condition"
+    goal_evidence: dict | None = None
     questions: list[Question] = field(default_factory=list)
     rules: dict[str, dict] = field(default_factory=dict)
     results: dict[str, dict] = field(default_factory=dict)
@@ -42,17 +44,20 @@ class ThoughtState:
         self.mode = mode
 
     def snapshot(self) -> dict:
-        return {
-            "mode": self.mode.value,
-            "goal": self.goal,
-            "questions": [asdict(q) for q in self.questions],
-            "rules": self.rules,
-            "recent_results": dict(list(self.results.items())[-8:]),
-            "visible_facts": self.facts,
-            "remaining_plan": self.plan,
-            "experiment": self.experiment,
-            "pending": self.pending,
-        }
+        return deepcopy(
+            {
+                "mode": self.mode.value,
+                "goal": self.goal,
+                "goal_evidence": self.goal_evidence,
+                "questions": [asdict(q) for q in self.questions],
+                "rules": self.rules,
+                "recent_results": dict(list(self.results.items())[-8:]),
+                "visible_facts": self.facts,
+                "remaining_plan": self.plan,
+                "experiment": self.experiment,
+                "pending": self.pending,
+            }
+        )
 
     def require_mode(self, *modes: ThoughtMode) -> None:
         if self.mode not in modes:
@@ -66,6 +71,12 @@ class ThoughtState:
         )
         if not question.strip() or len(self.questions) >= 8:
             raise ValueError("Supply a specific missing fact; at most eight suspended questions.")
+        if any(
+            q.question.strip().casefold() == question.strip().casefold() for q in self.questions
+        ):
+            raise ValueError(
+                "This question is already open. Resolve it from evidence or design a distinguishing experiment."
+            )
         # A newly discovered gap can interrupt an unissued action. Resume reasoning,
         # never the obsolete execution intent, after answering that question.
         parent_mode = self.mode
@@ -79,17 +90,26 @@ class ThoughtState:
         self.transition(ThoughtMode.CAUSAL, f"Knowledge missing: {question}")
         return self.snapshot()
 
-    def propose_experiment(self, hypothesis: str, prediction: str, alternative: str) -> dict:
+    def propose_experiment(
+        self,
+        hypothesis: str,
+        prediction: str,
+        alternative: str,
+        retry_reason: str = "",
+    ) -> dict:
         self.require_mode(ThoughtMode.CAUSAL)
         if not self.questions or not all(s.strip() for s in (hypothesis, prediction, alternative)):
             raise ValueError(
                 "An experiment needs an open question and distinguishable predictions."
             )
+        if prediction.strip().casefold() == alternative.strip().casefold():
+            raise ValueError("Prediction and alternative must describe different outcomes.")
         self.experiment = {
             "hypothesis": hypothesis,
             "prediction": prediction,
             "alternative": alternative,
             "question": self.questions[-1].question,
+            "retry_reason": retry_reason,
         }
         self.transition(ThoughtMode.EXPERIMENT, "Evidence is insufficient; test the hypothesis")
         return self.snapshot()
